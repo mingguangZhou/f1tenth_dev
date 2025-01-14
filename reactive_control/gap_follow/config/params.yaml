@@ -1,0 +1,15 @@
+reactive_node:
+  ros__parameters:
+    kp: 2.5
+    ki: 0.0
+    kd: 0.05
+
+    ttc_threshold_sec: 0.3
+    side_limit_m: 0.5
+    bubble_window_deg: 110.0
+    counter_steer_deg: 5.0
+
+    speed_high: 1.5
+    speed_mid: 1.0
+    speed_low: 0.5
+    goal_window_deg: 10.0
