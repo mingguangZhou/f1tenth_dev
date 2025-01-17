@@ -29,8 +29,8 @@ $ docker exec -it f1tenth_gym_ros_sim_1 /bin/bash
 2. To launch the simulation, make sure you source both the ROS2 setup script and the local workspace setup script. Run the following in the bash session from the container:
 ```bash
 /sim_ws#: source /opt/ros/foxy/setup.bash
-/sim_ws#: install/local_setup.bash
-/sim_ws#: launch f1tenth_gym_ros gym_bridge_launch.py
+/sim_ws#: source install/local_setup.bash
+/sim_ws#: ros2 launch f1tenth_gym_ros gym_bridge_launch.py
 ```
 A rviz window should pop up showing the simulation either on your host system or in the browser window depending on the display forwarding you chose.
 
