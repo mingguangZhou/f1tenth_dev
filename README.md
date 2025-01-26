@@ -14,12 +14,12 @@ If your system does not support nvidia-docker2, noVNC will have to be used to fo
 1. Clone this repo 
 2. Bringup the novnc container and the sim container with docker-compose:
 ```bash
-$ cd f1tenth_gym_ros
-$ docker-compose up --build
+cd f1tenth_gym_ros
+docker-compose up --build
 ``` 
 3. In a separate terminal, run the following, and you'll have the a bash session in the simulation container. `tmux` is available for convenience.
 ```bash
-$ docker exec -it f1tenth_gym_ros_sim_1 /bin/bash
+docker exec -it f1tenth_gym_ros_sim_1 /bin/bash
 ```
 4. In your browser, navigate to [http://localhost:8080/vnc.html](http://localhost:8080/vnc.html), you should see the noVNC logo with the connect button. Click the connect button to connect to the session.
 
@@ -28,9 +28,9 @@ $ docker exec -it f1tenth_gym_ros_sim_1 /bin/bash
 1. `tmux` is included in the contianer, so you can create multiple bash sessions in the same terminal.
 2. To launch the simulation, make sure you source both the ROS2 setup script and the local workspace setup script. Run the following in the bash session from the container:
 ```bash
-/sim_ws#: source /opt/ros/foxy/setup.bash
-/sim_ws#: source install/local_setup.bash
-/sim_ws#: ros2 launch f1tenth_gym_ros gym_bridge_launch.py
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+ros2 launch f1tenth_gym_ros gym_bridge_launch.py
 ```
 A rviz window should pop up showing the simulation either on your host system or in the browser window depending on the display forwarding you chose.
 
@@ -91,7 +91,7 @@ In addition to all topics in the single agent scenario, these topics are also av
 
 The keyboard teleop node from `teleop_twist_keyboard` is also installed as part of the simulation's dependency. To enable keyboard teleop, set `kb_teleop` to `True` in `sim.yaml`. After launching the simulation, in another terminal, run:
 ```bash
-/sim_ws#: ros2 run teleop_twist_keyboard teleop_twist_keyboard
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 Then, press `i` to move forward, `u` and `o` to move forward and turn, `,` to move backwards, `m` and `.` to move backwards and turn, and `k` to stop in the terminal window running the teleop node.
 
@@ -103,19 +103,19 @@ There are multiple ways to launch your own agent to control the vehicles.
 
 1. Source both the ROS2 setup script and the local workspace setup script, and then select to build the package:
 ```bash
-/sim_ws#: source /opt/ros/foxy/setup.bash
-/sim_ws#: source install/local_setup.bash
-/sim_ws#: colcon build --packages-select gap_follow
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+colcon build --packages-select gap_follow
 ```
 2. After build succeed, in the same bash, make sure to source both the ROS2 setup script and the local workspace setup script again (might not be the most elegant way), and for this case run the launch file for the node:
 ```bash
-/sim_ws#: source /opt/ros/foxy/setup.bash
-/sim_ws#: source install/local_setup.bash
-/sim_ws#: ros2 launch gap_follow gap_follow_launch.py
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+ros2 launch gap_follow gap_follow_launch.py
 ```
 The docker container should also had installed the GDB, so you can also start a GDB session rather than launch file (to source again seems not needed for this way):
 ```bash
-/sim_ws#: gdb --args /sim_ws/install/gap_follow/lib/gap_follow/reactive_node --ros-args -r __node:=reactive_node --params-file /sim_ws/install/gap_follow/share/gap_follow/config/params.yaml
+gdb --args /sim_ws/install/gap_follow/lib/gap_follow/reactive_node --ros-args -r __node:=reactive_node --params-file /sim_ws/install/gap_follow/share/gap_follow/config/params.yaml
 ```
 
 - The second one is to create a new ROS 2 container for you agent node. Then create your own package and nodes inside. Launch the sim container and the agent container both. With default networking configurations for `docker`, the behavior is to put The two containers on the same network, and they should be able to discover and talk to each other on different topics. If you're using noVNC, create a new service in `docker-compose.yml` for your agent node. You'll also have to put your container on the same network as the sim and novnc containers.
