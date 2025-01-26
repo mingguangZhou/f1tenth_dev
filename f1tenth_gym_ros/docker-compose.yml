@@ -27,7 +27,7 @@ services:
     build: ./
     volumes: 
       - .:/sim_ws/src/f1tenth_gym_ros
-      - ../reactive_control/gap_follow:/sim_ws/src/gap_follow
+      - ../reactive_control:/sim_ws/src/reactive_control
     environment:
       - DISPLAY=novnc:0.0
     networks:
