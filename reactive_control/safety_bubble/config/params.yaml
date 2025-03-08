@@ -1,0 +1,10 @@
+safety_bubble_node:
+  ros__parameters:
+    bubble_radius: 2.0
+    speed: 2.0
+    window_size: 7
+    perception_fov_deg: 70.0
+    kp: 1.2
+    ki: 0.0
+    kd: 0.004
+    steering_fov_deg: 45.0
