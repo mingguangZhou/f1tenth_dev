@@ -43,15 +43,15 @@ public:
         steering_fov_deg_ = get_parameter("steering_fov_deg").as_double();
 
         // Log parameters
-        RCLCPP_INFO(this->get_logger(), "Initialized with parameters:");
-        RCLCPP_INFO(this->get_logger(), "  bubble_radius        = %f", bubble_radius_);
-        RCLCPP_INFO(this->get_logger(), "  speed               = %f", speed_);
-        RCLCPP_INFO(this->get_logger(), "  window_size         = %d", window_size_);
-        RCLCPP_INFO(this->get_logger(), "  perception_fov_deg  = %f", perception_fov_deg_);
-        RCLCPP_INFO(this->get_logger(), "  kp                  = %f", kp_);
-        RCLCPP_INFO(this->get_logger(), "  ki                  = %f", ki_);
-        RCLCPP_INFO(this->get_logger(), "  kd                  = %f", kd_);
-        RCLCPP_INFO(this->get_logger(), "  steering_fov_deg    = %f", steering_fov_deg_);
+        RCLCPP_DEBUG(this->get_logger(), "Initialized with parameters:");
+        RCLCPP_DEBUG(this->get_logger(), "  bubble_radius        = %f", bubble_radius_);
+        RCLCPP_DEBUG(this->get_logger(), "  speed               = %f", speed_);
+        RCLCPP_DEBUG(this->get_logger(), "  window_size         = %d", window_size_);
+        RCLCPP_DEBUG(this->get_logger(), "  perception_fov_deg  = %f", perception_fov_deg_);
+        RCLCPP_DEBUG(this->get_logger(), "  kp                  = %f", kp_);
+        RCLCPP_DEBUG(this->get_logger(), "  ki                  = %f", ki_);
+        RCLCPP_DEBUG(this->get_logger(), "  kd                  = %f", kd_);
+        RCLCPP_DEBUG(this->get_logger(), "  steering_fov_deg    = %f", steering_fov_deg_);
 
         prev_time_ = this->now();
     }
@@ -147,7 +147,7 @@ private:
             }
         }
 
-        RCLCPP_INFO(this->get_logger(), "Angles initialized. Total angles: %zu, Good angle indices: %zu",
+        RCLCPP_DEBUG(this->get_logger(), "Angles initialized. Total angles: %zu, Good angle indices: %zu",
                     angles_.size(), good_angle_indices_.size());
     }
 
@@ -201,7 +201,7 @@ private:
                 ranges[i] = 0.0f;
             }
         }
-        RCLCPP_INFO(this->get_logger(),
+        RCLCPP_DEBUG(this->get_logger(),
                     "Bubble set around closest_idx=%zu (dist=%.3f, angle=%.3f) -> removed angles in [%.3f, %.3f]",
                     closest_idx, min_dist, angle, min_angle, max_angle);
     }
@@ -281,13 +281,13 @@ private:
         prev_time_ = current_time;
 
         // Log key info
-        // RCLCPP_INFO(this->get_logger(),
-        //             "closest_idx=%zu gap=[%d,%d] best_idx=%zu desired_angle=%.4f dt=%.4f error=%.4f",
-        //             closest_idx, gap_start, gap_end, best_idx, desired_angle, dt, error);
+        RCLCPP_DEBUG(this->get_logger(),
+                    "closest_idx=%zu gap=[%d,%d] best_idx=%zu desired_angle=%.4f dt=%.4f error=%.4f",
+                    closest_idx, gap_start, gap_end, best_idx, desired_angle, dt, error);
 
-        // RCLCPP_INFO(this->get_logger(),
-        //             "PID: P=%.4f I=%.4f D=%.4f => steering_output=%.4f => new_angle=%.4f",
-        //             P, I, D, steering_output, new_steering_angle);
+        RCLCPP_DEBUG(this->get_logger(),
+                    "PID: P=%.4f I=%.4f D=%.4f => steering_output=%.4f => new_angle=%.4f",
+                    P, I, D, steering_output, new_steering_angle);
 
         // Publish PID-corrected command
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
