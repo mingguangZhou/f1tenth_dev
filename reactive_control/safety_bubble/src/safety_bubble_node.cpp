@@ -106,7 +106,7 @@ private:
         // Clean invalid values
         for (auto& val : ranges) {
             if (std::isnan(val)) val = 0.0f;
-            if (std::isinf(val)) val = 5.0f;
+            if (std::isinf(val)) val = 100.0f;
         }
 
         // Apply moving average filter
@@ -128,7 +128,7 @@ private:
         std::vector<float> processed;
         processed.reserve(good_angle_indices_.size());
         for (int idx : good_angle_indices_) {
-            processed.push_back(std::min(std::max(smoothed[idx], 0.0f), 3.0f));
+            processed.push_back(std::min(std::max(smoothed[idx], 0.0f), 100.0f));
         }
 
         return processed;
