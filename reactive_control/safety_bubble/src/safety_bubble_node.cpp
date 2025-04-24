@@ -13,7 +13,8 @@ public:
     SafetyBubble() : Node("safety_bubble") {
         // Parameters
         declare_parameter<double>("bubble_radius", 0.0);
-        declare_parameter<double>("speed", 0.0);
+        declare_parameter<double>("speed_min", 0.0);
+        declare_parameter<double>("speed_max", 0.0);
         declare_parameter<int>("window_size", 0);
         declare_parameter<double>("perception_fov_deg", 0.0);
         declare_parameter<double>("kp", 0.0);
@@ -33,7 +34,8 @@ public:
 
         // Initialize angles
         bubble_radius_ = get_parameter("bubble_radius").as_double();
-        speed_ = get_parameter("speed").as_double();
+        speed_min_ = get_parameter("speed_min").as_double();
+        speed_max_ = get_parameter("speed_max").as_double();
         window_size_ = get_parameter("window_size").as_int();
         perception_fov_deg_ = get_parameter("perception_fov_deg").as_double();
 
@@ -45,7 +47,8 @@ public:
         // Log parameters
         RCLCPP_DEBUG(this->get_logger(), "Initialized with parameters:");
         RCLCPP_DEBUG(this->get_logger(), "  bubble_radius        = %f", bubble_radius_);
-        RCLCPP_DEBUG(this->get_logger(), "  speed               = %f", speed_);
+        RCLCPP_DEBUG(this->get_logger(), "  speed_min            = %f", speed_min_);
+        RCLCPP_DEBUG(this->get_logger(), "  speed_max            = %f", speed_max_);
         RCLCPP_DEBUG(this->get_logger(), "  window_size         = %d", window_size_);
         RCLCPP_DEBUG(this->get_logger(), "  perception_fov_deg  = %f", perception_fov_deg_);
         RCLCPP_DEBUG(this->get_logger(), "  kp                  = %f", kp_);
@@ -73,7 +76,8 @@ private:
 
     // Algorithm parameters
     double bubble_radius_;
-    double speed_;
+    double speed_min_;
+    double speed_max_;
     int window_size_;
     double perception_fov_deg_;
 
@@ -212,6 +216,18 @@ private:
         scan_received_ = true;
     }
 
+    double compute_speed(double steering_angle) const {
+        double abs_angle = std::abs(steering_angle);
+        double steering_fov_rad = steering_fov_deg_ * M_PI / 180.0;
+        double t = std::clamp(abs_angle / steering_fov_rad, 0.0, 1.0);
+        
+        // Apply exponential curve: higher n = faster drop at large angles
+        double n = 3.0;  // tweak this as needed
+        double scaled_t = std::pow(t, n);
+
+        return speed_max_ - scaled_t * (speed_max_ - speed_min_);
+    }
+
     void control_callback() {
         // Lock the mutex to safely access the latest scan data
         std::lock_guard<std::mutex> lock(data_mutex_);
@@ -280,6 +296,9 @@ private:
         prev_steering_angle_ = new_steering_angle;
         prev_time_ = current_time;
 
+        // Update linear speed
+        double interpolated_speed = compute_speed(new_steering_angle);
+
         // Log key info
         RCLCPP_DEBUG(this->get_logger(),
                     "closest_idx=%zu gap=[%d,%d] best_idx=%zu desired_angle=%.4f dt=%.4f error=%.4f",
@@ -289,12 +308,15 @@ private:
                     "PID: P=%.4f I=%.4f D=%.4f => steering_output=%.4f => new_angle=%.4f",
                     P, I, D, steering_output, new_steering_angle);
 
+        RCLCPP_DEBUG(this->get_logger(), 
+                    "Interpolated speed: %.2f for angle %.2f", interpolated_speed, new_steering_angle);
+
         // Publish PID-corrected command
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
         drive_msg.header.stamp = current_time;
         drive_msg.header.frame_id = "laser";
         drive_msg.drive.steering_angle = new_steering_angle;
-        drive_msg.drive.speed = speed_;
+        drive_msg.drive.speed = interpolated_speed;
         
         drive_pub_->publish(drive_msg);
     }
