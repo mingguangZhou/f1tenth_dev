@@ -21,6 +21,10 @@ public:
         declare_parameter<double>("ki", 0.0);
         declare_parameter<double>("kd", 0.0);
         declare_parameter<double>("steering_fov_deg", 0.0);
+        declare_parameter<bool>("smooth_steer", false);
+        declare_parameter<int>("max_offset", 0);
+        declare_parameter<double>("safety_distance", 0.0);
+
 
         // Subscribers and Publishers
         scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
@@ -38,6 +42,10 @@ public:
         speed_max_ = get_parameter("speed_max").as_double();
         window_size_ = get_parameter("window_size").as_int();
         perception_fov_deg_ = get_parameter("perception_fov_deg").as_double();
+        smooth_steer_ = get_parameter("smooth_steer").as_bool();
+        max_offset_ = get_parameter("max_offset").as_int();
+        safety_distance_ = get_parameter("safety_distance").as_double();
+
 
         kp_ = get_parameter("kp").as_double();
         ki_ = get_parameter("ki").as_double();
@@ -55,6 +63,9 @@ public:
         RCLCPP_DEBUG(this->get_logger(), "  ki                  = %f", ki_);
         RCLCPP_DEBUG(this->get_logger(), "  kd                  = %f", kd_);
         RCLCPP_DEBUG(this->get_logger(), "  steering_fov_deg    = %f", steering_fov_deg_);
+        RCLCPP_DEBUG(this->get_logger(), "  smooth_steer        = %s", smooth_steer_ ? "true" : "false");
+        RCLCPP_DEBUG(this->get_logger(), "  max_offset          = %d", max_offset_);
+        RCLCPP_DEBUG(this->get_logger(), "  safety_distance     = %f", safety_distance_);
 
         prev_time_ = this->now();
     }
@@ -80,6 +91,11 @@ private:
     double speed_max_;
     int window_size_;
     double perception_fov_deg_;
+    bool smooth_steer_;
+    int max_offset_;
+    double safety_distance_;
+    size_t prev_best_idx_ = 0;
+
 
     // PID parameters
     double kp_;
@@ -177,18 +193,64 @@ private:
         return {max_start, max_end};
     }
 
+    // size_t find_best_point(const std::vector<float>& ranges, int start, int end) {
+    //     size_t best_idx = start;
+    //     float max_val = ranges[start];
+        
+    //     for (int i = start; i < end; ++i) {
+    //         if (ranges[i] > max_val) {
+    //             max_val = ranges[i];
+    //             best_idx = i;
+    //         }
+    //     }
+    //     return best_idx;
+    // }
+
     size_t find_best_point(const std::vector<float>& ranges, int start, int end) {
+        // Step 1: Find overall best point
         size_t best_idx = start;
         float max_val = ranges[start];
-        
         for (int i = start; i < end; ++i) {
             if (ranges[i] > max_val) {
                 max_val = ranges[i];
                 best_idx = i;
             }
         }
-        return best_idx;
+
+        if (!smooth_steer_) {
+            prev_best_idx_ = best_idx;
+            return best_idx;
+        }
+
+        // Step 2: Check if best_idx is within max_offset window
+        int window_start = std::max(start, static_cast<int>(prev_best_idx_) - max_offset_);
+        int window_end   = std::min(end, static_cast<int>(prev_best_idx_) + max_offset_ + 1);
+
+        if (best_idx >= static_cast<size_t>(window_start) && best_idx < static_cast<size_t>(window_end)) {
+            prev_best_idx_ = best_idx;
+            return best_idx;  // Best point is within smooth window
+        }
+
+        // Step 3: Search within smooth window for a safe direction
+        size_t safe_idx = prev_best_idx_;
+        float max_in_window = 0.0f;
+        for (int i = window_start; i < window_end; ++i) {
+            if (ranges[i] > safety_distance_ && ranges[i] > max_in_window) {
+                max_in_window = ranges[i];
+                safe_idx = i;
+            }
+        }
+
+        // Step 4: Use safe_idx if found, otherwise fallback to best_idx
+        if (max_in_window > 0.0f) {
+            prev_best_idx_ = safe_idx;
+            return safe_idx;
+        } else {
+            prev_best_idx_ = best_idx;
+            return best_idx;
+        }
     }
+
 
     void set_bubble(std::vector<float>& ranges, size_t closest_idx) {
         const float bubble_radius = bubble_radius_;
