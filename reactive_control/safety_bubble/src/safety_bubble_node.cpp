@@ -193,19 +193,6 @@ private:
         return {max_start, max_end};
     }
 
-    // size_t find_best_point(const std::vector<float>& ranges, int start, int end) {
-    //     size_t best_idx = start;
-    //     float max_val = ranges[start];
-        
-    //     for (int i = start; i < end; ++i) {
-    //         if (ranges[i] > max_val) {
-    //             max_val = ranges[i];
-    //             best_idx = i;
-    //         }
-    //     }
-    //     return best_idx;
-    // }
-
     size_t find_best_point(const std::vector<float>& ranges, int start, int end) {
         // Step 1: Find overall best point
         size_t best_idx = start;
@@ -284,7 +271,7 @@ private:
         double t = std::clamp(abs_angle / steering_fov_rad, 0.0, 1.0);
         
         // Apply exponential curve: higher n = faster drop at large angles
-        double n = 3.0;  // tweak this as needed
+        double n = 1.0;  // tweak this as needed
         double scaled_t = std::pow(t, n);
 
         return speed_max_ - scaled_t * (speed_max_ - speed_min_);
