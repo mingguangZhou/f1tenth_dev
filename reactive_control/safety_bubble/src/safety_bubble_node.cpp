@@ -13,13 +13,18 @@ public:
     SafetyBubble() : Node("safety_bubble") {
         // Parameters
         declare_parameter<double>("bubble_radius", 0.0);
-        declare_parameter<double>("speed", 0.0);
+        declare_parameter<double>("speed_min", 0.0);
+        declare_parameter<double>("speed_max", 0.0);
         declare_parameter<int>("window_size", 0);
         declare_parameter<double>("perception_fov_deg", 0.0);
         declare_parameter<double>("kp", 0.0);
         declare_parameter<double>("ki", 0.0);
         declare_parameter<double>("kd", 0.0);
         declare_parameter<double>("steering_fov_deg", 0.0);
+        declare_parameter<bool>("smooth_steer", false);
+        declare_parameter<int>("max_offset", 0);
+        declare_parameter<double>("safety_distance", 0.0);
+
 
         // Subscribers and Publishers
         scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
@@ -33,9 +38,14 @@ public:
 
         // Initialize angles
         bubble_radius_ = get_parameter("bubble_radius").as_double();
-        speed_ = get_parameter("speed").as_double();
+        speed_min_ = get_parameter("speed_min").as_double();
+        speed_max_ = get_parameter("speed_max").as_double();
         window_size_ = get_parameter("window_size").as_int();
         perception_fov_deg_ = get_parameter("perception_fov_deg").as_double();
+        smooth_steer_ = get_parameter("smooth_steer").as_bool();
+        max_offset_ = get_parameter("max_offset").as_int();
+        safety_distance_ = get_parameter("safety_distance").as_double();
+
 
         kp_ = get_parameter("kp").as_double();
         ki_ = get_parameter("ki").as_double();
@@ -45,13 +55,17 @@ public:
         // Log parameters
         RCLCPP_DEBUG(this->get_logger(), "Initialized with parameters:");
         RCLCPP_DEBUG(this->get_logger(), "  bubble_radius        = %f", bubble_radius_);
-        RCLCPP_DEBUG(this->get_logger(), "  speed               = %f", speed_);
+        RCLCPP_DEBUG(this->get_logger(), "  speed_min            = %f", speed_min_);
+        RCLCPP_DEBUG(this->get_logger(), "  speed_max            = %f", speed_max_);
         RCLCPP_DEBUG(this->get_logger(), "  window_size         = %d", window_size_);
         RCLCPP_DEBUG(this->get_logger(), "  perception_fov_deg  = %f", perception_fov_deg_);
         RCLCPP_DEBUG(this->get_logger(), "  kp                  = %f", kp_);
         RCLCPP_DEBUG(this->get_logger(), "  ki                  = %f", ki_);
         RCLCPP_DEBUG(this->get_logger(), "  kd                  = %f", kd_);
         RCLCPP_DEBUG(this->get_logger(), "  steering_fov_deg    = %f", steering_fov_deg_);
+        RCLCPP_DEBUG(this->get_logger(), "  smooth_steer        = %s", smooth_steer_ ? "true" : "false");
+        RCLCPP_DEBUG(this->get_logger(), "  max_offset          = %d", max_offset_);
+        RCLCPP_DEBUG(this->get_logger(), "  safety_distance     = %f", safety_distance_);
 
         prev_time_ = this->now();
     }
@@ -73,9 +87,15 @@ private:
 
     // Algorithm parameters
     double bubble_radius_;
-    double speed_;
+    double speed_min_;
+    double speed_max_;
     int window_size_;
     double perception_fov_deg_;
+    bool smooth_steer_;
+    int max_offset_;
+    double safety_distance_;
+    size_t prev_best_idx_ = 0;
+
 
     // PID parameters
     double kp_;
@@ -174,17 +194,50 @@ private:
     }
 
     size_t find_best_point(const std::vector<float>& ranges, int start, int end) {
+        // Step 1: Find overall best point
         size_t best_idx = start;
         float max_val = ranges[start];
-        
         for (int i = start; i < end; ++i) {
             if (ranges[i] > max_val) {
                 max_val = ranges[i];
                 best_idx = i;
             }
         }
-        return best_idx;
+
+        if (!smooth_steer_) {
+            prev_best_idx_ = best_idx;
+            return best_idx;
+        }
+
+        // Step 2: Check if best_idx is within max_offset window
+        int window_start = std::max(start, static_cast<int>(prev_best_idx_) - max_offset_);
+        int window_end   = std::min(end, static_cast<int>(prev_best_idx_) + max_offset_ + 1);
+
+        if (best_idx >= static_cast<size_t>(window_start) && best_idx < static_cast<size_t>(window_end)) {
+            prev_best_idx_ = best_idx;
+            return best_idx;  // Best point is within smooth window
+        }
+
+        // Step 3: Search within smooth window for a safe direction
+        size_t safe_idx = prev_best_idx_;
+        float max_in_window = 0.0f;
+        for (int i = window_start; i < window_end; ++i) {
+            if (ranges[i] > safety_distance_ && ranges[i] > max_in_window) {
+                max_in_window = ranges[i];
+                safe_idx = i;
+            }
+        }
+
+        // Step 4: Use safe_idx if found, otherwise fallback to best_idx
+        if (max_in_window > 0.0f) {
+            prev_best_idx_ = safe_idx;
+            return safe_idx;
+        } else {
+            prev_best_idx_ = best_idx;
+            return best_idx;
+        }
     }
+
 
     void set_bubble(std::vector<float>& ranges, size_t closest_idx) {
         const float bubble_radius = bubble_radius_;
@@ -210,6 +263,18 @@ private:
         std::lock_guard<std::mutex> lock(data_mutex_);
         latest_scan_ = *scan_msg;
         scan_received_ = true;
+    }
+
+    double compute_speed(double steering_angle) const {
+        double abs_angle = std::abs(steering_angle);
+        double steering_fov_rad = steering_fov_deg_ * M_PI / 180.0;
+        double t = std::clamp(abs_angle / steering_fov_rad, 0.0, 1.0);
+        
+        // Apply exponential curve: higher n = faster drop at large angles
+        double n = 1.0;  // tweak this as needed
+        double scaled_t = std::pow(t, n);
+
+        return speed_max_ - scaled_t * (speed_max_ - speed_min_);
     }
 
     void control_callback() {
@@ -280,6 +345,9 @@ private:
         prev_steering_angle_ = new_steering_angle;
         prev_time_ = current_time;
 
+        // Update linear speed
+        double interpolated_speed = compute_speed(new_steering_angle);
+
         // Log key info
         RCLCPP_DEBUG(this->get_logger(),
                     "closest_idx=%zu gap=[%d,%d] best_idx=%zu desired_angle=%.4f dt=%.4f error=%.4f",
@@ -289,12 +357,15 @@ private:
                     "PID: P=%.4f I=%.4f D=%.4f => steering_output=%.4f => new_angle=%.4f",
                     P, I, D, steering_output, new_steering_angle);
 
+        RCLCPP_DEBUG(this->get_logger(), 
+                    "Interpolated speed: %.2f for angle %.2f", interpolated_speed, new_steering_angle);
+
         // Publish PID-corrected command
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
         drive_msg.header.stamp = current_time;
         drive_msg.header.frame_id = "laser";
         drive_msg.drive.steering_angle = new_steering_angle;
-        drive_msg.drive.speed = speed_;
+        drive_msg.drive.speed = interpolated_speed;
         
         drive_pub_->publish(drive_msg);
     }
