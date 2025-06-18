@@ -10,6 +10,10 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -g)
 endif()
 
+# Find the package before foreach
+find_package(rosidl_default_generators REQUIRED)
+find_package(visualization_msgs REQUIRED)
+
 # Find dependencies
 foreach(PACKAGE 
   ament_cmake 
@@ -26,6 +30,12 @@ foreach(PACKAGE
 
 endforeach()
 
+# Add message definition section here
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/BubbleInfo.msg"
+  DEPENDENCIES std_msgs  # Add others if needed
+)
+
 # Include Cpp "include" directory
 include_directories(include)
 
@@ -34,10 +44,21 @@ add_executable(safety_bubble_node src/safety_bubble_node.cpp)
 ament_target_dependencies(safety_bubble_node 
   rclcpp geometry_msgs ackermann_msgs nav_msgs sensor_msgs std_msgs
 )
+add_executable(visualization_node src/visualization_node.cpp)
+ament_target_dependencies(visualization_node
+  rclcpp std_msgs geometry_msgs visualization_msgs
+)
+
+rosidl_target_interfaces(safety_bubble_node  # Add this block after ament_target_dependencies
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 # Install Cpp executables
 install(TARGETS
   safety_bubble_node
+  DESTINATION lib/${PROJECT_NAME})
+
+install(TARGETS
+  visualization_node
   DESTINATION lib/${PROJECT_NAME})
 
 # Install Launch
@@ -62,5 +83,8 @@ if(BUILD_TESTING)
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+# Export message runtime dependency
+ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()

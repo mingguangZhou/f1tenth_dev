@@ -6,6 +6,10 @@
 #include <cmath>
 #include <mutex>
 
+#include "geometry_msgs/msg/point.hpp"
+#include "std_msgs/msg/float64.hpp"
+
+
 using namespace std::chrono_literals;
 
 class SafetyBubble : public rclcpp::Node {
@@ -68,6 +72,11 @@ public:
         RCLCPP_DEBUG(this->get_logger(), "  safety_distance     = %f", safety_distance_);
 
         prev_time_ = this->now();
+
+        // Extra publishers for visulization
+        bubble_center_pub_ = this->create_publisher<geometry_msgs::msg::Point>("bubble_center", 10);
+        bubble_radius_pub_ = this->create_publisher<std_msgs::msg::Float64>("bubble_radius", 10);
+        desired_angle_pub_ = this->create_publisher<std_msgs::msg::Float64>("desired_angle", 10);
     }
 
 private:
@@ -77,6 +86,11 @@ private:
     // ROS2 components
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+    // for visualization
+    rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr bubble_center_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr bubble_radius_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr desired_angle_pub_;
+
 
     // Variable to store the latest scan data
     sensor_msgs::msg::LaserScan latest_scan_;
@@ -113,6 +127,10 @@ private:
     double integral_ = 0.0;
     double prev_error_ = 0.0;
     double prev_steering_angle_ = 0.0;
+
+    // Visualization components
+    float bubble_center_x_;
+    float bubble_center_y_;
 
     std::vector<float> preprocess_scan(const sensor_msgs::msg::LaserScan& scan) {
         std::vector<float> ranges(scan.ranges.begin(), scan.ranges.end());
@@ -257,6 +275,10 @@ private:
         RCLCPP_DEBUG(this->get_logger(),
                     "Bubble set around closest_idx=%zu (dist=%.3f, angle=%.3f) -> removed angles in [%.3f, %.3f]",
                     closest_idx, min_dist, angle, min_angle, max_angle);
+
+        // Add bubble location for visualization
+        bubble_center_x_ = min_dist * std::cos(angle);
+        bubble_center_y_ = min_dist * std::sin(angle);
     }
 
     void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg) {
@@ -368,6 +390,21 @@ private:
         drive_msg.drive.speed = interpolated_speed;
         
         drive_pub_->publish(drive_msg);
+
+        // --- Publish Visualization Info ---
+        geometry_msgs::msg::Point center_msg;
+        center_msg.x = bubble_center_x_;
+        center_msg.y = bubble_center_y_;
+        center_msg.z = 0.0;
+        bubble_center_pub_->publish(center_msg);
+
+        std_msgs::msg::Float64 radius_msg;
+        radius_msg.data = bubble_radius_;
+        bubble_radius_pub_->publish(radius_msg);
+
+        std_msgs::msg::Float64 angle_msg;
+        angle_msg.data = desired_angle;
+        desired_angle_pub_->publish(angle_msg);
     }
 };
 

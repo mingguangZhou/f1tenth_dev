@@ -1,0 +1,3 @@
+float32 desired_angle
+float32 closest_dist
+float32 bubble_radius
