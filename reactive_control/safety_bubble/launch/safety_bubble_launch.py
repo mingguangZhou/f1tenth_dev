@@ -15,5 +15,11 @@ def generate_launch_description():
             name='safety_bubble_node',
             output='screen',
             parameters=[config_file]  # Use the constructed absolute path
+        ),
+        Node(
+            package='safety_bubble',
+            executable='visualization_node',
+            name='safety_bubble_visualizer',
+            output='screen'
         )
     ])
