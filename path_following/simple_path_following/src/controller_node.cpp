@@ -1,6 +1,8 @@
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
+#include "visualization_msgs/msg/marker.hpp"
+#include "geometry_msgs/msg/point.hpp"
 #include <cmath>
 
 class ControllerNode : public rclcpp::Node {
@@ -10,11 +12,13 @@ public:
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
 
         drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/drive", 10);
+        lookahead_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("lookahead_marker", 10);
+        steering_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("steering_arrow_marker", 10);
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ControllerNode::control_loop, this));
 
         lookahead_distance_ = 0.5;  // meters
-        velocity_ = 0.2;  // constant speed
+        velocity_ = 0.2;            // constant speed
 
         RCLCPP_INFO(this->get_logger(), "Controller node started.");
     }
@@ -50,22 +54,64 @@ private:
             return;
         }
 
-        // Compute steering angle using pure pursuit formula
+        // Compute steering angle using pure pursuit
         double x = lookahead.pose.position.x;
         double y = lookahead.pose.position.y;
-        double L = std::hypot(x, y);  // length to lookahead point
-
+        double L = std::hypot(x, y);
         double steering_angle = std::atan2(2.0 * y, L * L);
 
-        // Output drive command
+        // Publish drive command
         ackermann_msgs::msg::AckermannDriveStamped drive_msg;
         drive_msg.header.stamp = this->now();
         drive_msg.drive.speed = velocity_;
         drive_msg.drive.steering_angle = steering_angle;
-
         drive_pub_->publish(drive_msg);
 
-        RCLCPP_INFO(this->get_logger(), "Lookahead point: (%.2f, %.2f), Steer: %.2f", x, y, steering_angle);
+        // ---- Marker: Lookahead Point ----
+        visualization_msgs::msg::Marker lookahead_marker;
+        lookahead_marker.header.frame_id = "ego_racecar/laser";
+        lookahead_marker.header.stamp = this->now();
+        lookahead_marker.ns = "lookahead_point";
+        lookahead_marker.id = 0;
+        lookahead_marker.type = visualization_msgs::msg::Marker::SPHERE;
+        lookahead_marker.action = visualization_msgs::msg::Marker::ADD;
+        lookahead_marker.pose.position = lookahead.pose.position;
+        lookahead_marker.pose.orientation.w = 1.0;
+        lookahead_marker.scale.x = 0.1;
+        lookahead_marker.scale.y = 0.1;
+        lookahead_marker.scale.z = 0.1;
+        lookahead_marker.color.a = 1.0;
+        lookahead_marker.color.g = 1.0;
+        lookahead_marker.color.r = 0.0;
+        lookahead_marker.color.b = 0.0;
+        lookahead_marker_pub_->publish(lookahead_marker);
+
+        // ---- Marker: Steering Arrow ----
+        geometry_msgs::msg::Point start, end;
+        start.x = 0.0;
+        start.y = 0.0;
+        end.x = std::cos(steering_angle);
+        end.y = std::sin(steering_angle);
+
+        visualization_msgs::msg::Marker arrow_marker;
+        arrow_marker.header.frame_id = "ego_racecar/laser";
+        arrow_marker.header.stamp = this->now();
+        arrow_marker.ns = "steering_arrow";
+        arrow_marker.id = 1;
+        arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
+        arrow_marker.action = visualization_msgs::msg::Marker::ADD;
+        arrow_marker.points.push_back(start);
+        arrow_marker.points.push_back(end);
+        arrow_marker.scale.x = 0.05; // shaft width
+        arrow_marker.scale.y = 0.1;  // head width
+        arrow_marker.scale.z = 0.1;
+        arrow_marker.color.a = 1.0;
+        arrow_marker.color.r = 0.0;
+        arrow_marker.color.g = 0.0;
+        arrow_marker.color.b = 1.0;
+        steering_marker_pub_->publish(arrow_marker);
+
+        // RCLCPP_INFO(this->get_logger(), "Lookahead: (%.2f, %.2f), Steer: %.2f", x, y, steering_angle);
     }
 
     nav_msgs::msg::Path trajectory_;
@@ -74,6 +120,8 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr traj_sub_;
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr steering_marker_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
 

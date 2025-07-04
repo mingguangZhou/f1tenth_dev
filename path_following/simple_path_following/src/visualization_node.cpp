@@ -28,6 +28,14 @@ private:
         marker.color.g = 0.0;
         marker.color.b = 0.0;
 
+        // Start at (0, 0)
+        geometry_msgs::msg::Point start;
+        start.x = 0.0;
+        start.y = 0.0;
+        start.z = 0.0;
+        marker.points.push_back(start);
+
+        // Append rest of the trajectory
         for (const auto& pose : msg->poses) {
             geometry_msgs::msg::Point p;
             p.x = pose.pose.position.x;
