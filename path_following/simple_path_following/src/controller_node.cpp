@@ -17,27 +17,46 @@ public:
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ControllerNode::control_loop, this));
 
-        lookahead_distance_ = 0.5;  // meters
-        velocity_ = 0.2;            // constant speed
+        lookahead_distance_ = 0.3;  // meters
+        velocity_ = 1.0;            // constant speed
 
         RCLCPP_INFO(this->get_logger(), "Controller node started.");
     }
 
 private:
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
-        trajectory_ = *msg;
+        if (msg->poses.empty()) {
+            RCLCPP_WARN(this->get_logger(), "Received empty trajectory.");
+            return;
+        }
+
+        // Filter out invalid poses (x < 0)
+        nav_msgs::msg::Path filtered;
+        filtered.header = msg->header;
+        for (const auto& pose : msg->poses) {
+            if (pose.pose.position.x >= 0.0) {
+                filtered.poses.push_back(pose);
+            }
+        }
+
+        if (filtered.poses.empty()) {
+            RCLCPP_WARN(this->get_logger(), "All trajectory points filtered out (x < 0).");
+        } else {
+            trajectory_ = filtered;
+        }
     }
 
     void control_loop() {
         if (trajectory_.poses.empty()) {
-            RCLCPP_WARN(this->get_logger(), "No trajectory received.");
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "Waiting for valid trajectory...");
             return;
         }
 
         geometry_msgs::msg::PoseStamped lookahead;
         bool found = false;
 
-        // Find first point >= lookahead distance
+        // Find the first point ≥ lookahead distance
         for (const auto& pose : trajectory_.poses) {
             double dx = pose.pose.position.x;
             double dy = pose.pose.position.y;
@@ -54,7 +73,7 @@ private:
             return;
         }
 
-        // Compute steering angle using pure pursuit
+        // Pure Pursuit steering
         double x = lookahead.pose.position.x;
         double y = lookahead.pose.position.y;
         double L = std::hypot(x, y);
@@ -111,7 +130,7 @@ private:
         arrow_marker.color.b = 1.0;
         steering_marker_pub_->publish(arrow_marker);
 
-        // RCLCPP_INFO(this->get_logger(), "Lookahead: (%.2f, %.2f), Steer: %.2f", x, y, steering_angle);
+        // RCLCPP_INFO(this->get_logger(), "Steering: %.2f rad, Target: (%.2f, %.2f)", steering_angle, x, y);
     }
 
     nav_msgs::msg::Path trajectory_;

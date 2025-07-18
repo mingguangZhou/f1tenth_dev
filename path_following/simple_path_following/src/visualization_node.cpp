@@ -28,12 +28,18 @@ private:
         marker.color.g = 0.0;
         marker.color.b = 0.0;
 
-        // Start at (0, 0)
+        // Start marker at (0, 0)
         geometry_msgs::msg::Point start;
         start.x = 0.0;
         start.y = 0.0;
         start.z = 0.0;
-        marker.points.push_back(start);
+
+        // Add (0,0) only if the first trajectory point is not already there
+        if (msg->poses.empty() || 
+            (std::abs(msg->poses.front().pose.position.x) > 1e-3 || 
+             std::abs(msg->poses.front().pose.position.y) > 1e-3)) {
+            marker.points.push_back(start);
+        }
 
         // Append rest of the trajectory
         for (const auto& pose : msg->poses) {
