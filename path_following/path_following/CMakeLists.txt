@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(simple_path_following)
+project(path_following)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -24,7 +24,7 @@ find_package(ackermann_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 add_executable(planner_node src/planner_node.cpp)
-ament_target_dependencies(planner_node rclcpp geometry_msgs nav_msgs)
+ament_target_dependencies(planner_node rclcpp geometry_msgs nav_msgs visualization_msgs)
 
 add_executable(controller_node src/controller_node.cpp)
 ament_target_dependencies(controller_node rclcpp geometry_msgs nav_msgs ackermann_msgs visualization_msgs)

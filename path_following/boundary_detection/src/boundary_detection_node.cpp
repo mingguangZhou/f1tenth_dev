@@ -3,10 +3,10 @@
 #include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
-#include <nav_msgs/msg/path.hpp>
 
 struct Vec2f {
   float x;
@@ -25,41 +25,64 @@ struct IndexRange {
 
 class BoundaryDetectionNode : public rclcpp::Node {
  public:
-  BoundaryDetectionNode() : Node("boundary_detection_node") {
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+  BoundaryDetectionNode()
+      : Node("boundary_detection_node") {
+    scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
-        std::bind(&BoundaryDetectionNode::scan_callback, this,
-                  std::placeholders::_1));
+        std::bind(&BoundaryDetectionNode::scan_callback,
+                  this, std::placeholders::_1));
     boundary_markerarray_pub_ =
-        this->create_publisher<visualization_msgs::msg::MarkerArray>(
+        create_publisher<visualization_msgs::msg::MarkerArray>(
             "/boundary_markers", 10);
-    left_boundary_pub_ = this->create_publisher<nav_msgs::msg::Path>("left_boundary", 10);
-    right_boundary_pub_ = this->create_publisher<nav_msgs::msg::Path>("right_boundary", 10);
-    
-    RCLCPP_INFO(this->get_logger(),
-                "Boundary Detection Node has been started.");
+    left_boundary_pub_ =
+        create_publisher<nav_msgs::msg::Path>("left_boundary", 10);
+    right_boundary_pub_ =
+        create_publisher<nav_msgs::msg::Path>("right_boundary", 10);
+
+    RCLCPP_INFO(get_logger(), "Boundary Detection Node has been started.");
   }
 
  private:
   static constexpr float INVALID_DISTANCE = 10.0f;
   static constexpr float MIN_VALID_DISTANCE = 0.05f;
 
-  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-    // Pre-clean invalid values
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      boundary_markerarray_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr left_boundary_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr right_boundary_pub_;
+
+  void scan_callback(
+      const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+    // Copy and clean up the scan
     auto cleaned_msg = std::make_shared<sensor_msgs::msg::LaserScan>(*msg);
     preprocess_scan(*cleaned_msg);
 
-    Boundaries boundaries = detect_boundaries(cleaned_msg);
-    publish_boundary_markers(boundaries, msg->header);
-    publish_boundary_paths(boundaries, msg->header);
+    // Detect raw boundaries
+    Boundaries b = detect_boundaries(cleaned_msg);
+
+    // --- Enforce both lists to run in increasing +X order ---
+    auto enforce_forward_s = [&](std::vector<Vec2f> &pts) {
+      if (pts.size() < 2) return;
+      if (pts.front().x > pts.back().x) {
+        std::reverse(pts.begin(), pts.end());
+      }
+    };
+    enforce_forward_s(b.left);
+    enforce_forward_s(b.right);
+    // --------------------------------------------------------
+
+    // Publish as markers and as Path messages
+    publish_boundary_markers(b, msg->header);
+    publish_boundary_paths(b, msg->header);
   }
 
   void preprocess_scan(sensor_msgs::msg::LaserScan &scan) {
-    for (auto &val : scan.ranges) {
-      if (std::isnan(val)) {
-        val = 0.0f;
-      } else if (std::isinf(val)) {
-        val = INVALID_DISTANCE;
+    for (auto &r : scan.ranges) {
+      if (std::isnan(r)) {
+        r = 0.0f;
+      } else if (!std::isfinite(r)) {
+        r = INVALID_DISTANCE;
       }
     }
   }
@@ -68,179 +91,145 @@ class BoundaryDetectionNode : public rclcpp::Node {
     return r > MIN_VALID_DISTANCE && r < INVALID_DISTANCE;
   }
 
-  void publish_boundary_markers(const Boundaries &boundaries,
-                                const std_msgs::msg::Header &header) {
-    visualization_msgs::msg::Marker left_marker;
-    left_marker.header = header;
-    left_marker.ns = "boundaries";
-    left_marker.id = 0;
-    left_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-    left_marker.action = visualization_msgs::msg::Marker::ADD;
-    left_marker.scale.x = 0.05;
-    left_marker.color.r = 1.0;
-    left_marker.color.g = 0.0;
-    left_marker.color.b = 0.0;
-    left_marker.color.a = 1.0;
-    left_marker.points.reserve(boundaries.left.size());
-    for (const auto &pt : boundaries.left) {
+  void publish_boundary_markers(
+      const Boundaries &boundaries,
+      const std_msgs::msg::Header &header) {
+    visualization_msgs::msg::Marker left_m;
+    left_m.header = header;
+    left_m.ns = "boundaries";
+    left_m.id = 0;
+    left_m.type = left_m.LINE_STRIP;
+    left_m.action = left_m.ADD;
+    left_m.scale.x = 0.05f;
+    left_m.color.r = 1.0f;
+    left_m.color.a = 1.0f;
+    left_m.points.reserve(boundaries.left.size());
+    for (auto &pt : boundaries.left) {
       geometry_msgs::msg::Point p;
-      p.x = pt.x;
-      p.y = pt.y;
-      p.z = 0.0;
-      left_marker.points.push_back(p);
+      p.x = pt.x; p.y = pt.y; p.z = 0.0;
+      left_m.points.push_back(p);
     }
 
-    visualization_msgs::msg::Marker right_marker = left_marker;
-    right_marker.id = 1;
-    right_marker.color.r = 0.0;
-    right_marker.color.g = 0.0;
-    right_marker.color.b = 1.0;
-    right_marker.points.clear();
-    right_marker.points.reserve(boundaries.right.size());
-    for (const auto &pt : boundaries.right) {
+    visualization_msgs::msg::Marker right_m = left_m;
+    right_m.id = 1;
+    right_m.color.r = 0.0f;
+    right_m.color.b = 1.0f;
+    right_m.points.clear();
+    right_m.points.reserve(boundaries.right.size());
+    for (auto &pt : boundaries.right) {
       geometry_msgs::msg::Point p;
-      p.x = pt.x;
-      p.y = pt.y;
-      p.z = 0.0;
-      right_marker.points.push_back(p);
+      p.x = pt.x; p.y = pt.y; p.z = 0.0;
+      right_m.points.push_back(p);
     }
 
-    visualization_msgs::msg::MarkerArray marker_array;
-    marker_array.markers.push_back(left_marker);
-    marker_array.markers.push_back(right_marker);
-    boundary_markerarray_pub_->publish(marker_array);
+    visualization_msgs::msg::MarkerArray ma;
+    ma.markers.push_back(left_m);
+    ma.markers.push_back(right_m);
+    boundary_markerarray_pub_->publish(ma);
   }
 
-  void publish_boundary_paths(const Boundaries &boundaries,
-                            const std_msgs::msg::Header &header) {
+  void publish_boundary_paths(
+      const Boundaries &boundaries,
+      const std_msgs::msg::Header &header) {
     nav_msgs::msg::Path left_path;
     nav_msgs::msg::Path right_path;
     left_path.header = header;
     right_path.header = header;
 
-    for (const auto &pt : boundaries.left) {
-        geometry_msgs::msg::PoseStamped pose;
-        pose.header = header;
-        pose.pose.position.x = pt.x;
-        pose.pose.position.y = pt.y;
-        pose.pose.orientation.w = 1.0;
-        left_path.poses.push_back(pose);
+    for (auto &pt : boundaries.left) {
+      geometry_msgs::msg::PoseStamped ps;
+      ps.header = header;
+      ps.pose.position.x = pt.x;
+      ps.pose.position.y = pt.y;
+      ps.pose.orientation.w = 1.0;
+      left_path.poses.push_back(ps);
     }
-
-    for (const auto &pt : boundaries.right) {
-        geometry_msgs::msg::PoseStamped pose;
-        pose.header = header;
-        pose.pose.position.x = pt.x;
-        pose.pose.position.y = pt.y;
-        pose.pose.orientation.w = 1.0;
-        right_path.poses.push_back(pose);
+    for (auto &pt : boundaries.right) {
+      geometry_msgs::msg::PoseStamped ps;
+      ps.header = header;
+      ps.pose.position.x = pt.x;
+      ps.pose.position.y = pt.y;
+      ps.pose.orientation.w = 1.0;
+      right_path.poses.push_back(ps);
     }
 
     left_boundary_pub_->publish(left_path);
     right_boundary_pub_->publish(right_path);
   }
 
+  struct IndexRange { size_t start, end; };
 
-  IndexRange grow(const sensor_msgs::msg::LaserScan::SharedPtr &msg,
-                  size_t index, float threshold) {
-    IndexRange range;
-    range.start = index;
-    range.end = index;
-
-    auto calculate_point = [&](size_t idx) {
-      float angle = msg->angle_min + idx * msg->angle_increment;
-      float x = msg->ranges[idx] * std::cos(angle);
-      float y = msg->ranges[idx] * std::sin(angle);
-      return Vec2f{x, y};
+  IndexRange grow(
+      const sensor_msgs::msg::LaserScan::SharedPtr &scan,
+      size_t idx, float thresh) {
+    IndexRange r{idx, idx};
+    if (!is_valid_range(scan->ranges[idx])) {
+      return r;
+    }
+    auto calc = [&](size_t i) {
+      float a = scan->angle_min + i * scan->angle_increment;
+      return Vec2f{
+        scan->ranges[i] * std::cos(a),
+        scan->ranges[i] * std::sin(a)
+      };
     };
-
-    if (!is_valid_range(msg->ranges[index])) {
-      return range;  // Invalid seed point
+    Vec2f last = calc(idx);
+    // backward
+    for (size_t i = idx; i-- > 0; ) {
+      if (!is_valid_range(scan->ranges[i])) continue;
+      Vec2f cur = calc(i);
+      if (std::hypot(cur.x - last.x, cur.y - last.y) < thresh) {
+        r.start = i; last = cur;
+      } else break;
     }
-
-    Vec2f last_point = calculate_point(index);
-
-    // Expand backwards
-    for (size_t i = index; i > 0; --i) {
-      float r = msg->ranges[i - 1];
-      if (!is_valid_range(r)) continue;
-
-      Vec2f current_point = calculate_point(i - 1);
-      float distance = std::hypot(current_point.x - last_point.x,
-                                  current_point.y - last_point.y);
-      if (distance < threshold) {
-        range.start = i - 1;
-        last_point = current_point;
-      } else {
-        break;
-      }
+    // forward
+    last = calc(idx);
+    for (size_t i = idx + 1; i < scan->ranges.size(); ++i) {
+      if (!is_valid_range(scan->ranges[i])) continue;
+      Vec2f cur = calc(i);
+      if (std::hypot(cur.x - last.x, cur.y - last.y) < thresh) {
+        r.end = i; last = cur;
+      } else break;
     }
-
-    last_point = calculate_point(index);
-
-    // Expand forwards
-    for (size_t i = index; i < msg->ranges.size() - 1; ++i) {
-      float r = msg->ranges[i + 1];
-      if (!is_valid_range(r)) continue;
-
-      Vec2f current_point = calculate_point(i + 1);
-      float distance = std::hypot(current_point.x - last_point.x,
-                                  current_point.y - last_point.y);
-      if (distance < threshold) {
-        range.end = i + 1;
-        last_point = current_point;
-      } else {
-        break;
-      }
-    }
-
-    return range;
+    return r;
   }
 
   Boundaries detect_boundaries(
-      const sensor_msgs::msg::LaserScan::SharedPtr &msg) {
-    Boundaries boundaries;
-    float angle_min = msg->angle_min;
-    float angle_increment = msg->angle_increment;
-    const float distance_threshold =
-        // std::min(msg->range_max * msg->angle_increment * 2, 0.5f);
-        std::min(msg->range_max * msg->angle_increment * 6, 0.5f); // temporarily make it big for simulation
+      const sensor_msgs::msg::LaserScan::SharedPtr &scan) {
+    Boundaries b;
+    float amin = scan->angle_min;
+    float ainc = scan->angle_increment;
+    float thresh = std::min(scan->range_max * ainc * 6, 0.5f);
 
-    size_t left_target_index =
-        static_cast<size_t>((-M_PI_2 - angle_min) / angle_increment);
-    size_t right_target_index =
-        static_cast<size_t>((M_PI_2 - angle_min) / angle_increment);
-    left_target_index = std::min(left_target_index, msg->ranges.size() - 1);
-    right_target_index = std::min(right_target_index, msg->ranges.size() - 1);
+    size_t li = std::min<size_t>(
+      (static_cast<float>(-M_PI_2) - amin) / ainc,
+      scan->ranges.size() - 1
+    );
+    size_t ri = std::min<size_t>(
+      (static_cast<float>( M_PI_2) - amin) / ainc,
+      scan->ranges.size() - 1
+    );
 
-    IndexRange left_range = grow(msg, left_target_index, distance_threshold);
-    for (size_t i = left_range.start; i <= left_range.end; ++i) {
-      float angle = angle_min + i * angle_increment;
-      float r = msg->ranges[i];
+    auto Lr = grow(scan, li, thresh);
+    for (size_t i = Lr.start; i <= Lr.end; ++i) {
+      float r = scan->ranges[i];
       if (is_valid_range(r)) {
-        boundaries.left.push_back(Vec2f{r * std::cos(angle),
-                                        r * std::sin(angle)});
+        float a = amin + i * ainc;
+        b.left.push_back({ r * std::cos(a), r * std::sin(a) });
       }
     }
 
-    IndexRange right_range = grow(msg, right_target_index, distance_threshold);
-    for (size_t i = right_range.start; i <= right_range.end; ++i) {
-      float angle = angle_min + i * angle_increment;
-      float r = msg->ranges[i];
+    auto Rr = grow(scan, ri, thresh);
+    for (size_t i = Rr.start; i <= Rr.end; ++i) {
+      float r = scan->ranges[i];
       if (is_valid_range(r)) {
-        boundaries.right.push_back(Vec2f{r * std::cos(angle),
-                                         r * std::sin(angle)});
+        float a = amin + i * ainc;
+        b.right.push_back({ r * std::cos(a), r * std::sin(a) });
       }
     }
 
-    return boundaries;
+    return b;
   }
-
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      boundary_markerarray_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr left_boundary_pub_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr right_boundary_pub_;
 };
 
 int main(int argc, char **argv) {

@@ -1,67 +1,79 @@
-#include "rclcpp/rclcpp.hpp"
-#include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "nav_msgs/msg/path.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
 
-// Simple 2D point
+// Simple 2D point.
 struct Vec2f {
   double x;
   double y;
 };
 
+// PlannerNode subscribes to left and right boundary paths, computes a smoothed
+// centerline starting at least kMinStartX ahead of the vehicle, and publishes
+// the trajectory. It also publishes correspondence markers.
 class PlannerNode : public rclcpp::Node {
  public:
   PlannerNode()
       : Node("planner_node"),
-        resample_count_(100),  // Number of points to resample per boundary
-        smooth_window_(3) {   // Half-window size for smoothing
+        resample_count_(100),   // Number of points for resampling
+        smooth_window_(3),      // Half-window size for smoothing
+        min_start_x_(1.0) {     // Minimum X for first point
+    using std::placeholders::_1;
+
     left_subscriber_ = create_subscription<nav_msgs::msg::Path>(
-        "left_boundary",
-        rclcpp::QoS(10),
-        std::bind(&PlannerNode::OnLeftBoundary, this, std::placeholders::_1));
+        "left_boundary", rclcpp::QoS(10),
+        std::bind(&PlannerNode::OnLeftBoundary, this, _1));
 
     right_subscriber_ = create_subscription<nav_msgs::msg::Path>(
-        "right_boundary",
-        rclcpp::QoS(10),
-        std::bind(&PlannerNode::OnRightBoundary, this, std::placeholders::_1));
+        "right_boundary", rclcpp::QoS(10),
+        std::bind(&PlannerNode::OnRightBoundary, this, _1));
 
     trajectory_publisher_ = create_publisher<nav_msgs::msg::Path>(
         "trajectory", rclcpp::QoS(10));
+
+    correspondence_publisher_ =
+        create_publisher<visualization_msgs::msg::MarkerArray>(
+            "correspondence_markers", rclcpp::QoS(10));
 
     RCLCPP_INFO(get_logger(), "PlannerNode initialized.");
   }
 
  private:
-  // Subscribers and publisher
+  // Subscribers and publishers.
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr left_subscriber_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr right_subscriber_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      correspondence_publisher_;
 
-  // Latest boundary messages
-  nav_msgs::msg::Path::SharedPtr left_path_{nullptr};
-  nav_msgs::msg::Path::SharedPtr right_path_{nullptr};
+  // Latest boundary messages.
+  nav_msgs::msg::Path::SharedPtr left_path_;
+  nav_msgs::msg::Path::SharedPtr right_path_;
 
-  // Parameters
+  // Resampling and smoothing parameters.
   const size_t resample_count_;
   const int smooth_window_;
+  const double min_start_x_;
 
-  // Callback for left boundary
+  // Callback invoked when a new left boundary arrives.
   void OnLeftBoundary(const nav_msgs::msg::Path::SharedPtr msg) {
     left_path_ = msg;
     TryPublishTrajectory();
   }
 
-  // Callback for right boundary
+  // Callback invoked when a new right boundary arrives.
   void OnRightBoundary(const nav_msgs::msg::Path::SharedPtr msg) {
     right_path_ = msg;
     TryPublishTrajectory();
   }
 
-  // Attempt to compute and publish the central trajectory
+  // Attempts to compute and publish the centerline trajectory.
   void TryPublishTrajectory() {
     if (!left_path_ || !right_path_) {
       return;
@@ -69,7 +81,6 @@ class PlannerNode : public rclcpp::Node {
 
     auto left_pts = ConvertToVec(left_path_);
     auto right_pts = ConvertToVec(right_path_);
-
     if (left_pts.size() < 2 || right_pts.size() < 2) {
       RCLCPP_WARN(get_logger(), "Insufficient boundary points.");
       return;
@@ -78,53 +89,57 @@ class PlannerNode : public rclcpp::Node {
     auto left_rs = Resample(left_pts, resample_count_);
     auto right_rs = Resample(right_pts, resample_count_);
 
-    // Build two candidate centerlines (original and reversed)
+    // Build two candidate trajectories and choose the forward one.
     auto traj1 = BuildCenterline(left_rs, right_rs);
     auto traj2 = BuildCenterline(Reverse(left_rs), Reverse(right_rs));
-
-    // Choose the forward trajectory
     const auto &best = (IsForward(traj1) || !IsForward(traj2)) ? traj1 : traj2;
+
+    // Publish 1:1 correspondence markers for viz
+  +  PublishCorrespondences(left_rs, right_rs);
+
+    if (IsForward(traj1) && !IsForward(traj2)) {
+      RCLCPP_INFO(get_logger(), "Using forward trajectory.");
+    } else if (!IsForward(traj1) && IsForward(traj2)) {
+      RCLCPP_INFO(get_logger(), "Using reverse trajectory.");
+    } else {
+      RCLCPP_WARN(get_logger(), "Both trajectories are non-forward.");
+    }
 
     if (!best.poses.empty()) {
       trajectory_publisher_->publish(best);
     }
   }
 
-  // Convert ROS Path to vector of Vec2f
+  // Converts a ROS Path to a vector of Vec2f.
   static std::vector<Vec2f> ConvertToVec(
       const nav_msgs::msg::Path::SharedPtr &path) {
     std::vector<Vec2f> pts;
     pts.reserve(path->poses.size());
-    for (const auto &pose_stamped : path->poses) {
-      pts.push_back({
-          pose_stamped.pose.position.x,
-          pose_stamped.pose.position.y
-      });
+    for (const auto &ps : path->poses) {
+      pts.push_back({ps.pose.position.x, ps.pose.position.y});
     }
     return pts;
   }
 
-  // Reverse the order of a vector
+  // Reverses the order of points in a vector.
   static std::vector<Vec2f> Reverse(const std::vector<Vec2f> &v) {
     std::vector<Vec2f> out(v);
     std::reverse(out.begin(), out.end());
     return out;
   }
 
-  // Check if the first segment of the path goes in +X direction
+  // Returns true if the first segment of the path goes in +X direction.
   static bool IsForward(const nav_msgs::msg::Path &path) {
     if (path.poses.size() < 2) {
       return false;
     }
-    double dx = path.poses[1].pose.position.x -
-                path.poses[0].pose.position.x;
+    double dx = path.poses[1].pose.position.x - path.poses[0].pose.position.x;
     return dx >= 0.0;
   }
 
-  // Build the centerline path from two boundary vectors
+  // Builds a smooth centerline with the first point at least min_start_x_ ahead.
   nav_msgs::msg::Path BuildCenterline(
-      const std::vector<Vec2f> &A,
-      const std::vector<Vec2f> &B) {
+      const std::vector<Vec2f> &A, const std::vector<Vec2f> &B) {
     auto pairs = MatchBoundaries(A, B);
     std::vector<Vec2f> center;
     center.reserve(pairs.size());
@@ -132,17 +147,14 @@ class PlannerNode : public rclcpp::Node {
     for (const auto &pr : pairs) {
       const auto &a = A[pr.first];
       const auto &b = B[pr.second];
-      center.push_back({
-          0.5 * (a.x + b.x),
-          0.5 * (a.y + b.y)
-      });
+      center.push_back({0.5 * (a.x + b.x), 0.5 * (a.y + b.y)});
     }
 
     center = Smooth(center, smooth_window_);
 
-    // Remove points with x < 0
+    // Ensure the first point is at least min_start_x_ ahead.
     size_t idx = 0;
-    while (idx < center.size() && center[idx].x < 0.0) {
+    while (idx < center.size() && center[idx].x < min_start_x_) {
       ++idx;
     }
     if (idx > 0) {
@@ -153,7 +165,6 @@ class PlannerNode : public rclcpp::Node {
     out.header = left_path_->header;
     out.header.stamp = now();
     out.poses.reserve(center.size());
-
     for (const auto &p : center) {
       geometry_msgs::msg::PoseStamped ps;
       ps.header = out.header;
@@ -165,7 +176,7 @@ class PlannerNode : public rclcpp::Node {
     return out;
   }
 
-  // Compute cumulative distances along polyline
+  // Computes cumulative distances along a polyline.
   static std::vector<double> CumDist(const std::vector<Vec2f> &v) {
     std::vector<double> d(v.size(), 0.0);
     for (size_t i = 1; i < v.size(); ++i) {
@@ -176,7 +187,7 @@ class PlannerNode : public rclcpp::Node {
     return d;
   }
 
-  // Resample polyline to N points uniformly along arc-length
+  // Resamples a polyline to N points uniformly along its length.
   static std::vector<Vec2f> Resample(
       const std::vector<Vec2f> &v, size_t N) {
     auto d = CumDist(v);
@@ -204,12 +215,11 @@ class PlannerNode : public rclcpp::Node {
     return out;
   }
 
-  // Greedy nearest-neighbor matching for unequal-length polylines
+  // Matches two polylines via greedy nearest-neighbor seeding and lock-step march.
   static std::vector<std::pair<size_t, size_t>> MatchBoundaries(
-      const std::vector<Vec2f> &left_pts,
-      const std::vector<Vec2f> &right_pts) {
+      const std::vector<Vec2f> &L, const std::vector<Vec2f> &R) {
     std::vector<std::pair<size_t, size_t>> matches;
-    if (left_pts.empty() || right_pts.empty()) {
+    if (L.empty() || R.empty()) {
       return matches;
     }
 
@@ -229,17 +239,17 @@ class PlannerNode : public rclcpp::Node {
       return std::make_pair(best_idx, best_dist2);
     };
 
-    auto [r0, distL] = NearestIndex(left_pts[0], right_pts);
-    auto [l0, distR] = NearestIndex(right_pts[0], left_pts);
+    auto [r0, distL] = NearestIndex(L[0], R);
+    auto [l0, distR] = NearestIndex(R[0], L);
 
     size_t i = 0;
-    size_t j = (distL < distR) ? r0 : 0;
+    size_t j = (distL < distR ? r0 : 0);
     if (distR <= distL) {
       i = l0;
       j = 0;
     }
 
-    while (i < left_pts.size() && j < right_pts.size()) {
+    while (i < L.size() && j < R.size()) {
       matches.emplace_back(i, j);
       ++i;
       ++j;
@@ -247,9 +257,9 @@ class PlannerNode : public rclcpp::Node {
     return matches;
   }
 
-  // Simple moving-average smoother
-  static std::vector<Vec2f> Smooth(
-      const std::vector<Vec2f> &in, int window) {
+  // Applies a simple moving-average smoother to a polyline.
+  static std::vector<Vec2f> Smooth(const std::vector<Vec2f> &in,
+                                    int window) {
     size_t M = in.size();
     std::vector<Vec2f> out(in);
     for (size_t i = 0; i < M; ++i) {
