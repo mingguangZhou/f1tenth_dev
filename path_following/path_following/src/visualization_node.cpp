@@ -15,8 +15,7 @@ public:
 private:
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
         visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = "ego_racecar/laser";  
-        marker.header.stamp = this->now();
+        marker.header = msg->header; 
         marker.ns = "trajectory";
         marker.id = 0;
         marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
@@ -24,8 +23,8 @@ private:
 
         marker.scale.x = 0.05;  // line width
         marker.color.a = 1.0;
-        marker.color.r = 1.0;
-        marker.color.g = 0.0;
+        marker.color.r = 0.0;
+        marker.color.g = 1.0;
         marker.color.b = 0.0;
 
         // Start marker at (0, 0)

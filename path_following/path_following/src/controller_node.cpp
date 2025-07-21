@@ -8,6 +8,10 @@
 class ControllerNode : public rclcpp::Node {
 public:
     ControllerNode() : Node("controller_node") {
+        // Parameters
+        declare_parameter<double>("lookahead_distance", 0.6);
+        declare_parameter<double>("velocity", 1.0);
+        
         traj_sub_ = this->create_subscription<nav_msgs::msg::Path>(
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
 
@@ -17,8 +21,9 @@ public:
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ControllerNode::control_loop, this));
 
-        lookahead_distance_ = 0.3;  // meters
-        velocity_ = 1.0;            // constant speed
+        lookahead_distance_ = get_parameter("lookahead_distance").as_double();
+        velocity_ = get_parameter("velocity").as_double();
+
 
         RCLCPP_INFO(this->get_logger(), "Controller node started.");
     }
@@ -88,8 +93,8 @@ private:
 
         // ---- Marker: Lookahead Point ----
         visualization_msgs::msg::Marker lookahead_marker;
-        lookahead_marker.header.frame_id = "ego_racecar/laser";
-        lookahead_marker.header.stamp = this->now();
+        lookahead_marker.header.frame_id = trajectory_.header.frame_id;
+        lookahead_marker.header.stamp = drive_msg.header.stamp;
         lookahead_marker.ns = "lookahead_point";
         lookahead_marker.id = 0;
         lookahead_marker.type = visualization_msgs::msg::Marker::SPHERE;
@@ -113,8 +118,8 @@ private:
         end.y = std::sin(steering_angle);
 
         visualization_msgs::msg::Marker arrow_marker;
-        arrow_marker.header.frame_id = "ego_racecar/laser";
-        arrow_marker.header.stamp = this->now();
+        arrow_marker.header.frame_id = trajectory_.header.frame_id;
+        arrow_marker.header.stamp = drive_msg.header.stamp;
         arrow_marker.ns = "steering_arrow";
         arrow_marker.id = 1;
         arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
