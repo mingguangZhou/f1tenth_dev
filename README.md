@@ -105,13 +105,13 @@ There are multiple ways to launch your own agent to control the vehicles.
 ```bash
 source /opt/ros/foxy/setup.bash
 source install/local_setup.bash
-colcon build --packages-select gap_follow
+colcon build --packages-select boundary_detection path_following
 ```
 2. After build succeed, in the same bash, make sure to source both the ROS2 setup script and the local workspace setup script again (might not be the most elegant way), and for this case run the launch file for the node:
 ```bash
 source /opt/ros/foxy/setup.bash
 source install/local_setup.bash
-ros2 launch gap_follow gap_follow_launch.py
+ros2 launch path_following path_following_launch.py 
 ```
 The docker container should also had installed the GDB, so you can also start a GDB session rather than launch file (to source again seems not needed for this way):
 ```bash
