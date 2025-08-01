@@ -13,6 +13,9 @@ public:
     }
 
 private:
+    // vehicle specs
+    float laser_offset_x_ = 0.27;
+    
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
         visualization_msgs::msg::Marker marker;
         marker.header = msg->header; 
@@ -27,15 +30,15 @@ private:
         marker.color.g = 1.0;
         marker.color.b = 0.0;
 
-        // Start marker at (0, 0)
+        // Start marker at origin
         geometry_msgs::msg::Point start;
-        start.x = 0.0;
+        start.x = 0.0 + laser_offset_x_;
         start.y = 0.0;
         start.z = 0.0;
 
-        // Add (0,0) only if the first trajectory point is not already there
+        // Add origin only if the first trajectory point is not already there
         if (msg->poses.empty() || 
-            (std::abs(msg->poses.front().pose.position.x) > 1e-3 || 
+            (std::abs(msg->poses.front().pose.position.x - laser_offset_x_) > 1e-3 || 
              std::abs(msg->poses.front().pose.position.y) > 1e-3)) {
             marker.points.push_back(start);
         }

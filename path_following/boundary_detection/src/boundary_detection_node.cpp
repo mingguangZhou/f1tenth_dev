@@ -40,6 +40,8 @@ class BoundaryDetectionNode : public rclcpp::Node {
  private:
   static constexpr float INVALID_DISTANCE = 10.0f;
   static constexpr float MIN_VALID_DISTANCE = 0.05f;
+  // vehicle specs
+  float laser_offset_x_ = 0.27;
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
@@ -188,7 +190,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
     auto calc = [&](size_t i) {
       float a = scan->angle_min + i * scan->angle_increment;
       return Vec2f{
-        scan->ranges[i] * std::cos(a),
+        scan->ranges[i] * std::cos(a) + laser_offset_x_, // add x offset, so the origin is united to the rear axis
         scan->ranges[i] * std::sin(a)
       };
     };
