@@ -9,8 +9,8 @@ class ControllerNode : public rclcpp::Node {
 public:
     ControllerNode() : Node("controller_node") {
         // Parameters
-        declare_parameter<double>("lookahead_distance", 0.6);
-        declare_parameter<double>("velocity", 1.0);
+        declare_parameter<double>("lookahead_distance", 0.0);
+        declare_parameter<double>("velocity", 0.0);
         
         traj_sub_ = this->create_subscription<nav_msgs::msg::Path>(
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
@@ -29,6 +29,9 @@ public:
     }
 
 private:
+    // vehicle specs
+    double  wheelbase_ = 0.33;
+
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
         if (msg->poses.empty()) {
             RCLCPP_WARN(this->get_logger(), "Received empty trajectory.");
@@ -82,7 +85,8 @@ private:
         double x = lookahead.pose.position.x;
         double y = lookahead.pose.position.y;
         double L = std::hypot(x, y);
-        double steering_angle = std::atan2(2.0 * y, L * L);
+        double curvature = 2.0 * y / (L * L);
+        double steering_angle = std::atan(curvature * wheelbase_);
 
         // Publish drive command
         ackermann_msgs::msg::AckermannDriveStamped drive_msg;
