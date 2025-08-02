@@ -161,6 +161,23 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   struct IndexRange { size_t start, end; };
 
+  size_t find_smallest_range_around(
+      const sensor_msgs::msg::LaserScan::SharedPtr &scan,
+      size_t idx) {
+    size_t start = (idx >= 10) ? idx - 10 : 0;
+    size_t end = std::min(idx + 10, scan->ranges.size() - 1);
+    float min_range = std::numeric_limits<float>::max();
+    size_t min_idx = idx;
+    for (size_t i = start; i <= end; ++i) {
+      float r = scan->ranges[i];
+      if (is_valid_range(r) && r < min_range) {
+        min_range = r;
+        min_idx = i;
+      }
+    }
+    return min_idx;
+  }
+
   IndexRange grow(
       const sensor_msgs::msg::LaserScan::SharedPtr &scan,
       size_t idx, float thresh) {
@@ -204,8 +221,8 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
     size_t li, ri;
     if (state_.has_value()) {
-      li = state_->nearest_left_scan_idx;
-      ri = state_->nearest_right_scan_idx;
+      li = find_smallest_range_around(scan, state_->nearest_left_scan_idx);
+      ri = find_smallest_range_around(scan, state_->nearest_right_scan_idx);
     } else {
       li = std::min<size_t>(
         (static_cast<float>(-M_PI_2) - amin) / ainc,
