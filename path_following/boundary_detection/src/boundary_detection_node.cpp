@@ -18,11 +18,6 @@ struct Boundaries {
   std::vector<Vec2f> right;
 };
 
-struct IndexRange {
-  size_t start;
-  size_t end;
-};
-
 class BoundaryDetectionNode : public rclcpp::Node {
  public:
   BoundaryDetectionNode()
@@ -51,6 +46,13 @@ class BoundaryDetectionNode : public rclcpp::Node {
       boundary_markerarray_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr left_boundary_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr right_boundary_pub_;
+
+  struct State {
+    size_t nearest_left_scan_idx = 0;
+    size_t nearest_right_scan_idx = 0;
+  };
+
+  std::optional<State> state_;
 
   void scan_callback(
       const sensor_msgs::msg::LaserScan::SharedPtr msg) {
@@ -159,6 +161,23 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   struct IndexRange { size_t start, end; };
 
+  size_t find_smallest_range_around(
+      const sensor_msgs::msg::LaserScan::SharedPtr &scan,
+      size_t idx) {
+    size_t start = (idx >= 10) ? idx - 10 : 0;
+    size_t end = std::min(idx + 10, scan->ranges.size() - 1);
+    float min_range = std::numeric_limits<float>::max();
+    size_t min_idx = idx;
+    for (size_t i = start; i <= end; ++i) {
+      float r = scan->ranges[i];
+      if (is_valid_range(r) && r < min_range) {
+        min_range = r;
+        min_idx = i;
+      }
+    }
+    return min_idx;
+  }
+
   IndexRange grow(
       const sensor_msgs::msg::LaserScan::SharedPtr &scan,
       size_t idx, float thresh) {
@@ -196,37 +215,66 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   Boundaries detect_boundaries(
       const sensor_msgs::msg::LaserScan::SharedPtr &scan) {
-    Boundaries b;
     float amin = scan->angle_min;
     float ainc = scan->angle_increment;
     float thresh = std::min(scan->range_max * ainc * 6, 0.5f);
 
-    size_t li = std::min<size_t>(
-      (static_cast<float>(-M_PI_2) - amin) / ainc,
-      scan->ranges.size() - 1
-    );
-    size_t ri = std::min<size_t>(
-      (static_cast<float>( M_PI_2) - amin) / ainc,
-      scan->ranges.size() - 1
-    );
+    size_t li, ri;
+    if (state_.has_value()) {
+      li = find_smallest_range_around(scan, state_->nearest_left_scan_idx);
+      ri = find_smallest_range_around(scan, state_->nearest_right_scan_idx);
+    } else {
+      li = std::min<size_t>(
+        (static_cast<float>(-M_PI_2) - amin) / ainc,
+        scan->ranges.size() - 1
+      );
+      ri = std::min<size_t>(
+        (static_cast<float>( M_PI_2) - amin) / ainc,
+        scan->ranges.size() - 1
+      );
+    }
 
     auto Lr = grow(scan, li, thresh);
+    auto Rr = grow(scan, ri, thresh);
+    Boundaries b;
+    if (Lr.end >= Rr.start && Lr.start <= Rr.end) {
+      state_ = std::nullopt;
+      return Boundaries{};
+    }
+    // Find nearest points (smallest range) in both boundaries
+    size_t nearest_left = Lr.start, nearest_right = Rr.start;
+    float min_left_dist = std::numeric_limits<float>::max();
+    float min_right_dist = std::numeric_limits<float>::max();
+
+    b.left.clear();
     for (size_t i = Lr.start; i <= Lr.end; ++i) {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
-        float a = amin + i * ainc;
-        b.left.push_back({ r * std::cos(a), r * std::sin(a) });
+      float a = amin + i * ainc;
+      Vec2f pt{ r * std::cos(a), r * std::sin(a) };
+      b.left.push_back(pt);
+      if (r < min_left_dist) {
+        min_left_dist = r;
+        nearest_left = i;
+      }
       }
     }
 
-    auto Rr = grow(scan, ri, thresh);
+    b.right.clear();
     for (size_t i = Rr.start; i <= Rr.end; ++i) {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
-        float a = amin + i * ainc;
-        b.right.push_back({ r * std::cos(a), r * std::sin(a) });
+      float a = amin + i * ainc;
+      Vec2f pt{ r * std::cos(a), r * std::sin(a) };
+      b.right.push_back(pt);
+      if (r < min_right_dist) {
+        min_right_dist = r;
+        nearest_right = i;
+      }
       }
     }
+
+    state_ = State{nearest_left, nearest_right};
 
     return b;
   }
