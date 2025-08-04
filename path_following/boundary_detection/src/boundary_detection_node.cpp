@@ -100,6 +100,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
       const std_msgs::msg::Header &header) {
     visualization_msgs::msg::Marker left_m;
     left_m.header = header;
+    left_m.header.frame_id = "ego_racecar/base_link";
     left_m.ns = "boundaries";
     left_m.id = 0;
     left_m.type = left_m.LINE_STRIP;
@@ -138,7 +139,9 @@ class BoundaryDetectionNode : public rclcpp::Node {
     nav_msgs::msg::Path left_path;
     nav_msgs::msg::Path right_path;
     left_path.header = header;
+    left_path.header.frame_id = "ego_racecar/base_link";
     right_path.header = header;
+    right_path.header.frame_id = "ego_racecar/base_link";
 
     for (auto &pt : boundaries.left) {
       geometry_msgs::msg::PoseStamped ps;
@@ -253,7 +256,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
       float a = amin + i * ainc;
-      Vec2f pt{ r * std::cos(a), r * std::sin(a) };
+      Vec2f pt{ r * std::cos(a) + laser_offset_x_, r * std::sin(a) };
       b.left.push_back(pt);
       if (r < min_left_dist) {
         min_left_dist = r;
@@ -267,7 +270,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
       float a = amin + i * ainc;
-      Vec2f pt{ r * std::cos(a), r * std::sin(a) };
+      Vec2f pt{ r * std::cos(a) + laser_offset_x_, r * std::sin(a) };
       b.right.push_back(pt);
       if (r < min_right_dist) {
         min_right_dist = r;

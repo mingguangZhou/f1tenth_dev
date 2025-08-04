@@ -32,7 +32,7 @@ private:
 
         // Start marker at origin
         geometry_msgs::msg::Point start;
-        start.x = 0.0 + laser_offset_x_;
+        start.x = 0.0;
         start.y = 0.0;
         start.z = 0.0;
 
