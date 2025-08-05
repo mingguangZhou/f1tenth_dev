@@ -6,6 +6,10 @@
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include "visualization_msgs/msg/marker_array.hpp"
 
 struct Vec2f {
@@ -21,7 +25,9 @@ struct Boundaries {
 class BoundaryDetectionNode : public rclcpp::Node {
  public:
   BoundaryDetectionNode()
-      : Node("boundary_detection_node") {
+      : Node("boundary_detection_node"),
+        tf_buffer_(this->get_clock()),
+        tf_listener_(tf_buffer_) {
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
         std::bind(&BoundaryDetectionNode::scan_callback,
@@ -40,14 +46,16 @@ class BoundaryDetectionNode : public rclcpp::Node {
  private:
   static constexpr float INVALID_DISTANCE = 10.0f;
   static constexpr float MIN_VALID_DISTANCE = 0.05f;
-  // vehicle specs
-  float laser_offset_x_ = 0.27;
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      boundary_markerarray_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr boundary_markerarray_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr left_boundary_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr right_boundary_pub_;
+
+  tf2_ros::Buffer tf_buffer_;
+  tf2_ros::TransformListener tf_listener_;
+
+  std::string output_frame_id_ = "base_link";  // default
 
   struct State {
     size_t nearest_left_scan_idx = 0;
@@ -56,16 +64,47 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   std::optional<State> state_;
 
-  void scan_callback(
-      const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-    // Copy and clean up the scan
+  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+        geometry_msgs::msg::TransformStamped tf;
+    if (msg->header.frame_id == "laser") {
+      try {
+        tf = tf_buffer_.lookupTransform("base_link", "laser", tf2::TimePointZero);
+      } catch (tf2::TransformException &ex) {
+        RCLCPP_WARN(this->get_logger(), "TF lookup failed: %s", ex.what());
+        return;
+      }
+    } else if (msg->header.frame_id == "ego_racecar/laser") {
+      // In sim, assume identity transform (already in correct base frame)
+      tf.header.stamp = msg->header.stamp;
+      tf.header.frame_id = "ego_racecar/base_link";
+      tf.child_frame_id = "ego_racecar/laser";
+      tf.transform.translation.x = 0.0;
+      tf.transform.translation.y = 0.0;
+      tf.transform.translation.z = 0.0;
+      tf.transform.rotation.x = 0.0;
+      tf.transform.rotation.y = 0.0;
+      tf.transform.rotation.z = 0.0;
+      tf.transform.rotation.w = 1.0;
+    } else {
+      RCLCPP_WARN(this->get_logger(), "Unexpected frame_id '%s', assuming identity transform.", msg->header.frame_id.c_str());
+      tf.header.stamp = msg->header.stamp;
+      tf.header.frame_id = "base_link";
+      tf.child_frame_id = msg->header.frame_id;
+      tf.transform.translation.x = 0.0;
+      tf.transform.translation.y = 0.0;
+      tf.transform.translation.z = 0.0;
+      tf.transform.rotation.x = 0.0;
+      tf.transform.rotation.y = 0.0;
+      tf.transform.rotation.z = 0.0;
+      tf.transform.rotation.w = 1.0;
+    }
+
+
     auto cleaned_msg = std::make_shared<sensor_msgs::msg::LaserScan>(*msg);
     preprocess_scan(*cleaned_msg);
 
-    // Detect raw boundaries
-    Boundaries b = detect_boundaries(cleaned_msg);
+    Boundaries b = detect_boundaries(cleaned_msg, tf);
 
-    // --- Enforce both lists to run in increasing +X order ---
     auto enforce_forward_s = [&](std::vector<Vec2f> &pts) {
       if (pts.size() < 2) return;
       if (pts.front().x > pts.back().x) {
@@ -74,11 +113,23 @@ class BoundaryDetectionNode : public rclcpp::Node {
     };
     enforce_forward_s(b.left);
     enforce_forward_s(b.right);
-    // --------------------------------------------------------
 
-    // Publish as markers and as Path messages
-    publish_boundary_markers(b, msg->header);
-    publish_boundary_paths(b, msg->header);
+    // Decide output frame ID based on input scan frame
+    if (msg->header.frame_id == "ego_racecar/laser") {
+      output_frame_id_ = "ego_racecar/base_link";
+    } else if (msg->header.frame_id == "laser") {
+      output_frame_id_ = "base_link";
+    } else {
+      RCLCPP_WARN(this->get_logger(), "Unexpected scan frame_id: %s, defaulting to base_link", msg->header.frame_id.c_str());
+      output_frame_id_ = "base_link";
+    }
+
+    // Set header with updated frame
+    std_msgs::msg::Header header = msg->header;
+    header.frame_id = output_frame_id_;
+
+    publish_boundary_markers(b, header);
+    publish_boundary_paths(b, header);
   }
 
   void preprocess_scan(sensor_msgs::msg::LaserScan &scan) {
@@ -95,12 +146,9 @@ class BoundaryDetectionNode : public rclcpp::Node {
     return r > MIN_VALID_DISTANCE && r < INVALID_DISTANCE;
   }
 
-  void publish_boundary_markers(
-      const Boundaries &boundaries,
-      const std_msgs::msg::Header &header) {
+  void publish_boundary_markers(const Boundaries &boundaries, const std_msgs::msg::Header &header) {
     visualization_msgs::msg::Marker left_m;
     left_m.header = header;
-    left_m.header.frame_id = "ego_racecar/base_link";
     left_m.ns = "boundaries";
     left_m.id = 0;
     left_m.type = left_m.LINE_STRIP;
@@ -108,7 +156,6 @@ class BoundaryDetectionNode : public rclcpp::Node {
     left_m.scale.x = 0.05f;
     left_m.color.r = 1.0f;
     left_m.color.a = 1.0f;
-    left_m.points.reserve(boundaries.left.size());
     for (auto &pt : boundaries.left) {
       geometry_msgs::msg::Point p;
       p.x = pt.x; p.y = pt.y; p.z = 0.0;
@@ -120,7 +167,6 @@ class BoundaryDetectionNode : public rclcpp::Node {
     right_m.color.r = 0.0f;
     right_m.color.b = 1.0f;
     right_m.points.clear();
-    right_m.points.reserve(boundaries.right.size());
     for (auto &pt : boundaries.right) {
       geometry_msgs::msg::Point p;
       p.x = pt.x; p.y = pt.y; p.z = 0.0;
@@ -133,15 +179,11 @@ class BoundaryDetectionNode : public rclcpp::Node {
     boundary_markerarray_pub_->publish(ma);
   }
 
-  void publish_boundary_paths(
-      const Boundaries &boundaries,
-      const std_msgs::msg::Header &header) {
+  void publish_boundary_paths(const Boundaries &boundaries, const std_msgs::msg::Header &header) {
     nav_msgs::msg::Path left_path;
     nav_msgs::msg::Path right_path;
     left_path.header = header;
-    left_path.header.frame_id = "ego_racecar/base_link";
     right_path.header = header;
-    right_path.header.frame_id = "ego_racecar/base_link";
 
     for (auto &pt : boundaries.left) {
       geometry_msgs::msg::PoseStamped ps;
@@ -166,9 +208,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   struct IndexRange { size_t start, end; };
 
-  size_t find_smallest_range_around(
-      const sensor_msgs::msg::LaserScan::SharedPtr &scan,
-      size_t idx) {
+  size_t find_smallest_range_around(const sensor_msgs::msg::LaserScan::SharedPtr &scan, size_t idx) {
     size_t start = (idx >= 10) ? idx - 10 : 0;
     size_t end = std::min(idx + 10, scan->ranges.size() - 1);
     float min_range = std::numeric_limits<float>::max();
@@ -183,30 +223,21 @@ class BoundaryDetectionNode : public rclcpp::Node {
     return min_idx;
   }
 
-  IndexRange grow(
-      const sensor_msgs::msg::LaserScan::SharedPtr &scan,
-      size_t idx, float thresh) {
+  IndexRange grow(const sensor_msgs::msg::LaserScan::SharedPtr &scan, size_t idx, float thresh) {
     IndexRange r{idx, idx};
-    if (!is_valid_range(scan->ranges[idx])) {
-      return r;
-    }
+    if (!is_valid_range(scan->ranges[idx])) return r;
     auto calc = [&](size_t i) {
       float a = scan->angle_min + i * scan->angle_increment;
-      return Vec2f{
-        scan->ranges[i] * std::cos(a) + laser_offset_x_, // add x offset, so the origin is united to the rear axis
-        scan->ranges[i] * std::sin(a)
-      };
+      return Vec2f{scan->ranges[i] * std::cos(a), scan->ranges[i] * std::sin(a)};
     };
     Vec2f last = calc(idx);
-    // backward
-    for (size_t i = idx; i-- > 0; ) {
+    for (size_t i = idx; i-- > 0;) {
       if (!is_valid_range(scan->ranges[i])) continue;
       Vec2f cur = calc(i);
       if (std::hypot(cur.x - last.x, cur.y - last.y) < thresh) {
         r.start = i; last = cur;
       } else break;
     }
-    // forward
     last = calc(idx);
     for (size_t i = idx + 1; i < scan->ranges.size(); ++i) {
       if (!is_valid_range(scan->ranges[i])) continue;
@@ -218,8 +249,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
     return r;
   }
 
-  Boundaries detect_boundaries(
-      const sensor_msgs::msg::LaserScan::SharedPtr &scan) {
+  Boundaries detect_boundaries(const sensor_msgs::msg::LaserScan::SharedPtr &scan, const geometry_msgs::msg::TransformStamped &tf) {
     float amin = scan->angle_min;
     float ainc = scan->angle_increment;
     float thresh = std::min(scan->range_max * ainc * 6, 0.5f);
@@ -229,14 +259,8 @@ class BoundaryDetectionNode : public rclcpp::Node {
       li = find_smallest_range_around(scan, state_->nearest_left_scan_idx);
       ri = find_smallest_range_around(scan, state_->nearest_right_scan_idx);
     } else {
-      li = std::min<size_t>(
-        (static_cast<float>(-M_PI_2) - amin) / ainc,
-        scan->ranges.size() - 1
-      );
-      ri = std::min<size_t>(
-        (static_cast<float>( M_PI_2) - amin) / ainc,
-        scan->ranges.size() - 1
-      );
+      li = std::min<size_t>((static_cast<float>(-M_PI_2) - amin) / ainc, scan->ranges.size() - 1);
+      ri = std::min<size_t>((static_cast<float>( M_PI_2) - amin) / ainc, scan->ranges.size() - 1);
     }
 
     auto Lr = grow(scan, li, thresh);
@@ -246,22 +270,19 @@ class BoundaryDetectionNode : public rclcpp::Node {
       state_ = std::nullopt;
       return Boundaries{};
     }
-    // Find nearest points (smallest range) in both boundaries
-    size_t nearest_left = Lr.start, nearest_right = Rr.start;
-    float min_left_dist = std::numeric_limits<float>::max();
-    float min_right_dist = std::numeric_limits<float>::max();
 
     b.left.clear();
     for (size_t i = Lr.start; i <= Lr.end; ++i) {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
-      float a = amin + i * ainc;
-      Vec2f pt{ r * std::cos(a) + laser_offset_x_, r * std::sin(a) };
-      b.left.push_back(pt);
-      if (r < min_left_dist) {
-        min_left_dist = r;
-        nearest_left = i;
-      }
+        float a = amin + i * ainc;
+        geometry_msgs::msg::PointStamped in, out;
+        in.header = scan->header;
+        in.point.x = r * std::cos(a);
+        in.point.y = r * std::sin(a);
+        in.point.z = 0.0;
+        tf2::doTransform(in, out, tf);
+        b.left.push_back({static_cast<float>(out.point.x), static_cast<float>(out.point.y)});
       }
     }
 
@@ -269,18 +290,18 @@ class BoundaryDetectionNode : public rclcpp::Node {
     for (size_t i = Rr.start; i <= Rr.end; ++i) {
       float r = scan->ranges[i];
       if (is_valid_range(r)) {
-      float a = amin + i * ainc;
-      Vec2f pt{ r * std::cos(a) + laser_offset_x_, r * std::sin(a) };
-      b.right.push_back(pt);
-      if (r < min_right_dist) {
-        min_right_dist = r;
-        nearest_right = i;
-      }
+        float a = amin + i * ainc;
+        geometry_msgs::msg::PointStamped in, out;
+        in.header = scan->header;
+        in.point.x = r * std::cos(a);
+        in.point.y = r * std::sin(a);
+        in.point.z = 0.0;
+        tf2::doTransform(in, out, tf);
+        b.right.push_back({static_cast<float>(out.point.x), static_cast<float>(out.point.y)});
       }
     }
 
-    state_ = State{nearest_left, nearest_right};
-
+    state_ = State{Lr.start, Rr.start};
     return b;
   }
 };
