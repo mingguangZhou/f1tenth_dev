@@ -22,10 +22,11 @@ class PlannerNode : public rclcpp::Node {
   PlannerNode()
       : Node("planner_node"),
         resample_count_(100),   // Number of points for resampling
-        smooth_window_(3),      // Half-window size for smoothing
-        min_start_x_(1.0) {     // Minimum X for first point
+        smooth_window_(3) {       // Half-window size for smoothing         
     using std::placeholders::_1;
 
+    declare_parameter<double>("min_start_x", 1.0);  // Minimum X for first point
+   
     left_subscriber_ = create_subscription<nav_msgs::msg::Path>(
         "left_boundary", rclcpp::QoS(10),
         std::bind(&PlannerNode::OnLeftBoundary, this, _1));
@@ -40,6 +41,8 @@ class PlannerNode : public rclcpp::Node {
     correspondence_publisher_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "correspondence_markers", rclcpp::QoS(10));
+
+    min_start_x_ = get_parameter("min_start_x").as_double();
 
     RCLCPP_INFO(get_logger(), "PlannerNode initialized.");
   }
@@ -59,7 +62,7 @@ class PlannerNode : public rclcpp::Node {
   // Resampling and smoothing parameters.
   const size_t resample_count_;
   const int smooth_window_;
-  const double min_start_x_;
+  double min_start_x_;
 
   // Callback invoked when a new left boundary arrives.
   void OnLeftBoundary(const nav_msgs::msg::Path::SharedPtr msg) {

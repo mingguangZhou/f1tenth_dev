@@ -385,7 +385,7 @@ class GymBridge(Node):
 
     def _publish_laser_transforms(self, ts):
         ego_scan_ts = TransformStamped()
-        ego_scan_ts.transform.translation.x = self.scan_distance_to_base_link
+        # ego_scan_ts.transform.translation.x = self.scan_distance_to_base_link
         # ego_scan_ts.transform.translation.z = 0.04+0.1+0.025
         ego_scan_ts.transform.rotation.w = 1.
         ego_scan_ts.header.stamp = ts
@@ -395,7 +395,7 @@ class GymBridge(Node):
 
         if self.has_opp:
             opp_scan_ts = TransformStamped()
-            opp_scan_ts.transform.translation.x = self.scan_distance_to_base_link
+            # opp_scan_ts.transform.translation.x = self.scan_distance_to_base_link
             opp_scan_ts.transform.rotation.w = 1.
             opp_scan_ts.header.stamp = ts
             opp_scan_ts.header.frame_id = self.opp_namespace + '/base_link'
