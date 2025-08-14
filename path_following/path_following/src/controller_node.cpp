@@ -54,6 +54,18 @@ private:
         }
     }
 
+    double compute_speed(double steering_angle) const {
+        double abs_angle = std::abs(steering_angle);
+        double steering_fov_rad = 25.0 * M_PI / 180.0;
+        double t = std::clamp(abs_angle / steering_fov_rad, 0.0, 1.0);
+        
+        // Apply exponential curve: higher n = faster drop at large angles
+        double n = 1.0;  // tweak this as needed
+        double scaled_t = std::pow(t, n);
+
+        return velocity_ - scaled_t * (velocity_ - 1.0);
+    }
+
     void control_loop() {
         if (trajectory_.poses.empty()) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
@@ -91,7 +103,7 @@ private:
         // Publish drive command
         ackermann_msgs::msg::AckermannDriveStamped drive_msg;
         drive_msg.header.stamp = this->now();
-        drive_msg.drive.speed = velocity_;
+        drive_msg.drive.speed = compute_speed(steering_angle);
         drive_msg.drive.steering_angle = steering_angle;
         drive_pub_->publish(drive_msg);
 
