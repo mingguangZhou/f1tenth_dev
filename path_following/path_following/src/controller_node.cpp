@@ -8,9 +8,11 @@
 class ControllerNode : public rclcpp::Node {
 public:
     ControllerNode() : Node("controller_node") {
-        // Parameters
-        declare_parameter<double>("lookahead_distance", 0.0);
-        declare_parameter<double>("velocity", 0.0);
+        // Parameters with default values to be reset by launch
+        declare_parameter<double>("lookahead_distance", 0.5);
+        declare_parameter<double>("velocity_max", 2.5);
+        declare_parameter<double>("velocity_min", 1.0);
+        declare_parameter<double>("steering_max_deg", 20.6);
         
         traj_sub_ = this->create_subscription<nav_msgs::msg::Path>(
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
@@ -22,15 +24,32 @@ public:
         timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ControllerNode::control_loop, this));
 
         lookahead_distance_ = get_parameter("lookahead_distance").as_double();
-        velocity_ = get_parameter("velocity").as_double();
-
+        velocity_max_ = get_parameter("velocity_max").as_double();
+        velocity_min_ = get_parameter("velocity_min").as_double();
+        steering_max_deg_ = get_parameter("steering_max_deg").as_double();
 
         RCLCPP_INFO(this->get_logger(), "Controller node started.");
     }
 
 private:
-    // vehicle specs
+    // Subscribers and publishers.
+    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr traj_sub_;
+    rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr steering_marker_pub_;
+    rclcpp::TimerBase::SharedPtr timer_;
+    
+    // trajectory message
+    nav_msgs::msg::Path trajectory_;
+    
+    // Vehicle specs
     double  wheelbase_ = 0.33;
+
+    // Parameters
+    double lookahead_distance_;
+    double velocity_max_;
+    double velocity_min_;
+    double steering_max_deg_;
 
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
         if (msg->poses.empty()) {
@@ -56,14 +75,14 @@ private:
 
     double compute_speed(double steering_angle) const {
         double abs_angle = std::abs(steering_angle);
-        double steering_fov_rad = 25.0 * M_PI / 180.0;
-        double t = std::clamp(abs_angle / steering_fov_rad, 0.0, 1.0);
+        double steering_max_rad = steering_max_deg_ * M_PI / 180.0;
+        double t = std::clamp(abs_angle / steering_max_rad, 0.0, 1.0);
         
         // Apply exponential curve: higher n = faster drop at large angles
         double n = 1.0;  // tweak this as needed
         double scaled_t = std::pow(t, n);
 
-        return velocity_ - scaled_t * (velocity_ - 1.0);
+        return velocity_max_ - scaled_t * (velocity_max_ - velocity_min_);
     }
 
     void control_loop() {
@@ -153,16 +172,6 @@ private:
 
         // RCLCPP_INFO(this->get_logger(), "Steering: %.2f rad, Target: (%.2f, %.2f)", steering_angle, x, y);
     }
-
-    nav_msgs::msg::Path trajectory_;
-    double lookahead_distance_;
-    double velocity_;
-
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr traj_sub_;
-    rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr steering_marker_pub_;
-    rclcpp::TimerBase::SharedPtr timer_;
 };
 
 int main(int argc, char **argv) {
