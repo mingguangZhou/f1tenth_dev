@@ -7,7 +7,10 @@ def generate_launch_description():
             package='path_following',
             executable='planner_node',
             name='planner',
-            output='screen'
+            output='screen',
+            parameters=[{
+                'min_start_x': 0.75
+            }]
         ),
         Node(
             package='path_following',
@@ -15,8 +18,10 @@ def generate_launch_description():
             name='controller',
             output='screen',
             parameters=[{
-                'lookahead_distance': 0.3,
-                'velocity': 1.5
+                'lookahead_distance': 0.5,
+                'velocity_max': 2.0,
+                'velocity_min': 1.0,
+                'steering_max_deg': 20.6
             }]
         ),
         Node(
