@@ -1,0 +1,13 @@
+planner_node:
+  ros__parameters:
+    # Basic parameters
+    min_start_x: 0.5  # Minimum X coordinate for the first trajectory point
+    
+    # Racing line optimization parameters - SMOOTH VERSION
+    racing_line_window_size: 7      # Larger window for smoother results
+    min_weight: 0.3                 # More conservative weight range
+    max_weight: 0.7                 # More conservative weight range
+    max_optimization_iterations: 2  # Fewer iterations for stability
+    weight_step: 0.02               # Smaller step for finer control
+    max_weight_change: 0.05         # Smaller change limit for smoothness
+    max_lateral_offset: 0.3         # Smaller lateral offset for smoother results

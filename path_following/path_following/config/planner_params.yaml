@@ -1,0 +1,13 @@
+planner_node:
+  ros__parameters:
+    # Basic parameters
+    min_start_x: 0.5  # Minimum X coordinate for the first trajectory point
+    
+    # Racing line optimization parameters
+    racing_line_window_size: 5      # Moving window size for optimization (odd number recommended)
+    min_weight: 0.1                 # Minimum weight for left boundary (0.0 = left boundary, 1.0 = right boundary)
+    max_weight: 0.9                 # Maximum weight for right boundary
+    max_optimization_iterations: 3  # Number of optimization iterations
+    weight_step: 0.05               # Step size for weight optimization (smaller = more precise but slower)
+    max_weight_change: 0.1          # Maximum weight change per iteration (ensures smooth transitions)
+    max_lateral_offset: 0.5         # Maximum lateral offset for smoothing (meters)
