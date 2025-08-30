@@ -9,14 +9,14 @@ def generate_launch_description():
     # Get the package directory
     pkg_share = get_package_share_directory('path_following')
     
-    # Define the config file path
-    config_file = os.path.join(pkg_share, 'config', 'planner_params.yaml')
+    # Define the smooth config file path
+    config_file = os.path.join(pkg_share, 'config', 'planner_params_smooth.yaml')
     
     return LaunchDescription([
         Node(
             package='path_following',
             executable='planner_node',
-            name='planner',
+            name='planner_smooth',
             output='screen',
             parameters=[config_file]
         ),

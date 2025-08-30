@@ -14,18 +14,21 @@ struct Vec2f {
   double y;
 };
 
-// PlannerNode subscribes to left and right boundary paths, computes a smoothed
-// centerline starting at least kMinStartX ahead of the vehicle, and publishes
-// the trajectory. It also publishes correspondence markers.
+// Generates optimized racing line from left and right boundaries
 class PlannerNode : public rclcpp::Node {
  public:
   PlannerNode()
       : Node("planner_node"),
-        resample_count_(100),   // Number of points for resampling
-        smooth_window_(3) {       // Half-window size for smoothing         
+        resample_count_(100) {         
     using std::placeholders::_1;
 
-    declare_parameter<double>("min_start_x", 1.0);  // Minimum X for first point
+    declare_parameter<double>("min_start_x", 1.0);
+    declare_parameter<int>("racing_line_window_size", 5);
+    declare_parameter<double>("min_weight", 0.1);
+    declare_parameter<double>("max_weight", 0.9);
+    declare_parameter<int>("max_optimization_iterations", 3);
+    declare_parameter<double>("weight_step", 0.05);
+    declare_parameter<double>("max_lateral_offset", 0.5);
    
     left_subscriber_ = create_subscription<nav_msgs::msg::Path>(
         "left_boundary", rclcpp::QoS(10),
@@ -43,40 +46,46 @@ class PlannerNode : public rclcpp::Node {
             "correspondence_markers", rclcpp::QoS(10));
 
     min_start_x_ = get_parameter("min_start_x").as_double();
+    
+
+    racing_line_window_size_ = get_parameter("racing_line_window_size").as_int();
+    min_weight_ = get_parameter("min_weight").as_double();
+    max_weight_ = get_parameter("max_weight").as_double();
+    max_optimization_iterations_ = get_parameter("max_optimization_iterations").as_int();
+    max_lateral_offset_ = get_parameter("max_lateral_offset").as_double();
 
     RCLCPP_INFO(get_logger(), "PlannerNode initialized.");
   }
 
  private:
-  // Subscribers and publishers.
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr left_subscriber_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr right_subscriber_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       correspondence_publisher_;
 
-  // Latest boundary messages.
   nav_msgs::msg::Path::SharedPtr left_path_;
   nav_msgs::msg::Path::SharedPtr right_path_;
 
-  // Resampling and smoothing parameters.
   const size_t resample_count_;
-  const int smooth_window_;
   double min_start_x_;
+  
+  int racing_line_window_size_;
+  double min_weight_;
+  double max_weight_;
+  int max_optimization_iterations_;
+  double max_lateral_offset_;
 
-  // Callback invoked when a new left boundary arrives.
   void OnLeftBoundary(const nav_msgs::msg::Path::SharedPtr msg) {
     left_path_ = msg;
     TryPublishTrajectory();
   }
 
-  // Callback invoked when a new right boundary arrives.
   void OnRightBoundary(const nav_msgs::msg::Path::SharedPtr msg) {
     right_path_ = msg;
     TryPublishTrajectory();
   }
 
-  // Attempts to compute and publish the centerline trajectory.
   void TryPublishTrajectory() {
     if (!left_path_ || !right_path_) {
       return;
@@ -92,7 +101,7 @@ class PlannerNode : public rclcpp::Node {
     auto left_rs = Resample(left_pts, resample_count_);
     auto right_rs = Resample(right_pts, resample_count_);
 
-    // Build two candidate trajectories and choose the forward one.
+
     auto traj = BuildCenterline(left_rs, right_rs);
 
     if (!traj.poses.empty()) {
@@ -100,7 +109,6 @@ class PlannerNode : public rclcpp::Node {
     }
   }
 
-  // Converts a ROS Path to a vector of Vec2f.
   static std::vector<Vec2f> ConvertToVec(
       const nav_msgs::msg::Path::SharedPtr &path) {
     std::vector<Vec2f> pts;
@@ -111,14 +119,12 @@ class PlannerNode : public rclcpp::Node {
     return pts;
   }
 
-  // Reverses the order of points in a vector.
   static std::vector<Vec2f> Reverse(const std::vector<Vec2f> &v) {
     std::vector<Vec2f> out(v);
     std::reverse(out.begin(), out.end());
     return out;
   }
 
-  // Returns true if the first segment of the path goes in +X direction.
   static bool IsForward(const nav_msgs::msg::Path &path) {
     if (path.poses.size() < 2) {
       return false;
@@ -127,20 +133,34 @@ class PlannerNode : public rclcpp::Node {
     return dx >= 0.0;
   }
 
-  // Builds a smooth centerline with the first point at least min_start_x_ ahead.
   nav_msgs::msg::Path BuildCenterline(
       const std::vector<Vec2f> &A, const std::vector<Vec2f> &B) {
     auto pairs = MatchBoundaries(A, B);
     std::vector<Vec2f> center;
+    std::vector<double> weights;
     center.reserve(pairs.size());
+    weights.reserve(pairs.size());
+
 
     for (const auto &pr : pairs) {
       const auto &a = A[pr.first];
       const auto &b = B[pr.second];
       center.push_back({0.5 * (a.x + b.x), 0.5 * (a.y + b.y)});
+      weights.push_back(0.5);
     }
 
-    center = Smooth(center, smooth_window_);
+
+    weights = OptimizeWeightsForRacingLine(A, B, pairs);
+
+
+    center.clear();
+    for (size_t i = 0; i < pairs.size(); ++i) {
+      const auto &pr = pairs[i];
+      const auto &a = A[pr.first];
+      const auto &b = B[pr.second];
+      double w = weights[i];
+      center.push_back({w * a.x + (1.0 - w) * b.x, w * a.y + (1.0 - w) * b.y});
+    }
 
     // Ensure the first point is at least min_start_x_ ahead.
     size_t idx = 0;
@@ -166,7 +186,241 @@ class PlannerNode : public rclcpp::Node {
     return out;
   }
 
-  // Computes cumulative distances along a polyline.
+  std::vector<double> OptimizeWeightsForRacingLine(
+      const std::vector<Vec2f> &A, const std::vector<Vec2f> &B,
+      const std::vector<std::pair<size_t, size_t>> &pairs) {
+    
+    // First, create initial centerline with 0.5 weights
+    std::vector<Vec2f> centerline;
+    centerline.reserve(pairs.size());
+    for (const auto &pr : pairs) {
+      const auto &a = A[pr.first];
+      const auto &b = B[pr.second];
+      centerline.push_back({0.5 * (a.x + b.x), 0.5 * (a.y + b.y)});
+    }
+    
+
+    SmoothCurveFitting(centerline, max_optimization_iterations_, racing_line_window_size_, max_lateral_offset_);
+    
+
+    std::vector<double> weights;
+    weights.reserve(pairs.size());
+    
+    for (size_t i = 0; i < pairs.size(); ++i) {
+      const auto &pr = pairs[i];
+      const auto &a = A[pr.first];
+      const auto &b = B[pr.second];
+      const auto &p = centerline[i];
+      
+      // Solve for w using least squares approach
+      double numerator = (p.x - b.x) * (a.x - b.x) + (p.y - b.y) * (a.y - b.y);
+      double denominator = (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+      
+      double w = 0.5;
+      if (denominator > 1e-6) {
+        w = numerator / denominator;
+      }
+      
+
+      w = std::max(min_weight_, std::min(max_weight_, w));
+      weights.push_back(w);
+    }
+    
+
+    weights = SmoothWeights(weights, 2);
+    
+    return weights;
+  }
+
+
+  void SmoothCurveFitting(std::vector<Vec2f> &points, int num_iterations, 
+                          int window_size, double max_lateral_offset) {
+    int num_points = points.size();
+    if (num_points <= 2 || window_size <= 2) return;
+    
+    window_size = std::min(window_size, num_points);
+    
+    std::vector<Vec2f> moving_vectors(num_points, {0.0, 0.0});
+    std::vector<Vec2f> accumulated_average_curvature(num_points, {0.0, 0.0});
+    std::vector<Vec2f> diff(num_points - 1, {0.0, 0.0});
+    std::vector<Vec2f> total_moving_vectors(num_points, {0.0, 0.0});
+    std::vector<Vec2f> curvature_difference(num_points, {0.0, 0.0});
+    std::vector<Vec2f> half_step_moved_points(num_points, {0.0, 0.0});
+    std::vector<Vec2f> one_step_moved_points(num_points, {0.0, 0.0});
+    std::vector<int> accumulated_num_of_windows(num_points, 0);
+    std::vector<double> inv_num_of_windows(num_points);
+    
+    const double max_lateral_offset_sqr = max_lateral_offset * max_lateral_offset;
+    const double kEpsilon = 1e-6;
+    
+
+    for (int first = 0; first <= num_points - window_size; first++) {
+      int last = first + window_size - 1;
+      accumulated_num_of_windows[first + 1] += 1;
+      accumulated_num_of_windows[last] -= 1;
+    }
+    
+    int num_of_windows = 0;
+    for (int i = 0; i < num_points; ++i) {
+      num_of_windows += accumulated_num_of_windows[i];
+      inv_num_of_windows[i] = 1.0 / std::max<double>(kEpsilon, num_of_windows);
+    }
+    
+    while (num_iterations--) {
+      CalculateCurvatureDifference(points, inv_num_of_windows, window_size,
+                                   &accumulated_average_curvature, &diff, &curvature_difference);
+      
+      double cost_with_zero_step = 0.0;
+      for (const auto &difference : curvature_difference) {
+        cost_with_zero_step += difference.x * difference.x + difference.y * difference.y;
+      }
+      
+
+      for (int i = 1; i + 1 < num_points; ++i) {
+        Vec2f direction = {diff[i - 1].x + diff[i].x, diff[i - 1].y + diff[i].y};
+        double length = std::hypot(direction.x, direction.y);
+        if (length > kEpsilon) {
+          direction.x /= length;
+          direction.y /= length;
+
+          double temp = direction.x;
+          direction.x = -direction.y;
+          direction.y = temp;
+          
+
+          double projection = direction.x * curvature_difference[i].x + 
+                             direction.y * curvature_difference[i].y;
+          moving_vectors[i] = {projection * direction.x, projection * direction.y};
+        }
+      }
+      
+
+      for (int i = 0; i < num_points; ++i) {
+        half_step_moved_points[i] = {points[i].x + 0.5 * moving_vectors[i].x,
+                                     points[i].y + 0.5 * moving_vectors[i].y};
+        one_step_moved_points[i] = {points[i].x + moving_vectors[i].x,
+                                    points[i].y + moving_vectors[i].y};
+      }
+      
+      CalculateCurvatureDifference(half_step_moved_points, inv_num_of_windows, window_size,
+                                   &accumulated_average_curvature, &diff, &curvature_difference);
+      double cost_with_half_step = 0.0;
+      for (const auto &difference : curvature_difference) {
+        cost_with_half_step += difference.x * difference.x + difference.y * difference.y;
+      }
+      
+      CalculateCurvatureDifference(one_step_moved_points, inv_num_of_windows, window_size,
+                                   &accumulated_average_curvature, &diff, &curvature_difference);
+      double cost_with_one_step = 0.0;
+      for (const auto &difference : curvature_difference) {
+        cost_with_one_step += difference.x * difference.x + difference.y * difference.y;
+      }
+      
+
+      double quadratic_a = 2 * cost_with_zero_step - 4 * cost_with_half_step + 2 * cost_with_one_step;
+      double quadratic_b = -3 * cost_with_zero_step + 4 * cost_with_half_step - cost_with_one_step;
+      double quadratic_c = cost_with_zero_step;
+      
+
+      constexpr double kStepSizeLowerBound = 0.0;
+      constexpr double kStepSizeUpperBound = 1.0;
+      double step_size = kStepSizeLowerBound;
+      
+      if (quadratic_a > 0) {
+        double symmetry_axis = -quadratic_b / (2 * quadratic_a);
+        step_size = std::max(kStepSizeLowerBound, std::min(kStepSizeUpperBound, symmetry_axis));
+      } else if (quadratic_a == 0) {
+        if (quadratic_b < 0) {
+          step_size = kStepSizeUpperBound;
+        }
+      }
+      
+      if (step_size < kEpsilon) break;
+      
+      double expected_cost = quadratic_a * step_size * step_size + 
+                            quadratic_b * step_size + quadratic_c;
+      if (cost_with_zero_step - expected_cost < kEpsilon) break;
+      
+
+      bool cross_max_offset = false;
+      for (int i = 1; i + 1 < num_points; ++i) {
+        moving_vectors[i].x *= step_size;
+        moving_vectors[i].y *= step_size;
+        total_moving_vectors[i].x += moving_vectors[i].x;
+        total_moving_vectors[i].y += moving_vectors[i].y;
+        
+        double total_offset_sqr = total_moving_vectors[i].x * total_moving_vectors[i].x +
+                                 total_moving_vectors[i].y * total_moving_vectors[i].y;
+        if (total_offset_sqr > max_lateral_offset_sqr) {
+          cross_max_offset = true;
+          break;
+        }
+      }
+      
+      if (cross_max_offset) break;
+      
+
+      for (int i = 0; i < num_points; i++) {
+        points[i].x += moving_vectors[i].x;
+        points[i].y += moving_vectors[i].y;
+      }
+    }
+  }
+  
+
+  void CalculateCurvatureDifference(const std::vector<Vec2f> &points,
+                                    const std::vector<double> &inv_num_of_windows,
+                                    int window_size,
+                                    std::vector<Vec2f> *accumulated_average_curvature,
+                                    std::vector<Vec2f> *diff,
+                                    std::vector<Vec2f> *curvature_difference) {
+    int num_points = points.size();
+    if (num_points <= 2 || window_size <= 2) return;
+    
+
+    for (auto &curv : *accumulated_average_curvature) {
+      curv = {0.0, 0.0};
+    }
+    
+
+    for (int i = 0; i + 1 < num_points; i++) {
+      (*diff)[i] = {points[i + 1].x - points[i].x, points[i + 1].y - points[i].y};
+    }
+    
+    double inv_window_size_minus_2 = 1.0 / (window_size - 2);
+    for (int first = 0; first <= num_points - window_size; first++) {
+      int last = first + window_size - 1;
+      Vec2f average_curvature = {
+        ((*diff)[last - 1].x - (*diff)[first].x) * inv_window_size_minus_2,
+        ((*diff)[last - 1].y - (*diff)[first].y) * inv_window_size_minus_2
+      };
+      (*accumulated_average_curvature)[first + 1].x += average_curvature.x;
+      (*accumulated_average_curvature)[first + 1].y += average_curvature.y;
+      (*accumulated_average_curvature)[last].x -= average_curvature.x;
+      (*accumulated_average_curvature)[last].y -= average_curvature.y;
+    }
+    
+    Vec2f sum_of_average_curvature_for_windows = {0.0, 0.0};
+    for (auto &curv_diff : *curvature_difference) {
+      curv_diff = {0.0, 0.0};
+    }
+    
+    for (int i = 1; i + 1 < num_points; ++i) {
+      const Vec2f curvature = {
+        (*diff)[i].x - (*diff)[i - 1].x,
+        (*diff)[i].y - (*diff)[i - 1].y
+      };
+      sum_of_average_curvature_for_windows.x += (*accumulated_average_curvature)[i].x;
+      sum_of_average_curvature_for_windows.y += (*accumulated_average_curvature)[i].y;
+      
+      (*curvature_difference)[i] = {
+        curvature.x - sum_of_average_curvature_for_windows.x * inv_num_of_windows[i],
+        curvature.y - sum_of_average_curvature_for_windows.y * inv_num_of_windows[i]
+      };
+    }
+  }
+
+
   static std::vector<double> CumDist(const std::vector<Vec2f> &v) {
     std::vector<double> d(v.size(), 0.0);
     for (size_t i = 1; i < v.size(); ++i) {
@@ -177,7 +431,7 @@ class PlannerNode : public rclcpp::Node {
     return d;
   }
 
-  // Resamples a polyline to N points uniformly along its length.
+
   static std::vector<Vec2f> Resample(
       const std::vector<Vec2f> &v, size_t N) {
     auto d = CumDist(v);
@@ -205,7 +459,7 @@ class PlannerNode : public rclcpp::Node {
     return out;
   }
 
-  // Matches two polylines via greedy nearest-neighbor seeding and lock-step march.
+
   static std::vector<std::pair<size_t, size_t>> MatchBoundaries(
       const std::vector<Vec2f> &L, const std::vector<Vec2f> &R) {
     std::vector<std::pair<size_t, size_t>> matches;
@@ -247,25 +501,22 @@ class PlannerNode : public rclcpp::Node {
     return matches;
   }
 
-  // Applies a simple moving-average smoother to a polyline.
-  static std::vector<Vec2f> Smooth(const std::vector<Vec2f> &in,
-                                    int window) {
+
+  static std::vector<double> SmoothWeights(const std::vector<double> &in,
+                                           int window) {
     size_t M = in.size();
-    std::vector<Vec2f> out(in);
+    std::vector<double> out(in);
     for (size_t i = 0; i < M; ++i) {
-      double sum_x = 0.0;
-      double sum_y = 0.0;
+      double sum = 0.0;
       int count = 0;
       for (int w = -window; w <= window; ++w) {
         int idx = static_cast<int>(i) + w;
         if (idx >= 0 && idx < static_cast<int>(M)) {
-          sum_x += in[idx].x;
-          sum_y += in[idx].y;
+          sum += in[idx];
           ++count;
         }
       }
-      out[i].x = sum_x / count;
-      out[i].y = sum_y / count;
+      out[i] = sum / count;
     }
     return out;
   }
