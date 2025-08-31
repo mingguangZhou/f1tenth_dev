@@ -5,9 +5,16 @@ planner_node:
     
     # Racing line optimization parameters - SMOOTH VERSION
     racing_line_window_size: 7      # Larger window for smoother results
-    min_weight: 0.3                 # More conservative weight range
-    max_weight: 0.7                 # More conservative weight range
+    min_weight: 0.35                # More conservative weight range
+    max_weight: 0.65                # More conservative weight range
     max_optimization_iterations: 2  # Fewer iterations for stability
     weight_step: 0.02               # Smaller step for finer control
     max_weight_change: 0.05         # Smaller change limit for smoothness
-    max_lateral_offset: 0.3         # Smaller lateral offset for smoother results
+    max_lateral_offset: 0.2         # Smaller lateral offset for smoother results
+    
+    # Safety and preview parameters
+    preview_head_k: 8               # More head points for smoother transitions
+    preview_lookahead_m: 15         # Longer look-ahead for smoother results
+    preview_gamma: 0.8              # Stronger preview blending for safety
+    smooth_weights_window: 5        # Larger smoothing window
+    enable_warm_start: true         # Enable warm start from previous cycle
