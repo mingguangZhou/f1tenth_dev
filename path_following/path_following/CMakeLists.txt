@@ -32,7 +32,7 @@ ament_target_dependencies(controller_node rclcpp geometry_msgs nav_msgs ackerman
 install(TARGETS planner_node controller_node
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY launch
+install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}/
 )
 
