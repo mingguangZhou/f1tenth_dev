@@ -27,7 +27,7 @@ class PlannerNode : public rclcpp::Node {
     // -------------------------- Parameters --------------------------
     // Corridor / path formation
     declare_parameter<int>("resample_count", 100);
-    declare_parameter<double>("min_start_x", 1.0);
+    declare_parameter<double>("min_start_x", 0.75);
 
     // Local racing-line optimizer (windowed curvature equalization)
     declare_parameter<int>("racing_line_window_size", 7);   // odd >= 3
@@ -35,8 +35,8 @@ class PlannerNode : public rclcpp::Node {
     declare_parameter<double>("max_lateral_offset", 0.6);   // meters
 
     // Corridor blend weights w \in [min_weight, max_weight] on each segment
-    declare_parameter<double>("min_weight", 0.3);
-    declare_parameter<double>("max_weight", 0.7);
+    declare_parameter<double>("min_weight", 0.1);
+    declare_parameter<double>("max_weight", 0.9);
 
     // Head preview to combat receding-horizon myopia
     declare_parameter<int>("preview_head_k", 10);     // how many head weights to reshape
@@ -44,7 +44,6 @@ class PlannerNode : public rclcpp::Node {
     declare_parameter<double>("preview_gamma", 0.7);  // blend strength [0..1]
 
     // Smoothing of weight field + warm start between cycles
-    declare_parameter<int>("smooth_weights_window", 2);
     declare_parameter<bool>("enable_warm_start", true);
 
     // Load parameters
@@ -63,7 +62,6 @@ class PlannerNode : public rclcpp::Node {
     preview_lookahead_m_ = get_parameter("preview_lookahead_m").as_int();
     preview_gamma_ = get_parameter("preview_gamma").as_double();
 
-    smooth_weights_window_ = get_parameter("smooth_weights_window").as_int();
     enable_warm_start_ = get_parameter("enable_warm_start").as_bool();
 
     // -------------------------- ROS I/O --------------------------
