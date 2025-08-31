@@ -29,6 +29,7 @@ services:
       - .:/sim_ws/src/f1tenth_gym_ros
       - ../reactive_control:/sim_ws/src/reactive_control
       - ../path_following:/sim_ws/src/path_following
+      - ../drive_arbitration:/sim_ws/src/drive_arbitration
     environment:
       - DISPLAY=novnc:0.0
     networks:
