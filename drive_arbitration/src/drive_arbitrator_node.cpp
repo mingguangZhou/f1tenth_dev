@@ -35,7 +35,7 @@ public:
     declare_parameter<double>("safety_timeout_s", 0.5);
 
     // Safety & obstacle avoidance
-    declare_parameter<double>("obstacle_stop_distance", 10.0);
+    declare_parameter<double>("obstacle_stop_distance", 0.6);
     declare_parameter<double>("front_cone_angle_deg", 30.0);
 
     // -------------------------- Load Parameters --------------------------
@@ -171,20 +171,36 @@ private:
     // --- Arbitration decision ---
     ackermann_msgs::msg::AckermannDriveStamped output_cmd;
 
+    // Controller command valid
     if (sufficient_boundaries && front_clear && latest_controller_cmd_ && controller_fresh) {
-      // Use controller command
       output_cmd = *latest_controller_cmd_;
-      RCLCPP_DEBUG(this->get_logger(), "Using controller command.");
+      RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+        "Normal mode: using controller command (path-following).");
+
+    // Safety fallback
     } else if (latest_safety_cmd_ && safety_fresh) {
-      // Fallback to safety bubble
       output_cmd = *latest_safety_cmd_;
+
+      std::string reason;
+      if (!sufficient_boundaries) {
+        reason = "insufficient boundaries";
+      } else if (!front_clear) {
+        reason = "obstacle in front";
+      } else if (!controller_fresh) {
+        reason = "controller timeout";
+      } else {
+        reason = "controller command invalid";
+      }
+
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-        "Fallback: using safety bubble command.");
+        "Fallback: using safety bubble command (reason: %s).", reason.c_str());
+
+    // Emergency stop
     } else {
-      // Emergency stop
       output_cmd.header.stamp = now();
       output_cmd.drive.speed = 0.0;
       output_cmd.drive.steering_angle = 0.0;
+
       RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
         "No valid command -> STOP.");
     }
