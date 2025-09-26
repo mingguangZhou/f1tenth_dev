@@ -15,23 +15,47 @@ class DriveArbitratorNode : public rclcpp::Node
 public:
   DriveArbitratorNode() : Node("drive_arbitrator_node")
   {
-    // Parameters (loaded from YAML)
-    controller_cmd_topic_   = this->declare_parameter<std::string>("controller_cmd_topic", "/controller/drive_cmd");
-    safety_cmd_topic_       = this->declare_parameter<std::string>("safety_cmd_topic", "/safety_bubble/drive_cmd");
-    output_cmd_topic_       = this->declare_parameter<std::string>("output_cmd_topic", "/drive");
-    scan_topic_             = this->declare_parameter<std::string>("scan_topic", "/scan");
-    left_boundary_topic_    = this->declare_parameter<std::string>("left_boundary_topic", "/left_boundary");
-    right_boundary_topic_   = this->declare_parameter<std::string>("right_boundary_topic", "/right_boundary");
+    // Parameters with default values to be reset by launch
+    // -------------------------- Parameters --------------------------
+    // Topics
+    declare_parameter<std::string>("controller_cmd_topic", "/controller/drive_cmd");
+    declare_parameter<std::string>("safety_cmd_topic", "/safety_bubble/drive_cmd");
+    declare_parameter<std::string>("output_cmd_topic", "/drive");
+    declare_parameter<std::string>("scan_topic", "/scan");
+    declare_parameter<std::string>("left_boundary_topic", "/left_boundary");
+    declare_parameter<std::string>("right_boundary_topic", "/right_boundary");
 
-    arbitration_hz_         = this->declare_parameter<double>("arbitration_hz", 50.0);
-    min_boundary_points_    = this->declare_parameter<int>("min_boundary_points", 5);
-    required_boundaries_    = this->declare_parameter<int>("required_boundaries", 2);
-    scan_timeout_s_         = this->declare_parameter<double>("scan_timeout", 0.2);
-    boundary_timeout_s_     = this->declare_parameter<double>("boundary_timeout", 0.2);
-    controller_timeout_s_   = this->declare_parameter<double>("controller_timeout", 0.2);
-    safety_timeout_s_       = this->declare_parameter<double>("safety_timeout", 0.5);
-    obstacle_stop_distance_ = this->declare_parameter<double>("obstacle_stop_distance", 0.5);
-    front_cone_angle_deg_   = this->declare_parameter<double>("front_cone_angle_deg", 30.0);
+    // Arbitration timing
+    declare_parameter<double>("arbitration_hz", 50.0);
+    declare_parameter<int>("min_boundary_points", 5);
+    declare_parameter<int>("required_boundaries", 2);
+    declare_parameter<double>("scan_timeout_s", 0.2);
+    declare_parameter<double>("boundary_timeout_s", 0.2);
+    declare_parameter<double>("controller_timeout_s", 0.2);
+    declare_parameter<double>("safety_timeout_s", 0.5);
+
+    // Safety & obstacle avoidance
+    declare_parameter<double>("obstacle_stop_distance", 10.0);
+    declare_parameter<double>("front_cone_angle_deg", 30.0);
+
+    // -------------------------- Load Parameters --------------------------
+    controller_cmd_topic_   = get_parameter("controller_cmd_topic").as_string();
+    safety_cmd_topic_       = get_parameter("safety_cmd_topic").as_string();
+    output_cmd_topic_       = get_parameter("output_cmd_topic").as_string();
+    scan_topic_             = get_parameter("scan_topic").as_string();
+    left_boundary_topic_    = get_parameter("left_boundary_topic").as_string();
+    right_boundary_topic_   = get_parameter("right_boundary_topic").as_string();
+
+    arbitration_hz_         = get_parameter("arbitration_hz").as_double();
+    min_boundary_points_    = get_parameter("min_boundary_points").as_int();
+    required_boundaries_    = get_parameter("required_boundaries").as_int();
+    scan_timeout_s_         = get_parameter("scan_timeout_s").as_double();
+    boundary_timeout_s_     = get_parameter("boundary_timeout_s").as_double();
+    controller_timeout_s_   = get_parameter("controller_timeout_s").as_double();
+    safety_timeout_s_       = get_parameter("safety_timeout_s").as_double();
+
+    obstacle_stop_distance_ = get_parameter("obstacle_stop_distance").as_double();
+    front_cone_angle_deg_   = get_parameter("front_cone_angle_deg").as_double();
 
     // Subscriptions
     controller_sub_ = create_subscription<ackermann_msgs::msg::AckermannDriveStamped>(

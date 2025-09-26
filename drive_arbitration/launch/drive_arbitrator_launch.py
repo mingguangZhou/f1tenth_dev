@@ -11,7 +11,7 @@ def generate_launch_description():
         Node(
             package='drive_arbitration',
             executable='drive_arbitrator_node',
-            name='drive_arbitrator',
+            name='drive_arbitrator_node',
             output='screen',
             parameters=[config]
         )
