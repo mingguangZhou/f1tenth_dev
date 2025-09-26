@@ -17,7 +17,7 @@ public:
         traj_sub_ = this->create_subscription<nav_msgs::msg::Path>(
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
 
-        drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/drive", 10);
+        drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/controller/drive_cmd", 10);
         lookahead_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("lookahead_marker", 10);
         steering_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("steering_arrow_marker", 10);
 

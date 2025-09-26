@@ -31,7 +31,7 @@ public:
             "/scan", 10, std::bind(&SafetyBubble::scan_callback, this, std::placeholders::_1));
             
         drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
-            "/drive", 10);
+            "/safety_bubble/drive_cmd", 10);
 
         // Timer for control function at 20Hz
         timer_ = create_wall_timer(50ms, std::bind(&SafetyBubble::control_callback, this));

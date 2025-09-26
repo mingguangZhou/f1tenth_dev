@@ -24,6 +24,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 include_directories(include)
 
@@ -37,14 +38,15 @@ ament_target_dependencies(drive_arbitrator_node
   ackermann_msgs
   message_filters
   diagnostic_msgs
+  nav_msgs
 )
 
 install(TARGETS drive_arbitrator_node
   DESTINATION lib/${PROJECT_NAME})
 
-# install(DIRECTORY launch
-#   DESTINATION share/${PROJECT_NAME}/
-# )
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

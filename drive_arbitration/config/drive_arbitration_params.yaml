@@ -1,0 +1,22 @@
+drive_arbitrator:
+  ros__parameters:
+    scan_topic: "/scan"
+    boundary_topic: "/boundary_markers"
+    controller_cmd_topic: "/controller/drive_cmd"
+    safety_cmd_topic: "/safety_bubble/drive_cmd"
+    output_cmd_topic: "/drive"
+
+    arbitration_loop_hz: 50.0
+
+    controller_cmd_timeout: 0.1
+    safety_cmd_timeout: 0.5
+    scan_timeout: 0.2
+    boundary_timeout: 0.2
+
+    min_front_distance: 0.3
+    front_arc_deg: 30.0
+
+    min_boundary_points: 5
+    required_boundaries: 2
+
+    fallback_hold_ms: 300

@@ -16,6 +16,7 @@
   <depend>ackermann_msgs</depend>
   <depend>message_filters</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>nav_msgs</depend>
 
   <exec_depend>ros2launch</exec_depend>
 
