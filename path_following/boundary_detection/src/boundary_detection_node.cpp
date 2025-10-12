@@ -222,26 +222,27 @@ class BoundaryDetectionNode : public rclcpp::Node {
     }
     return min_idx;
   }
+  static Vec2f scan_idx_to_xy(const sensor_msgs::msg::LaserScan::SharedPtr &scan, size_t idx) {
+    float a = scan->angle_min + idx * scan->angle_increment;
+    float r = scan->ranges[idx];
+    return Vec2f{r * std::cos(a), r * std::sin(a)};
+  }
 
   IndexRange grow(const sensor_msgs::msg::LaserScan::SharedPtr &scan, size_t idx, float thresh) {
     IndexRange r{idx, idx};
     if (!is_valid_range(scan->ranges[idx])) return r;
-    auto calc = [&](size_t i) {
-      float a = scan->angle_min + i * scan->angle_increment;
-      return Vec2f{scan->ranges[i] * std::cos(a), scan->ranges[i] * std::sin(a)};
-    };
-    Vec2f last = calc(idx);
+    Vec2f last = scan_idx_to_xy(scan, idx);
     for (size_t i = idx; i-- > 0;) {
       if (!is_valid_range(scan->ranges[i])) continue;
-      Vec2f cur = calc(i);
+      Vec2f cur = scan_idx_to_xy(scan, i);
       if (std::hypot(cur.x - last.x, cur.y - last.y) < thresh) {
         r.start = i; last = cur;
       } else break;
     }
-    last = calc(idx);
+    last = scan_idx_to_xy(scan, idx);
     for (size_t i = idx + 1; i < scan->ranges.size(); ++i) {
       if (!is_valid_range(scan->ranges[i])) continue;
-      Vec2f cur = calc(i);
+      Vec2f cur = scan_idx_to_xy(scan, i);
       if (std::hypot(cur.x - last.x, cur.y - last.y) < thresh) {
         r.end = i; last = cur;
       } else break;
@@ -249,6 +250,42 @@ class BoundaryDetectionNode : public rclcpp::Node {
     return r;
   }
 
+  void grow_front_boundaries_to_largest_gap(const sensor_msgs::msg::LaserScan::SharedPtr &scan,
+                                            IndexRange *left_boundary_range,
+                                            IndexRange *right_boundary_range) {
+    // collect all valid scan indices between the two boundary ranges
+    std::vector<size_t> valid_indices;
+    for (size_t i = left_boundary_range->end; i <= right_boundary_range->start; ++i) {
+      if (is_valid_range(scan->ranges[i])) {
+        valid_indices.push_back(i);
+      }
+    }
+    // need at least two valid points to form a gap
+    if (valid_indices.size() < 2) {
+      return;
+    }
+
+    // find the pair of consecutive valid points with the maximal euclidean distance
+    float max_gap = 0.0f;
+    size_t best_left = valid_indices.front();
+    size_t best_right = valid_indices.back();
+    for (size_t k = 0; k + 1 < valid_indices.size(); ++k) {
+      size_t i = valid_indices[k];
+      size_t j = valid_indices[k + 1];
+      Vec2f pi = scan_idx_to_xy(scan, i);
+      Vec2f pj = scan_idx_to_xy(scan, j);
+      float d = std::hypot(pi.x - pj.x, pi.y - pj.y);
+      if (d > max_gap) {
+        max_gap = d;
+        best_left = i;
+        best_right = j;
+      }
+    }
+
+    // adjust the front ends of the left/right boundary ranges
+    left_boundary_range->end = best_left;
+    right_boundary_range->start = best_right;
+  }
   Boundaries detect_boundaries(
     const sensor_msgs::msg::LaserScan::SharedPtr &scan,
     const geometry_msgs::msg::TransformStamped &tf) 
@@ -279,7 +316,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
       state_ = std::nullopt;
       return Boundaries{};
     }
-
+    grow_front_boundaries_to_largest_gap(scan, &Lr, &Rr);
     size_t nearest_left = Lr.start, nearest_right = Rr.start;
     float min_left_dist = std::numeric_limits<float>::max();
     float min_right_dist = std::numeric_limits<float>::max();
