@@ -7,16 +7,32 @@ import os
 
 def generate_launch_description():
     # Get the package directory
-    pkg_share = get_package_share_directory('path_following')
+    # pkg_share = get_package_share_directory('path_following')
     
-    # Define the smooth config file path
-    config_file = os.path.join(pkg_share, 'config', 'planner_params_smooth.yaml')
-    
+    # Config file paths
+    config_file = os.path.join(
+        get_package_share_directory('path_following'), 
+        'config', 
+        'planner_params_smooth.yaml'
+    )
+
+    drive_arbitration_config = os.path.join(
+        get_package_share_directory('drive_arbitration'),
+        'config',
+        'drive_arbitration_params.yaml'
+    )
+    safety_bubble_config = os.path.join(
+        get_package_share_directory('safety_bubble'),
+        'config',
+        'params.yaml'
+    )
+
     return LaunchDescription([
+        # --- Path following
         Node(
             package='path_following',
             executable='planner_node',
-            name='planner_node',
+            name='planner',
             output='screen',
             parameters=[config_file]
         ),
@@ -39,11 +55,29 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Boundary detection node
+        # --- Boundary detection
         Node(
             package='boundary_detection',
             executable='boundary_detection_node',
-            name='boundary_detector',
+            name='boundary_detection_node',
             output='screen'
-        )
+        ),
+
+        # --- Safety bubble (with YAML config)
+        Node(
+            package='safety_bubble',
+            executable='safety_bubble_node',
+            name='safety_bubble_node',
+            output='screen',
+            parameters=[safety_bubble_config]
+        ),
+
+        # --- Drive arbitration (with YAML config)
+        Node(
+            package='drive_arbitration',
+            executable='drive_arbitrator_node',
+            name='drive_arbitrator_node',
+            output='screen',
+            parameters=[drive_arbitration_config]
+        ),
     ])

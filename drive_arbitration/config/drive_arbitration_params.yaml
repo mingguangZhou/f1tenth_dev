@@ -20,5 +20,5 @@ drive_arbitrator_node:
     required_boundaries: 2
 
     # Obstacle check
-    obstacle_stop_distance: 0.6   # meters
+    obstacle_stop_distance: 0.1   # meters
     front_cone_angle_deg: 30.0
