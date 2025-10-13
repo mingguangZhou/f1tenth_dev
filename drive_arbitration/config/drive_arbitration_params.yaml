@@ -8,6 +8,9 @@ drive_arbitrator_node:
     left_boundary_topic: "/left_boundary"
     right_boundary_topic: "/right_boundary"
 
+    # Arbitrator Switch
+    enable_arbitration: false    
+    
     # Timing
     arbitration_hz: 50.0
     scan_timeout: 0.2

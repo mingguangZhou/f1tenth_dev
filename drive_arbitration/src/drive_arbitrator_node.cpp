@@ -25,6 +25,9 @@ public:
     declare_parameter<std::string>("left_boundary_topic", "/left_boundary");
     declare_parameter<std::string>("right_boundary_topic", "/right_boundary");
 
+    // Arbitration control
+    declare_parameter<bool>("enable_arbitration", false);  // <<<< master switch
+    
     // Arbitration timing
     declare_parameter<double>("arbitration_hz", 50.0);
     declare_parameter<int>("min_boundary_points", 5);
@@ -45,6 +48,8 @@ public:
     scan_topic_             = get_parameter("scan_topic").as_string();
     left_boundary_topic_    = get_parameter("left_boundary_topic").as_string();
     right_boundary_topic_   = get_parameter("right_boundary_topic").as_string();
+
+    enable_arbitration_     = get_parameter("enable_arbitration").as_bool();
 
     arbitration_hz_         = get_parameter("arbitration_hz").as_double();
     min_boundary_points_    = get_parameter("min_boundary_points").as_int();
@@ -124,6 +129,19 @@ private:
   void arbitrationLoop()
   {
     rclcpp::Time now_time = now();
+
+    // Master switch: bypass arbitration
+    if (!enable_arbitration_) {
+      if (latest_controller_cmd_) {
+        drive_pub_->publish(*latest_controller_cmd_);
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+          "Arbitration disabled: directly forwarding controller command.");
+      } else {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+          "Arbitration disabled but no controller command received yet.");
+      }
+      return;  // skip rest of logic
+    }
 
     // Freshness checks
     bool scan_fresh      = (now_time - last_scan_time_).seconds() < scan_timeout_s_;
@@ -240,6 +258,7 @@ private:
   std::string scan_topic_;
   std::string left_boundary_topic_;
   std::string right_boundary_topic_;
+  bool enable_arbitration_;
   double arbitration_hz_;
   int min_boundary_points_;
   int required_boundaries_;

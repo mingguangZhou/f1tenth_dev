@@ -59,7 +59,7 @@ def generate_launch_description():
         Node(
             package='boundary_detection',
             executable='boundary_detection_node',
-            name='boundary_detection_node',
+            name='boundary_detector',
             output='screen'
         ),
 
