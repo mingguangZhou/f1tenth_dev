@@ -32,7 +32,7 @@ def generate_launch_description():
         Node(
             package='path_following',
             executable='planner_node',
-            name='planner',
+            name='planner_node',
             output='screen',
             parameters=[config_file]
         ),
@@ -59,7 +59,7 @@ def generate_launch_description():
         Node(
             package='boundary_detection',
             executable='boundary_detection_node',
-            name='boundary_detector',
+            name='boundary_detection_node',
             output='screen'
         ),
 

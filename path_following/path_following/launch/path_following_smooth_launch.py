@@ -32,7 +32,7 @@ def generate_launch_description():
         Node(
             package='path_following',
             executable='planner_node',
-            name='planner',
+            name='planner_node',
             output='screen',
             parameters=[config_file]
         ),

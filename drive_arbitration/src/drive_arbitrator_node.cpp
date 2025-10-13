@@ -26,7 +26,7 @@ public:
     declare_parameter<std::string>("right_boundary_topic", "/right_boundary");
 
     // Arbitration control
-    declare_parameter<bool>("enable_arbitration", false);  // <<<< master switch
+    declare_parameter<bool>("enable_arbitration", true);  // <<<< master switch
     
     // Arbitration timing
     declare_parameter<double>("arbitration_hz", 50.0);
@@ -134,14 +134,24 @@ private:
     if (!enable_arbitration_) {
       if (latest_controller_cmd_) {
         drive_pub_->publish(*latest_controller_cmd_);
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-          "Arbitration disabled: directly forwarding controller command.");
+
+        static rclcpp::Time last_notice_time(0, 0, RCL_ROS_TIME);
+        if ((now_time - last_notice_time).seconds() > 2.0) { // every ~2 s
+          RCLCPP_WARN(this->get_logger(),
+            "[ARB-OFF] Arbitration disabled: directly forwarding controller command.");
+          last_notice_time = now_time;
+        }
+
       } else {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-          "Arbitration disabled but no controller command received yet.");
+        static rclcpp::Time last_warn_time(0, 0, RCL_ROS_TIME);
+        if ((now_time - last_warn_time).seconds() > 2.0) {
+          RCLCPP_ERROR(this->get_logger(),
+            "[ARB-OFF] Arbitration disabled but no controller command received yet.");
+          last_warn_time = now_time;
+        }
       }
       return;  // skip rest of logic
-    }
+      }
 
     // Freshness checks
     bool scan_fresh      = (now_time - last_scan_time_).seconds() < scan_timeout_s_;

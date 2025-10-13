@@ -9,7 +9,7 @@ drive_arbitrator_node:
     right_boundary_topic: "/right_boundary"
 
     # Arbitrator Switch
-    enable_arbitration: false    
+    enable_arbitration: true
     
     # Timing
     arbitration_hz: 50.0
@@ -23,5 +23,5 @@ drive_arbitrator_node:
     required_boundaries: 2
 
     # Obstacle check
-    obstacle_stop_distance: 0.1   # meters
+    obstacle_stop_distance: 0.5  # meters
     front_cone_angle_deg: 30.0
