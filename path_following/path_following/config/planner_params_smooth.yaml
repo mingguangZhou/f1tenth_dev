@@ -2,7 +2,7 @@ planner_node:
   ros__parameters:
     # Basic parameters
     resample_count: 100             # Number of points to resample the path to
-    min_start_x: 0.75               # Minimum X coordinate for the first trajectory point
+    min_start_x: 0.85               # Minimum X coordinate for the first trajectory point
     
     # Racing line optimization parameters - SMOOTH VERSION
     racing_line_window_size: 7      # Larger window for smoother results

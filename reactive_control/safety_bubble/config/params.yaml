@@ -1,6 +1,6 @@
 safety_bubble_node:
   ros__parameters:
-    bubble_radius: 0.83
+    bubble_radius: 0.85
     speed_min: 0.8
     speed_max: 2.0
     window_size: 9
