@@ -202,8 +202,8 @@ class PlannerNode : public rclcpp::Node {
         size_t k = std::min(i + shift, prev_weights_.size() - 1);
         w_init[i] = prev_weights_[k];
       }
-      RCLCPP_INFO(get_logger(), "Using warm start with shift=%zu, prev_weights size=%zu", 
-                  shift, prev_weights_.size());
+      // RCLCPP_INFO(get_logger(), "Using warm start with shift=%zu, prev_weights size=%zu", 
+      //            shift, prev_weights_.size());
     }
     
     std::vector<double> w = w_init;
@@ -264,8 +264,8 @@ class PlannerNode : public rclcpp::Node {
     }
     
     // Debug: Print first few weights
-    RCLCPP_INFO(get_logger(), "Final weights (first 5): %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f", 
-                w[0], w[1], w[2], w[3], w[4], min_weight_, max_weight_);
+    // RCLCPP_INFO(get_logger(), "Final weights (first 5): %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f", 
+    //            w[0], w[1], w[2], w[3], w[4], min_weight_, max_weight_);
     
     return w;
   }

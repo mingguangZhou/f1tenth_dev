@@ -317,7 +317,8 @@ private:
         // Handle first run or large time jumps
         if (dt <= 0 || dt > 0.1) dt = 0.05;  // Default to 20Hz
 
-        double error = desired_angle - prev_steering_angle_;
+        // double error = desired_angle - prev_steering_angle_;
+        double error = desired_angle;
 
         // Calculate PID terms
         double P = kp_ * error;
@@ -327,7 +328,8 @@ private:
 
         // Calculate steering adjustment
         double steering_output = P + I + D;
-        double new_steering_angle = prev_steering_angle_ + steering_output;
+        // double new_steering_angle = prev_steering_angle_ + steering_output;
+        double new_steering_angle = steering_output;
         double steering_fov_rad = steering_fov_deg_ * M_PI / 180.0;
 
         // Clamp steering angle to physical limits
@@ -336,7 +338,8 @@ private:
                                        steering_fov_rad);
 
         // Only accumulate integral when not saturated
-        if (new_steering_angle != prev_steering_angle_ + steering_output) {
+        // if (new_steering_angle != prev_steering_angle_ + steering_output) {
+        if (new_steering_angle != prev_steering_angle_) {
             integral_ -= error * dt;
         }
 
