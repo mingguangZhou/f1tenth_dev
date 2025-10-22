@@ -19,9 +19,9 @@ drive_arbitrator_node:
     safety_timeout: 0.5
 
     # Boundary validity
-    min_boundary_points: 50
+    min_boundary_points: 60
     required_boundaries: 2
 
     # Obstacle check
-    obstacle_stop_distance: 5.0  # meters
+    obstacle_stop_distance: 0.5  # meters
     front_cone_angle_deg: 25.0

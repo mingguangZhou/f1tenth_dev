@@ -168,6 +168,10 @@ private:
       valid_boundary_count++;
 
     bool sufficient_boundaries = (valid_boundary_count >= required_boundaries_);
+    if (valid_boundary_count < required_boundaries_) {
+      RCLCPP_INFO(get_logger(), "Too short boundary, L scan count = %zu, R scan count =%zu", 
+                 latest_left_boundary_->poses.size(), latest_right_boundary_->poses.size());
+    }
 
     // --- F2: Obstacle front check ---
     bool front_clear = true;
@@ -196,11 +200,14 @@ private:
       }
     }
 
+    // --- F3: Controller command valid ---
+    bool controller_cmd_valid = (latest_controller_cmd_) && (latest_controller_cmd_->drive.speed > 0.01);
+
     // --- Arbitration decision ---
     ackermann_msgs::msg::AckermannDriveStamped output_cmd;
 
     // Controller command valid
-    if (sufficient_boundaries && front_clear && latest_controller_cmd_ && controller_fresh) {
+    if (sufficient_boundaries && front_clear && controller_cmd_valid && controller_fresh) {
       output_cmd = *latest_controller_cmd_;
       RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
         "Normal mode: using controller command (path-following).");
