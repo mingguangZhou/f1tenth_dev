@@ -23,7 +23,10 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
-add_executable(boundary_detection_node src/boundary_detection_node.cpp)
+add_executable(boundary_detection_node
+  src/boundary_detection_node.cpp
+  src/boundary_detector.cpp
+)
 ament_target_dependencies(boundary_detection_node
   rclcpp
   sensor_msgs
