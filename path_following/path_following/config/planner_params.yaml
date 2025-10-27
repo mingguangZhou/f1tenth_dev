@@ -16,3 +16,4 @@ planner_node:
     preview_lookahead_m: 15         # Look-ahead distance for preview blending
     preview_gamma: 0.8              # Preview blending strength (0.0 = no blending, 1.0 = full blending)
     enable_warm_start: true         # Enable warm start from previous cycle
+    curvature_strength: 0.3         # Final curvature smooth [0 → straight, 1 → full curve]
