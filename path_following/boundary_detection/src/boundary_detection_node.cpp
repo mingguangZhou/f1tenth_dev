@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <optional>
 
 #include "geometry_msgs/msg/point.hpp"
 #include "nav_msgs/msg/path.hpp"
@@ -28,6 +29,14 @@ class BoundaryDetectionNode : public rclcpp::Node {
       : Node("boundary_detection_node"),
         tf_buffer_(this->get_clock()),
         tf_listener_(tf_buffer_) {
+    // declare parameters for forward scan sector (degrees)
+    this->declare_parameter<double>("scan_angle_min_deg", -90.0);
+    this->declare_parameter<double>("scan_angle_max_deg", 90.0);
+
+    // read parameter values (defaults above)
+    scan_angle_min_deg_ = this->get_parameter("scan_angle_min_deg").as_double();
+    scan_angle_max_deg_ = this->get_parameter("scan_angle_max_deg").as_double();
+
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
         std::bind(&BoundaryDetectionNode::scan_callback,
@@ -41,6 +50,8 @@ class BoundaryDetectionNode : public rclcpp::Node {
         create_publisher<nav_msgs::msg::Path>("right_boundary", 10);
 
     RCLCPP_INFO(get_logger(), "Boundary Detection Node has been started.");
+    RCLCPP_INFO(get_logger(), "Forward scan sector set to [%.1f deg, %.1f deg].",
+                scan_angle_min_deg_, scan_angle_max_deg_);
   }
 
  private:
@@ -57,6 +68,10 @@ class BoundaryDetectionNode : public rclcpp::Node {
 
   std::string output_frame_id_ = "base_link";  // default
 
+  // parameters (degrees) for forward sector
+  double scan_angle_min_deg_{-90.0};
+  double scan_angle_max_deg_{90.0};
+
   struct State {
     size_t nearest_left_scan_idx = 0;
     size_t nearest_right_scan_idx = 0;
@@ -65,7 +80,7 @@ class BoundaryDetectionNode : public rclcpp::Node {
   std::optional<State> state_;
 
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-        geometry_msgs::msg::TransformStamped tf;
+    geometry_msgs::msg::TransformStamped tf;
     if (msg->header.frame_id == "laser") {
       try {
         tf = tf_buffer_.lookupTransform("base_link", "laser", tf2::TimePointZero);
@@ -98,7 +113,6 @@ class BoundaryDetectionNode : public rclcpp::Node {
       tf.transform.rotation.z = 0.0;
       tf.transform.rotation.w = 1.0;
     }
-
 
     auto cleaned_msg = std::make_shared<sensor_msgs::msg::LaserScan>(*msg);
     preprocess_scan(*cleaned_msg);
@@ -133,7 +147,20 @@ class BoundaryDetectionNode : public rclcpp::Node {
   }
 
   void preprocess_scan(sensor_msgs::msg::LaserScan &scan) {
-    for (auto &r : scan.ranges) {
+    // convert configured sector to radians
+    const float sector_min = static_cast<float>(scan_angle_min_deg_ * M_PI / 180.0);
+    const float sector_max = static_cast<float>(scan_angle_max_deg_ * M_PI / 180.0);
+
+    for (size_t i = 0; i < scan.ranges.size(); ++i) {
+      float &r = scan.ranges[i];
+      float angle = scan.angle_min + static_cast<float>(i) * scan.angle_increment;
+
+      // If outside the configured forward sector, mark as invalid so downstream ignores it.
+      if (angle < sector_min || angle > sector_max) {
+        r = INVALID_DISTANCE;
+        continue;
+      }
+
       if (std::isnan(r)) {
         r = 0.0f;
       } else if (!std::isfinite(r)) {

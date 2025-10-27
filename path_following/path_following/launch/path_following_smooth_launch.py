@@ -60,7 +60,11 @@ def generate_launch_description():
             package='boundary_detection',
             executable='boundary_detection_node',
             name='boundary_detection_node',
-            output='screen'
+            output='screen',
+            parameters=[{
+                'scan_angle_min_deg': -89.64,
+                'scan_angle_max_deg': 89.64
+            }]
         ),
 
         # --- Safety bubble (with YAML config)

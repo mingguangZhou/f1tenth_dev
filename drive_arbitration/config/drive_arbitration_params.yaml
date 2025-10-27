@@ -19,7 +19,7 @@ drive_arbitrator_node:
     safety_timeout: 0.5
 
     # Boundary validity
-    min_boundary_points: 100
+    min_boundary_points: 60
     required_boundaries: 2
 
     # Obstacle check

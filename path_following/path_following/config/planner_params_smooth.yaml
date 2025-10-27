@@ -2,12 +2,12 @@ planner_node:
   ros__parameters:
     # Basic parameters
     resample_count: 100             # Number of points to resample the path to
-    min_start_x: 0.75              # Minimum X coordinate for the first trajectory point
+    min_start_x: 0.7                # Minimum X coordinate for the first trajectory point
     
     # Racing line optimization parameters - SMOOTH VERSION
     racing_line_window_size: 7      # Larger window for smoother results
-    min_weight: 0.4                # More conservative weight range
-    max_weight: 0.6                # More conservative weight range
+    min_weight: 0.35                # More conservative weight range
+    max_weight: 0.65                # More conservative weight range
     max_optimization_iterations: 2  # Fewer iterations for stability
     max_lateral_offset: 0.2         # Smaller lateral offset for smoother results
     
