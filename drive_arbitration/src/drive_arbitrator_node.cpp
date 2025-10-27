@@ -151,7 +151,7 @@ private:
         }
       }
       return;  // skip rest of logic
-      }
+    }
 
     // Freshness checks
     bool scan_fresh      = (now_time - last_scan_time_).seconds() < scan_timeout_s_;
@@ -162,20 +162,26 @@ private:
 
     // --- F1: Boundary check ---
     int valid_boundary_count = 0;
-    if (latest_left_boundary_ && latest_left_boundary_->poses.size() >= (size_t)min_boundary_points_ && left_fresh)
+    size_t left_count = 0;
+    size_t right_count = 0;
+
+    if (latest_left_boundary_) left_count = latest_left_boundary_->poses.size();
+    if (latest_right_boundary_) right_count = latest_right_boundary_->poses.size();
+
+    if (latest_left_boundary_ && left_count >= (size_t)min_boundary_points_ && left_fresh)
       valid_boundary_count++;
-    if (latest_right_boundary_ && latest_right_boundary_->poses.size() >= (size_t)min_boundary_points_ && right_fresh)
+    if (latest_right_boundary_ && right_count >= (size_t)min_boundary_points_ && right_fresh)
       valid_boundary_count++;
 
     bool sufficient_boundaries = (valid_boundary_count >= required_boundaries_);
     if (valid_boundary_count < required_boundaries_) {
-      RCLCPP_INFO(get_logger(), "Too short boundary, L scan count = %zu, R scan count =%zu", 
-                 latest_left_boundary_->poses.size(), latest_right_boundary_->poses.size());
+      RCLCPP_INFO(get_logger(), "Too short boundary, L scan count = %zu, R scan count = %zu", 
+                 left_count, right_count);
     }
 
     // --- F2: Obstacle front check ---
     bool front_clear = true;
-    if (latest_scan_ && scan_fresh) {
+    if (latest_scan_ && scan_fresh && !latest_scan_->ranges.empty()) {
       const auto & ranges = latest_scan_->ranges;
       int total_points = ranges.size();
       double angle_min = latest_scan_->angle_min;
