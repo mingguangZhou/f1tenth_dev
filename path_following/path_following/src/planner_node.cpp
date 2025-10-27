@@ -47,6 +47,7 @@ class PlannerNode : public rclcpp::Node {
     declare_parameter<bool>("enable_warm_start", true);
 
     // Final Curvature Smooth [0 → straight, 1 → full curve]
+    declare_parameter<bool>("enable_final_curvature", false);
     declare_parameter<double>("curvature_strength", 0.5);
 
     // Load parameters
@@ -67,6 +68,7 @@ class PlannerNode : public rclcpp::Node {
 
     enable_warm_start_ = get_parameter("enable_warm_start").as_bool();
 
+    enable_final_curvature_ = get_parameter("enable_final_curvature").as_bool();
     curvature_strength_ = get_parameter("curvature_strength").as_double();
 
     // -------------------------- ROS I/O --------------------------
@@ -108,6 +110,7 @@ class PlannerNode : public rclcpp::Node {
   int smooth_weights_window_;
   bool enable_warm_start_;
 
+  bool enable_final_curvature_;
   double curvature_strength_;
   
     // Warm start for racing line optimization
@@ -167,35 +170,37 @@ class PlannerNode : public rclcpp::Node {
       weights.erase(weights.begin(), weights.begin() + static_cast<long>(drop));
     }
 
-    // Replace centerline with a cubic Bézier curve (gradual curvature recovery)
-    if (center.size() >= 2) {
-      Vec2f start = center.front();
-      Vec2f end = center.back();
+    if (enable_final_curvature_) {
+      // Replace centerline with a cubic Bézier curve (gradual curvature recovery)
+      if (center.size() >= 2) {
+        Vec2f start = center.front();
+        Vec2f end = center.back();
 
-      // Define two internal control points derived from the original midpoints
-      Vec2f c1 = {
-          (1 - curvature_strength_) * ((2.0 * start.x + end.x) / 3.0) +
-              curvature_strength_ * center[center.size() / 3].x,
-          (1 - curvature_strength_) * ((2.0 * start.y + end.y) / 3.0) +
-              curvature_strength_ * center[center.size() / 3].y};
-      Vec2f c2 = {
-          (1 - curvature_strength_) * ((start.x + 2.0 * end.x) / 3.0) +
-              curvature_strength_ * center[2 * center.size() / 3].x,
-          (1 - curvature_strength_) * ((start.y + 2.0 * end.y) / 3.0) +
-              curvature_strength_ * center[2 * center.size() / 3].y};
+        // Define two internal control points derived from the original midpoints
+        Vec2f c1 = {
+            (1 - curvature_strength_) * ((2.0 * start.x + end.x) / 3.0) +
+                curvature_strength_ * center[center.size() / 3].x,
+            (1 - curvature_strength_) * ((2.0 * start.y + end.y) / 3.0) +
+                curvature_strength_ * center[center.size() / 3].y};
+        Vec2f c2 = {
+            (1 - curvature_strength_) * ((start.x + 2.0 * end.x) / 3.0) +
+                curvature_strength_ * center[2 * center.size() / 3].x,
+            (1 - curvature_strength_) * ((start.y + 2.0 * end.y) / 3.0) +
+                curvature_strength_ * center[2 * center.size() / 3].y};
 
-      std::vector<Vec2f> bezier(center.size());
-      for (size_t i = 0; i < center.size(); ++i) {
-        double t = static_cast<double>(i) / (center.size() - 1);
-        double u = 1.0 - t;
-        bezier[i].x =
-            u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x +
-            t * t * t * end.x;
-        bezier[i].y =
-            u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y +
-            t * t * t * end.y;
+        std::vector<Vec2f> bezier(center.size());
+        for (size_t i = 0; i < center.size(); ++i) {
+          double t = static_cast<double>(i) / (center.size() - 1);
+          double u = 1.0 - t;
+          bezier[i].x =
+              u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x +
+              t * t * t * end.x;
+          bezier[i].y =
+              u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y +
+              t * t * t * end.y;
+        }
+        center = bezier;
       }
-      center = bezier;
     }
 
     // Publish path

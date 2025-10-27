@@ -2,7 +2,7 @@ planner_node:
   ros__parameters:
     # Basic parameters
     resample_count: 100             # Number of points to resample the path to
-    min_start_x: 0.9              # Minimum X coordinate for the first trajectory point
+    min_start_x: 0.8              # Minimum X coordinate for the first trajectory point
     
     # Racing line optimization parameters - SMOOTH VERSION
     racing_line_window_size: 7      # Larger window for smoother results
@@ -16,4 +16,7 @@ planner_node:
     preview_lookahead_m: 15         # Longer look-ahead for smoother results
     preview_gamma: 0.8              # Stronger preview blending for safety
     enable_warm_start: true         # Enable warm start from previous cycle
-    curvature_strength: 0.3         # Final curvature smooth [0 → straight, 1 → full curve]
+    
+    # Final curvature
+    enable_final_curvature: true
+    curvature_strength: 0.8         # Final curvature smooth [0 → straight, 1 → full curve]
