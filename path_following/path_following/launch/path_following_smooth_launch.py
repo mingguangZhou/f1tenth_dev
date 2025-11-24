@@ -43,7 +43,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'lookahead_distance': 0.5,
-                'velocity_max': 2.7,
+                'velocity_max': 3.0,
                 'velocity_min': 1.0,
                 'steering_max_deg': 20.6
             }]
