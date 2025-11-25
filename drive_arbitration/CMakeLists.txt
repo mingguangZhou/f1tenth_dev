@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(path_following)
+project(drive_arbitration)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -18,30 +18,39 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(ackermann_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(ackermann_msgs REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
-add_executable(planner_node src/planner_node.cpp)
-ament_target_dependencies(planner_node rclcpp geometry_msgs nav_msgs visualization_msgs)
+include_directories(include)
 
-add_executable(controller_node src/controller_node.cpp)
-ament_target_dependencies(controller_node rclcpp geometry_msgs nav_msgs ackermann_msgs visualization_msgs)
+add_executable(drive_arbitrator_node src/drive_arbitrator_node.cpp)
 
-install(TARGETS planner_node controller_node
+ament_target_dependencies(drive_arbitrator_node
+  rclcpp
+  std_msgs
+  sensor_msgs
+  visualization_msgs
+  ackermann_msgs
+  message_filters
+  diagnostic_msgs
+  nav_msgs
+)
+
+install(TARGETS drive_arbitrator_node
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY launch config
+install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
 )
 
-add_executable(visualization_node src/visualization_node.cpp)
-ament_target_dependencies(visualization_node rclcpp visualization_msgs nav_msgs geometry_msgs)
-
-install(TARGETS visualization_node
-  DESTINATION lib/${PROJECT_NAME})
-
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -13,7 +13,7 @@ def generate_launch_description():
     config_file = os.path.join(
         get_package_share_directory('path_following'), 
         'config', 
-        'planner_params.yaml'
+        'planner_params_smooth.yaml'
     )
 
     drive_arbitration_config = os.path.join(
@@ -43,7 +43,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'lookahead_distance': 0.5,
-                'velocity_max': 2.0,
+                'velocity_max': 3.0,
                 'velocity_min': 1.0,
                 'steering_max_deg': 20.6
             }]
@@ -60,7 +60,11 @@ def generate_launch_description():
             package='boundary_detection',
             executable='boundary_detection_node',
             name='boundary_detection_node',
-            output='screen'
+            output='screen',
+            parameters=[{
+                'scan_angle_min_deg': -89.64,
+                'scan_angle_max_deg': 89.64
+            }]
         ),
 
         # --- Safety bubble (with YAML config)

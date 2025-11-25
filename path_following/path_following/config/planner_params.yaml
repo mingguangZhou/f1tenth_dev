@@ -1,0 +1,22 @@
+planner_node:
+  ros__parameters:
+    # Basic parameters
+    resample_count: 100             # Number of points to resample the path to
+    min_start_x: 0.75               # Minimum X coordinate for the first trajectory point
+    
+    # Racing line optimization parameters
+    racing_line_window_size: 5      # Moving window size for optimization (odd number recommended)
+    min_weight: 0.3                 # Minimum weight for left boundary (0.0 = left boundary, 1.0 = right boundary)
+    max_weight: 0.7                 # Maximum weight for right boundary
+    max_optimization_iterations: 3  # Number of optimization iterations
+    max_lateral_offset: 0.3         # Maximum lateral offset for smoothing (meters)
+    
+    # Safety and preview parameters
+    preview_head_k: 8               # Number of head points to apply preview blending
+    preview_lookahead_m: 15         # Look-ahead distance for preview blending
+    preview_gamma: 0.8              # Preview blending strength (0.0 = no blending, 1.0 = full blending)
+    enable_warm_start: true         # Enable warm start from previous cycle
+    
+    # Final curvature
+    enable_final_curvature: false
+    curvature_strength: 0.3         # Final curvature smooth [0 → straight, 1 → full curve]

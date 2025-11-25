@@ -17,7 +17,7 @@ public:
         traj_sub_ = this->create_subscription<nav_msgs::msg::Path>(
             "trajectory", 10, std::bind(&ControllerNode::path_callback, this, std::placeholders::_1));
 
-        drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/drive", 10);
+        drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/controller/drive_cmd", 10);
         lookahead_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("lookahead_marker", 10);
         steering_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("steering_arrow_marker", 10);
 
@@ -41,6 +41,8 @@ private:
     
     // trajectory message
     nav_msgs::msg::Path trajectory_;
+    bool trajectory_valid_ = false;
+    rclcpp::Time last_traj_time_;
     
     // Vehicle specs
     double  wheelbase_ = 0.33;
@@ -54,6 +56,7 @@ private:
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
         if (msg->poses.empty()) {
             RCLCPP_WARN(this->get_logger(), "Received empty trajectory.");
+            trajectory_valid_ = false;
             return;
         }
 
@@ -68,8 +71,11 @@ private:
 
         if (filtered.poses.empty()) {
             RCLCPP_WARN(this->get_logger(), "All trajectory points filtered out (x < 0).");
+            trajectory_valid_ = false;
         } else {
             trajectory_ = filtered;
+            trajectory_valid_ = true;
+            last_traj_time_ = this->now();
         }
     }
 
@@ -86,45 +92,56 @@ private:
     }
 
     void control_loop() {
-        if (trajectory_.poses.empty()) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "Waiting for valid trajectory...");
-            return;
+        auto now = this->now();
+        ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+        drive_msg.header.stamp = now;
+
+        // Timeout check: trajectory freshness
+        if (trajectory_valid_ && (now - last_traj_time_).seconds() > 0.5) {
+            RCLCPP_WARN(this->get_logger(), "Trajectory timeout (>0.5s), holding zero command.");
+            trajectory_valid_ = false;
         }
 
         geometry_msgs::msg::PoseStamped lookahead;
         bool found = false;
 
-        // Find the first point ≥ lookahead distance
-        for (const auto& pose : trajectory_.poses) {
-            double dx = pose.pose.position.x;
-            double dy = pose.pose.position.y;
-            double dist = std::hypot(dx, dy);
-            if (dist >= lookahead_distance_) {
-                lookahead = pose;
-                found = true;
-                break;
+        if (trajectory_valid_) {
+            // Find first lookahead point beyond threshold
+            for (const auto &pose : trajectory_.poses) {
+                double dx = pose.pose.position.x;
+                double dy = pose.pose.position.y;
+                double dist = std::hypot(dx, dy);
+                if (dist >= lookahead_distance_) {
+                    lookahead = pose;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                RCLCPP_WARN(this->get_logger(), "No valid lookahead point found.");
+                trajectory_valid_ = false;
             }
         }
 
-        if (!found) {
-            RCLCPP_WARN(this->get_logger(), "No valid lookahead point found.");
-            return;
+        double steering_angle = 0.0;
+        if (trajectory_valid_) {
+            // Pure Pursuit steering
+            double x = lookahead.pose.position.x;
+            double y = lookahead.pose.position.y;
+            double L = std::hypot(x, y);
+            double curvature = 2.0 * y / (L * L);
+            steering_angle = std::atan(curvature * wheelbase_);
+
+            // Publish drive command
+            drive_msg.drive.speed = compute_speed(steering_angle);
+            drive_msg.drive.steering_angle = steering_angle;
+            drive_pub_->publish(drive_msg);
+        } else {
+            drive_msg.drive.speed = 0.0;
+            drive_msg.drive.steering_angle = 0.0;
+            drive_pub_->publish(drive_msg);
         }
-
-        // Pure Pursuit steering
-        double x = lookahead.pose.position.x;
-        double y = lookahead.pose.position.y;
-        double L = std::hypot(x, y);
-        double curvature = 2.0 * y / (L * L);
-        double steering_angle = std::atan(curvature * wheelbase_);
-
-        // Publish drive command
-        ackermann_msgs::msg::AckermannDriveStamped drive_msg;
-        drive_msg.header.stamp = this->now();
-        drive_msg.drive.speed = compute_speed(steering_angle);
-        drive_msg.drive.steering_angle = steering_angle;
-        drive_pub_->publish(drive_msg);
 
         // ---- Marker: Lookahead Point ----
         visualization_msgs::msg::Marker lookahead_marker;
@@ -158,7 +175,9 @@ private:
         arrow_marker.ns = "steering_arrow";
         arrow_marker.id = 1;
         arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
-        arrow_marker.action = visualization_msgs::msg::Marker::ADD;
+        arrow_marker.action = trajectory_valid_ && found
+                                  ? visualization_msgs::msg::Marker::ADD
+                                  : visualization_msgs::msg::Marker::DELETE;
         arrow_marker.points.push_back(start);
         arrow_marker.points.push_back(end);
         arrow_marker.scale.x = 0.05; // shaft width

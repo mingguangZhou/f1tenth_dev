@@ -1,10 +1,10 @@
 safety_bubble_node:
   ros__parameters:
-    bubble_radius: 0.83
-    speed_min: 0.95
-    speed_max: 2.3
+    bubble_radius: 0.3
+    speed_min: 1.0
+    speed_max: 2.5
     window_size: 9
-    perception_fov_deg: 58.0
+    perception_fov_deg: 80.0
     kp: 1.5
     ki: 0.0
     kd: 0.004

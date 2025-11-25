@@ -1,0 +1,27 @@
+drive_arbitrator_node:
+  ros__parameters:
+    # Topics
+    controller_cmd_topic: "/controller/drive_cmd"
+    safety_cmd_topic: "/safety_bubble/drive_cmd"
+    output_cmd_topic: "/drive"
+    scan_topic: "/scan"
+    left_boundary_topic: "/left_boundary"
+    right_boundary_topic: "/right_boundary"
+
+    # Arbitrator Switch
+    enable_arbitration: true
+    
+    # Timing
+    arbitration_hz: 50.0
+    scan_timeout: 0.2
+    boundary_timeout: 0.2
+    controller_timeout: 0.2
+    safety_timeout: 0.5
+
+    # Boundary validity
+    min_boundary_points: 50
+    required_boundaries: 2
+
+    # Obstacle check
+    obstacle_stop_distance: 0.4  # meters
+    front_cone_angle_deg: 45.0
