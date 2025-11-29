@@ -37,7 +37,7 @@ docker exec -it f1tenth_gym_ros-sim-1 /bin/bash
 ```bash
 pip install rocker
 ```
-If 'rocker' is installed in '~/.local/bin/', for which has not been added to PATH in all enviroment, run the following commands:
+If `rocker` is installed in `~/.local/bin/`, for which has not been added to PATH in all enviroment, run the following commands:
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
