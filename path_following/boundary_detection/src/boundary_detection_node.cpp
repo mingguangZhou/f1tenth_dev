@@ -61,17 +61,6 @@ class BoundaryDetectionNode : public rclcpp::Node {
         return;
       }
     } else if (msg->header.frame_id == "ego_racecar/laser") {
-      // // In sim, assume identity transform (already in correct base frame)
-      // tf.header.stamp = msg->header.stamp;
-      // tf.header.frame_id = "ego_racecar/base_link";
-      // tf.child_frame_id = "ego_racecar/laser";
-      // tf.transform.translation.x = 0.0;
-      // tf.transform.translation.y = 0.0;
-      // tf.transform.translation.z = 0.0;
-      // tf.transform.rotation.x = 0.0;
-      // tf.transform.rotation.y = 0.0;
-      // tf.transform.rotation.z = 0.0;
-      // tf.transform.rotation.w = 1.0;
       try {
         tf = tf_buffer_.lookupTransform("ego_racecar/base_link", "ego_racecar/laser", tf2::TimePointZero);
       } catch (tf2::TransformException &ex) {
