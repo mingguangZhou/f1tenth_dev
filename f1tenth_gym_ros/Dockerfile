@@ -45,10 +45,13 @@ RUN cd f1tenth_gym && \
 # ros2 gym bridge
 RUN mkdir -p sim_ws/src/f1tenth_gym_ros
 COPY . /sim_ws/src/f1tenth_gym_ros
+# slam toolbox (foxy branch)
+RUN cd /sim_ws/src && \
+    git clone -b foxy-devel https://github.com/SteveMacenski/slam_toolbox.git
 RUN source /opt/ros/foxy/setup.bash && \
     cd sim_ws/ && \
     apt-get update --fix-missing && \
-    rosdep install -i --from-path src --rosdistro foxy -y && \
+    rosdep install --from-path src --ignore-src --rosdistro foxy -y && \
     colcon build
 
 WORKDIR '/sim_ws'
