@@ -12,7 +12,7 @@ slam_toolbox:
     # ROS Parameters
     use_sim_time: true
     odom_frame: ego_racecar/odom
-    map_frame: map_scanned
+    map_frame: map
     base_frame: ego_racecar/base_link
     scan_topic: /scan
     mode: mapping #localization
