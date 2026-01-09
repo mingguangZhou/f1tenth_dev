@@ -290,7 +290,8 @@ class GymBridge(Node):
     def _publish_odom(self, ts):
         ego_odom = Odometry()
         ego_odom.header.stamp = ts
-        ego_odom.header.frame_id = 'map'
+        # ego_odom.header.frame_id = 'map'
+        ego_odom.header.frame_id = self.ego_namespace + '/odom'
         ego_odom.child_frame_id = self.ego_namespace + '/base_link'
         ego_odom.pose.pose.position.x = self.ego_pose[0]
         ego_odom.pose.pose.position.y = self.ego_pose[1]
@@ -337,7 +338,8 @@ class GymBridge(Node):
         ego_ts = TransformStamped()
         ego_ts.transform = ego_t
         ego_ts.header.stamp = ts
-        ego_ts.header.frame_id = 'map'
+        # ego_ts.header.frame_id = 'map'
+        ego_ts.header.frame_id = self.ego_namespace + '/odom'
         ego_ts.child_frame_id = self.ego_namespace + '/base_link'
         self.br.sendTransform(ego_ts)
 

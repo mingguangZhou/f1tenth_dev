@@ -136,6 +136,10 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 Then, press `i` to move forward, `u` and `o` to move forward and turn, `,` to move backwards, `m` and `.` to move backwards and turn, and `k` to stop in the terminal window running the teleop node.
 
+# Using Slam-Toolbox within the simulator
+
+To be added
+
 # Developing and creating your own agent in ROS 2
 
 There are multiple ways to launch your own agent to control the vehicles.
