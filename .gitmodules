@@ -1,0 +1,4 @@
+[submodule "slam_toolbox"]
+	path = slam_toolbox
+	url = https://github.com/mingguangZhou/slam_toolbox.git
+	branch = foxy-devel
