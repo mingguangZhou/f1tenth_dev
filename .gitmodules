@@ -6,3 +6,7 @@
 	path = range_libc
 	url = https://github.com/mingguangZhou/range_libc.git
 	branch = foxy-devel
+[submodule "particle_filter"]
+	path = particle_filter
+	url = https://github.com/mingguangZhou/particle_filter.git
+	branch = foxy-devel
