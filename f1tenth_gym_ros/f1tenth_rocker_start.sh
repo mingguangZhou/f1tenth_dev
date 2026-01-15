@@ -16,6 +16,9 @@ SAFETY_BUBBLE_PATH="${SCRIPT_DIR}/../reactive_control/safety_bubble"
 BOUNDARY_DETECTION_PATH="${SCRIPT_DIR}/../path_following/boundary_detection"
 PATH_FOLLOWING_PATH="${SCRIPT_DIR}/../path_following/path_following"
 DRIVE_ARBITRATION_PATH="${SCRIPT_DIR}/../drive_arbitration"
+SLAM_TOOLBOX_PATH="${SCRIPT_DIR}/../slam_toolbox"
+RANGE_LIBC_PATH="${SCRIPT_DIR}/../range_libc"
+PARTICLE_FILTER_PATH="${SCRIPT_DIR}/../particle_filter"
 
 # --------------------------------------------
 # Notify paths
@@ -27,6 +30,9 @@ echo "  ${SAFETY_BUBBLE_PATH} → /sim_ws/src/safety_bubble"
 echo "  ${BOUNDARY_DETECTION_PATH} → /sim_ws/src/boundary_detection"
 echo "  ${PATH_FOLLOWING_PATH} → /sim_ws/src/path_following"
 echo "  ${DRIVE_ARBITRATION_PATH} → /sim_ws/src/drive_arbitration"
+echo "  ${SLAM_TOOLBOX_PATH} → /sim_ws/src/slam_toolbox"
+echo "  ${RANGE_LIBC_PATH} → /sim_ws/src/range_libc"
+echo "  ${PARTICLE_FILTER_PATH} → /sim_ws/src/particle_filter"
 echo ""
 
 # --------------------------------------------
@@ -39,4 +45,8 @@ rocker --nvidia --x11 \
     --volume "${BOUNDARY_DETECTION_PATH}:/sim_ws/src/boundary_detection" \
     --volume "${PATH_FOLLOWING_PATH}:/sim_ws/src/path_following" \
     --volume "${DRIVE_ARBITRATION_PATH}:/sim_ws/src/drive_arbitration" \
+    --volume "${SLAM_TOOLBOX_PATH}:/sim_ws/src/slam_toolbox" \
+    --volume "${RANGE_LIBC_PATH}:/sim_ws/src/range_libc" \
+    --volume "${PARTICLE_FILTER_PATH}:/sim_ws/src/particle_filter" \
+    --volume "${GYM_PATH}/install_localization_env.sh:/sim_ws/install_localization_env.sh" \
     -- "${IMAGE_NAME}"

@@ -31,6 +31,11 @@ services:
       - ../path_following/boundary_detection:/sim_ws/src/boundary_detection
       - ../path_following/path_following:/sim_ws/src/path_following
       - ../drive_arbitration:/sim_ws/src/drive_arbitration
+      - ../slam_toolbox:/sim_ws/src/slam_toolbox
+      - ../range_libc:/sim_ws/src/range_libc
+      - ../particle_filter:/sim_ws/src/particle_filter
+      - ./install_localization_env.sh:/sim_ws/install_localization_env.sh
+
     environment:
       - DISPLAY=novnc:0.0
     networks:
