@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import rclpy
+import math
 from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
@@ -33,6 +34,7 @@ from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from ackermann_msgs.msg import AckermannDriveStamped
 from tf2_ros import TransformBroadcaster
+from rclpy.time import Time
 
 import gym
 import numpy as np
@@ -240,6 +242,8 @@ class GymBridge(Node):
         elif self.ego_drive_published and self.has_opp and self.opp_drive_published:
             self.obs, _, self.done, _ = self.env.step(np.array([[self.ego_steer, self.ego_requested_speed], [self.opp_steer, self.opp_requested_speed]]))
         self._update_sim_state()
+        self._update_sim_odom()
+
 
     def timer_callback(self):
         ts = self.get_clock().now().to_msg()
@@ -292,17 +296,18 @@ class GymBridge(Node):
         self.ego_speed[1] = self.obs['linear_vels_y'][0]
         self.ego_speed[2] = self.obs['ang_vels_z'][0]
 
-    # simulated onboard odometry
-    def _integrate_odom(self, ts):
-        if self.last_odom_stamp is None:
-            self.last_odom_stamp = ts
-            return
+    def _update_sim_odom(self):
+        # now = self.get_clock().now()
+        # if self.last_odom_stamp is None:
+        #     self.last_odom_stamp = now
+        #     return
+    
+        # dt = (now - self.last_odom_stamp).nanoseconds * 1e-9
+        # self.last_odom_stamp = now
+        dt = 0.01
 
-        dt = (ts - self.last_odom_stamp).nanoseconds * 1e-9
-        self.last_odom_stamp = ts
-
-        v = self.ego_speed[0]
-        w = self.ego_speed[2]
+        v = self.obs['linear_vels_x'][0]
+        w = self.obs['ang_vels_z'][0]
 
         # identical to onboard math
         self.odom_x += v * math.cos(self.odom_yaw) * dt
@@ -315,14 +320,13 @@ class GymBridge(Node):
         # ego_odom.header.frame_id = 'map'
         ego_odom.header.frame_id = self.ego_namespace + '/odom'
         ego_odom.child_frame_id = self.ego_namespace + '/base_link'
-        ego_odom.pose.pose.position.x = self.ego_pose[0]
-        ego_odom.pose.pose.position.y = self.ego_pose[1]
-        ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
+        # ego_odom.pose.pose.position.x = self.ego_pose[0]
+        # ego_odom.pose.pose.position.y = self.ego_pose[1]
+        # ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
 
-        # simulated onboard odometry
-        # ego_odom.pose.pose.position.x = self.odom_x
-        # ego_odom.pose.pose.position.y = self.odom_y
-        # ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
+        ego_odom.pose.pose.position.x = self.odom_x
+        ego_odom.pose.pose.position.y = self.odom_y
+        ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
 
         ego_odom.pose.pose.orientation.x = ego_quat[1]
         ego_odom.pose.pose.orientation.y = ego_quat[2]
