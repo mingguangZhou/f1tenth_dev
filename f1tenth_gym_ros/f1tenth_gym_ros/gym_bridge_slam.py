@@ -100,6 +100,13 @@ class GymBridge(Node):
         self.ego_namespace = self.get_parameter('ego_namespace').value
         ego_odom_topic = self.ego_namespace + '/' + self.get_parameter('ego_odom_topic').value
         self.scan_distance_to_base_link = self.get_parameter('scan_distance_to_base_link').value
+
+        # simulated onboard odometry
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_yaw = 0.0
+        self.last_odom_stamp = None
+
         
         if num_agents == 2:
             self.has_opp = True
@@ -263,7 +270,7 @@ class GymBridge(Node):
 
         # pub tf
         self._publish_odom(ts)
-        self._publish_transforms(ts)
+        # self._publish_transforms(ts)
         self._publish_laser_transforms(ts)
         self._publish_wheel_transforms(ts)
 
@@ -285,7 +292,22 @@ class GymBridge(Node):
         self.ego_speed[1] = self.obs['linear_vels_y'][0]
         self.ego_speed[2] = self.obs['ang_vels_z'][0]
 
-        
+    # simulated onboard odometry
+    def _integrate_odom(self, ts):
+        if self.last_odom_stamp is None:
+            self.last_odom_stamp = ts
+            return
+
+        dt = (ts - self.last_odom_stamp).nanoseconds * 1e-9
+        self.last_odom_stamp = ts
+
+        v = self.ego_speed[0]
+        w = self.ego_speed[2]
+
+        # identical to onboard math
+        self.odom_x += v * math.cos(self.odom_yaw) * dt
+        self.odom_y += v * math.sin(self.odom_yaw) * dt
+        self.odom_yaw += w * dt
 
     def _publish_odom(self, ts):
         ego_odom = Odometry()
@@ -296,12 +318,19 @@ class GymBridge(Node):
         ego_odom.pose.pose.position.x = self.ego_pose[0]
         ego_odom.pose.pose.position.y = self.ego_pose[1]
         ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
+
+        # simulated onboard odometry
+        # ego_odom.pose.pose.position.x = self.odom_x
+        # ego_odom.pose.pose.position.y = self.odom_y
+        # ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
+
         ego_odom.pose.pose.orientation.x = ego_quat[1]
         ego_odom.pose.pose.orientation.y = ego_quat[2]
         ego_odom.pose.pose.orientation.z = ego_quat[3]
         ego_odom.pose.pose.orientation.w = ego_quat[0]
         ego_odom.twist.twist.linear.x = self.ego_speed[0]
         ego_odom.twist.twist.linear.y = self.ego_speed[1]
+        # ego_odom.twist.twist.linear.y = 0.0 # real car: lateral velocity ignored
         ego_odom.twist.twist.angular.z = self.ego_speed[2]
         self.ego_odom_pub.publish(ego_odom)
 
@@ -326,10 +355,16 @@ class GymBridge(Node):
 
     def _publish_transforms(self, ts):
         ego_t = Transform()
-        ego_t.translation.x = self.ego_pose[0]
-        ego_t.translation.y = self.ego_pose[1]
+        # ego_t.translation.x = self.ego_pose[0]
+        # ego_t.translation.y = self.ego_pose[1]
+        
+        # simulated onboard odometry
+        ego_t.translation.x = self.odom_x
+        ego_t.translation.y = self.odom_y
+        
         ego_t.translation.z = 0.0
-        ego_quat = euler.euler2quat(0.0, 0.0, self.ego_pose[2], axes='sxyz')
+        # ego_quat = euler.euler2quat(0.0, 0.0, self.ego_pose[2], axes='sxyz')
+        ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
         ego_t.rotation.x = ego_quat[1]
         ego_t.rotation.y = ego_quat[2]
         ego_t.rotation.z = ego_quat[3]
