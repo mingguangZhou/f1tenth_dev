@@ -319,7 +319,7 @@ class GymBridge(Node):
         ego_odom.header.stamp = ts
         # ego_odom.header.frame_id = 'map'
         ego_odom.header.frame_id = self.ego_namespace + '/odom'
-        ego_odom.child_frame_id = self.ego_namespace + '/base_link'
+        # ego_odom.child_frame_id = self.ego_namespace + '/base_link'
         # ego_odom.pose.pose.position.x = self.ego_pose[0]
         # ego_odom.pose.pose.position.y = self.ego_pose[1]
         # ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
