@@ -67,6 +67,7 @@ class GymBridge(Node):
         self.declare_parameter('sy1')
         self.declare_parameter('stheta1')
         self.declare_parameter('kb_teleop')
+        self.declare_parameter('slam_mapping_on', False)
 
         # check num_agents
         num_agents = self.get_parameter('num_agent').value
@@ -108,6 +109,13 @@ class GymBridge(Node):
         self.odom_y = 0.0
         self.odom_yaw = 0.0
         self.last_odom_stamp = None
+
+        # param to turn on/off slam_toolbox mapping mode
+        self.slam_mapping_on = (
+            self.get_parameter('slam_mapping_on')
+                .get_parameter_value()
+                .bool_value
+        )
 
         
         if num_agents == 2:
@@ -274,7 +282,8 @@ class GymBridge(Node):
 
         # pub tf
         self._publish_odom(ts)
-        # self._publish_transforms(ts)
+        if self.slam_mapping_on:
+            self._publish_transforms(ts)
         self._publish_laser_transforms(ts)
         self._publish_wheel_transforms(ts)
 

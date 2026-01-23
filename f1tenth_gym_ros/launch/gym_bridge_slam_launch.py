@@ -23,12 +23,20 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import Command
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 
 def generate_launch_description():
     ld = LaunchDescription()
+    slam_mapping_on_arg = DeclareLaunchArgument(
+        'slam_mapping_on',
+        default_value='false',
+        description='Enable odom→base_link TF for SLAM mapping'
+    )
+    slam_mapping_on = LaunchConfiguration('slam_mapping_on')
     config = os.path.join(
         get_package_share_directory('f1tenth_gym_ros'),
         'config',
@@ -42,7 +50,10 @@ def generate_launch_description():
         package='f1tenth_gym_ros',
         executable='gym_bridge_slam',
         name='bridge',
-        parameters=[config]
+        parameters=[
+            config,
+            {'slam_mapping_on': slam_mapping_on},
+        ]
     )
     rviz_node = Node(
         package='rviz2',
@@ -84,6 +95,7 @@ def generate_launch_description():
     )
 
     # finalize
+    ld.add_action(slam_mapping_on_arg)
     ld.add_action(rviz_node)
     ld.add_action(bridge_node)
     # ld.add_action(nav_lifecycle_node)

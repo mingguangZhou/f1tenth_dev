@@ -138,7 +138,21 @@ Then, press `i` to move forward, `u` and `o` to move forward and turn, `,` to mo
 
 # Using Slam-Toolbox within the simulator
 
-To be added
+To be added - complete instructions
+```bash
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py slam_mapping_on:=true
+```
+
+# Using Particle Filter Localization within the simulator
+
+To be added - complete instructions
+```bash
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py
+```
 
 # Developing and creating your own agent in ROS 2
 
