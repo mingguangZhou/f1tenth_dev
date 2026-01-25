@@ -141,8 +141,11 @@ Then, press `i` to move forward, `u` and `o` to move forward and turn, `,` to mo
 To be added - complete instructions
 ```bash
 source /opt/ros/foxy/setup.bash
+rosdep install -q -y -r --from-paths src --ignore-src
+colcon build --packages-select slam_toolbox
 source install/local_setup.bash
 ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py slam_mapping_on:=true
+ros2 launch slam_toolbox online_async_launch.py params_file:=/sim_ws/src/f1tenth_gym_ros/config/f1tenth_sim_async.yaml
 ```
 
 # Using Particle Filter Localization within the simulator
@@ -150,8 +153,14 @@ ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py slam_mapping_on:=true
 To be added - complete instructions
 ```bash
 source /opt/ros/foxy/setup.bash
+rosdep install -q -y -r --from-paths src --ignore-src
+cd range_libc/pywrapper/
+python3 setup.py install
+cd ../../.. (back to /sim_ws)
+colcon build --packages-select particle_filter
 source install/local_setup.bash
 ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py
+ros2 launch particle_filter localize_launch.py
 ```
 
 # Developing and creating your own agent in ROS 2
