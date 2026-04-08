@@ -9,4 +9,4 @@
 [submodule "particle_filter"]
 	path = particle_filter
 	url = https://github.com/mingguangZhou/particle_filter.git
-	branch = foxy-devel
+	branch = mingguang_sim_foxy_setup
