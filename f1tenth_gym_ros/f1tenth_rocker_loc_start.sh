@@ -5,7 +5,7 @@ set -e
 # User-defined settings
 # --------------------------------------------
 CONTAINER_NAME="f1tenth_gym_ros_rocker"
-IMAGE_NAME="f1tenth_gym_ros"
+IMAGE_NAME="f1tenth_gym_ros_localization_ready"
 
 # Resolve script directory so relative mounts behave correctly
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

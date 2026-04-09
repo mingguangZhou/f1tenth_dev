@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import rclpy
+import math
 from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
@@ -33,6 +34,7 @@ from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from ackermann_msgs.msg import AckermannDriveStamped
 from tf2_ros import TransformBroadcaster
+from rclpy.time import Time
 
 import gym
 import numpy as np
@@ -65,6 +67,7 @@ class GymBridge(Node):
         self.declare_parameter('sy1')
         self.declare_parameter('stheta1')
         self.declare_parameter('kb_teleop')
+        self.declare_parameter('slam_mapping_on', False)
 
         # check num_agents
         num_agents = self.get_parameter('num_agent').value
@@ -100,6 +103,20 @@ class GymBridge(Node):
         self.ego_namespace = self.get_parameter('ego_namespace').value
         ego_odom_topic = self.ego_namespace + '/' + self.get_parameter('ego_odom_topic').value
         self.scan_distance_to_base_link = self.get_parameter('scan_distance_to_base_link').value
+
+        # simulated onboard odometry
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_yaw = 0.0
+        self.last_odom_stamp = None
+
+        # param to turn on/off slam_toolbox mapping mode
+        self.slam_mapping_on = (
+            self.get_parameter('slam_mapping_on')
+                .get_parameter_value()
+                .bool_value
+        )
+
         
         if num_agents == 2:
             self.has_opp = True
@@ -152,11 +169,11 @@ class GymBridge(Node):
             ego_drive_topic,
             self.drive_callback,
             10)
-        self.ego_reset_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/initialpose',
-            self.ego_reset_callback,
-            10)
+        # self.ego_reset_sub = self.create_subscription(
+        #     PoseWithCovarianceStamped,
+        #     '/initialpose',
+        #     self.ego_reset_callback,
+        #     10)
         if num_agents == 2:
             self.opp_drive_sub = self.create_subscription(
                 AckermannDriveStamped,
@@ -233,6 +250,8 @@ class GymBridge(Node):
         elif self.ego_drive_published and self.has_opp and self.opp_drive_published:
             self.obs, _, self.done, _ = self.env.step(np.array([[self.ego_steer, self.ego_requested_speed], [self.opp_steer, self.opp_requested_speed]]))
         self._update_sim_state()
+        self._update_sim_odom()
+
 
     def timer_callback(self):
         ts = self.get_clock().now().to_msg()
@@ -263,7 +282,8 @@ class GymBridge(Node):
 
         # pub tf
         self._publish_odom(ts)
-        self._publish_transforms(ts)
+        if self.slam_mapping_on:
+            self._publish_transforms(ts)
         self._publish_laser_transforms(ts)
         self._publish_wheel_transforms(ts)
 
@@ -285,22 +305,45 @@ class GymBridge(Node):
         self.ego_speed[1] = self.obs['linear_vels_y'][0]
         self.ego_speed[2] = self.obs['ang_vels_z'][0]
 
-        
+    def _update_sim_odom(self):
+        # now = self.get_clock().now()
+        # if self.last_odom_stamp is None:
+        #     self.last_odom_stamp = now
+        #     return
+    
+        # dt = (now - self.last_odom_stamp).nanoseconds * 1e-9
+        # self.last_odom_stamp = now
+        dt = 0.01
+
+        v = self.obs['linear_vels_x'][0]
+        w = self.obs['ang_vels_z'][0]
+
+        # identical to onboard math
+        self.odom_x += v * math.cos(self.odom_yaw) * dt
+        self.odom_y += v * math.sin(self.odom_yaw) * dt
+        self.odom_yaw += w * dt
 
     def _publish_odom(self, ts):
         ego_odom = Odometry()
         ego_odom.header.stamp = ts
-        ego_odom.header.frame_id = 'map'
-        ego_odom.child_frame_id = self.ego_namespace + '/base_link'
-        ego_odom.pose.pose.position.x = self.ego_pose[0]
-        ego_odom.pose.pose.position.y = self.ego_pose[1]
-        ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
+        # ego_odom.header.frame_id = 'map'
+        ego_odom.header.frame_id = self.ego_namespace + '/odom'
+        # ego_odom.child_frame_id = self.ego_namespace + '/base_link'
+        # ego_odom.pose.pose.position.x = self.ego_pose[0]
+        # ego_odom.pose.pose.position.y = self.ego_pose[1]
+        # ego_quat = euler.euler2quat(0., 0., self.ego_pose[2], axes='sxyz')
+
+        ego_odom.pose.pose.position.x = self.odom_x
+        ego_odom.pose.pose.position.y = self.odom_y
+        ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
+
         ego_odom.pose.pose.orientation.x = ego_quat[1]
         ego_odom.pose.pose.orientation.y = ego_quat[2]
         ego_odom.pose.pose.orientation.z = ego_quat[3]
         ego_odom.pose.pose.orientation.w = ego_quat[0]
         ego_odom.twist.twist.linear.x = self.ego_speed[0]
         ego_odom.twist.twist.linear.y = self.ego_speed[1]
+        # ego_odom.twist.twist.linear.y = 0.0 # real car: lateral velocity ignored
         ego_odom.twist.twist.angular.z = self.ego_speed[2]
         self.ego_odom_pub.publish(ego_odom)
 
@@ -325,10 +368,16 @@ class GymBridge(Node):
 
     def _publish_transforms(self, ts):
         ego_t = Transform()
-        ego_t.translation.x = self.ego_pose[0]
-        ego_t.translation.y = self.ego_pose[1]
+        # ego_t.translation.x = self.ego_pose[0]
+        # ego_t.translation.y = self.ego_pose[1]
+        
+        # simulated onboard odometry
+        ego_t.translation.x = self.odom_x
+        ego_t.translation.y = self.odom_y
+        
         ego_t.translation.z = 0.0
-        ego_quat = euler.euler2quat(0.0, 0.0, self.ego_pose[2], axes='sxyz')
+        # ego_quat = euler.euler2quat(0.0, 0.0, self.ego_pose[2], axes='sxyz')
+        ego_quat = euler.euler2quat(0.0, 0.0, self.odom_yaw, axes='sxyz')
         ego_t.rotation.x = ego_quat[1]
         ego_t.rotation.y = ego_quat[2]
         ego_t.rotation.z = ego_quat[3]
@@ -337,7 +386,8 @@ class GymBridge(Node):
         ego_ts = TransformStamped()
         ego_ts.transform = ego_t
         ego_ts.header.stamp = ts
-        ego_ts.header.frame_id = 'map'
+        # ego_ts.header.frame_id = 'map'
+        ego_ts.header.frame_id = self.ego_namespace + '/odom'
         ego_ts.child_frame_id = self.ego_namespace + '/base_link'
         self.br.sendTransform(ego_ts)
 

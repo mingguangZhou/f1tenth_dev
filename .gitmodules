@@ -1,0 +1,12 @@
+[submodule "slam_toolbox"]
+	path = slam_toolbox
+	url = https://github.com/mingguangZhou/slam_toolbox.git
+	branch = foxy-devel
+[submodule "range_libc"]
+	path = range_libc
+	url = https://github.com/mingguangZhou/range_libc.git
+	branch = foxy-devel
+[submodule "particle_filter"]
+	path = particle_filter
+	url = https://github.com/mingguangZhou/particle_filter.git
+	branch = mingguang_sim_foxy_setup

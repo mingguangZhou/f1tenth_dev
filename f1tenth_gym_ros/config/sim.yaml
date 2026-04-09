@@ -43,7 +43,10 @@ bridge:
 
     # map parameters
     map_path: '/sim_ws/src/f1tenth_gym_ros/maps/Spielberg_map'
+    # map_path: '/sim_ws/src/f1tenth_gym_ros/maps/Yacht_Office_20260311_00'
+    # map_path: '/sim_ws/src/f1tenth_gym_ros/maps/levine_hall_scanned'
     map_img_ext: '.png'
+    # map_img_ext: '.pgm'
 
     # opponent parameters
     num_agent: 1
