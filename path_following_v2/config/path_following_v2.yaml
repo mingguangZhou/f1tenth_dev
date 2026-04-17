@@ -1,0 +1,29 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+
+    path_topic: "/centerline_path"
+    drive_topic: "/drive"
+
+    global_frame: "map"
+    robot_frame: "ego_racecar/base_link"
+
+    control_rate_hz: 20.0
+    path_timeout_sec: 1.0
+    tf_timeout_sec: 0.1
+
+    lookahead_distance: 0.60
+    wheelbase: 0.33
+    steering_max_deg: 20.6
+
+    velocity_max: 2.0
+    velocity_min: 0.8
+    speed_steering_exponent: 1.0
+
+    min_forward_point_x: 0.05
+    stop_if_no_path: true
+
+    publish_markers: true
+    marker_frame: "ego_racecar/base_link"
+    lookahead_marker_topic: "/path_following_v2/lookahead_marker"
+    steering_marker_topic: "/path_following_v2/steering_marker"
