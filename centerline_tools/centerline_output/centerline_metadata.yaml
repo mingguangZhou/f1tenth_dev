@@ -1,11 +1,11 @@
 source_files:
-  map_image: levine_hall_scanned.pgm
-  map_yaml: levine_hall_scanned.yaml
+  map_image: scanned_2026042400.pgm
+  map_yaml: scanned_2026042400.yaml
 map_metadata:
   resolution: 0.05
   origin:
-  - -14.7
-  - -1.22
+  - -10.4
+  - -5.17
   - 0.0
 pipeline_parameters:
   inflation_radius_m: 0.1
@@ -17,20 +17,20 @@ pipeline_parameters:
   min_component_area_ratio: 0.01
 drivable_region_selection:
   mode: filtered_enclosed_component
-  label_id: 2
-  area: 41580
-  skeleton_pixels: 1355
-  endpoint_count: 5
-  junction_count: 16
-  num_enclosed_candidates: 25
-  num_filtered_candidates: 1
-  largest_enclosed_area: 41580
-  min_area_threshold: 415
+  label_id: 3
+  area: 9440
+  skeleton_pixels: 217
+  endpoint_count: 1
+  junction_count: 3
+  num_enclosed_candidates: 15
+  num_filtered_candidates: 2
+  largest_enclosed_area: 9440
+  min_area_threshold: 94
 outputs:
   raw_csv: centerline_points_raw.csv
   smooth_csv: centerline_points_smooth.csv
   smooth_npy: centerline_points_smooth.npy
-  raw_point_count: 1264
-  smooth_point_count: 635
-  raw_loop_length_m: 63.377817459305206
-  smooth_loop_length_m: 62.338899691158595
+  raw_point_count: 208
+  smooth_point_count: 119
+  raw_loop_length_m: 11.820458146424487
+  smooth_loop_length_m: 10.95343087530933
