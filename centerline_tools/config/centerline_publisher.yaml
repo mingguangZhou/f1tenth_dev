@@ -1,0 +1,15 @@
+centerline_publisher:
+  ros__parameters:
+    csv_path: "centerline_output/centerline_points_smooth.csv"
+    frame_id: "map"
+    path_topic: "/centerline_path"
+    marker_topic: "/centerline_markers"
+    publish_rate_hz: 1.0
+    publish_start_marker: true
+    publish_point_markers: false
+    point_marker_stride: 10
+    line_width: 0.03
+    point_scale: 0.06
+    start_marker_scale: 0.12
+    close_loop_if_needed: true
+    loop_closure_tolerance_m: 0.15
