@@ -169,11 +169,11 @@ class GymBridge(Node):
             ego_drive_topic,
             self.drive_callback,
             10)
-        self.ego_reset_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/initialpose',
-            self.ego_reset_callback,
-            10)
+        # self.ego_reset_sub = self.create_subscription(
+        #     PoseWithCovarianceStamped,
+        #     '/initialpose',
+        #     self.ego_reset_callback,
+        #     10)
         if num_agents == 2:
             self.opp_drive_sub = self.create_subscription(
                 AckermannDriveStamped,
