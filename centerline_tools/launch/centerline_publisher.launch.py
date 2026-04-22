@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Launch file for centerline publisher with explicit argument-to-parameter wiring."""
+"""Foxy-compatible launch file for centerline publisher."""
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
-from ament_index_python.packages import get_package_share_directory
-import os
 
 
 def generate_launch_description():
@@ -55,21 +57,23 @@ def generate_launch_description():
             default_value='true',
             description='Use simulated ROS time for message stamps',
         ),
+
         Node(
             package='centerline_tools',
             executable='centerline_publisher',
             name='centerline_publisher',
             output='screen',
             parameters=[
+                LaunchConfiguration('config'),
                 {
-                    'csv_path': ParameterValue(LaunchConfiguration('csv_path'), value_type=str),
-                    'frame_id': ParameterValue(LaunchConfiguration('frame_id'), value_type=str),
-                    'publish_rate_hz': ParameterValue(LaunchConfiguration('publish_rate_hz'), value_type=float),
-                    'publish_start_marker': ParameterValue(LaunchConfiguration('publish_start_marker'), value_type=bool),
-                    'publish_point_markers': ParameterValue(LaunchConfiguration('publish_point_markers'), value_type=bool),
-                    'point_marker_stride': ParameterValue(LaunchConfiguration('point_marker_stride'), value_type=int),
-                    'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
-                }
+                    'csv_path': LaunchConfiguration('csv_path'),
+                    'frame_id': LaunchConfiguration('frame_id'),
+                    'publish_rate_hz': LaunchConfiguration('publish_rate_hz'),
+                    'publish_start_marker': LaunchConfiguration('publish_start_marker'),
+                    'publish_point_markers': LaunchConfiguration('publish_point_markers'),
+                    'point_marker_stride': LaunchConfiguration('point_marker_stride'),
+                    'use_sim_time': LaunchConfiguration('use_sim_time'),
+                },
             ],
         ),
     ])
