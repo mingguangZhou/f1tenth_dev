@@ -6,7 +6,7 @@
     drive_topic: "/drive"
 
     global_frame: "map"
-    robot_frame: "ego_racecar/base_link"
+    robot_frame: "base_link"
 
     control_rate_hz: 20.0
     path_timeout_sec: 1.0
@@ -24,6 +24,6 @@
     stop_if_no_path: true
 
     publish_markers: true
-    marker_frame: "ego_racecar/base_link"
+    marker_frame: "base_link"
     lookahead_marker_topic: "/path_following_v2/lookahead_marker"
     steering_marker_topic: "/path_following_v2/steering_marker"
