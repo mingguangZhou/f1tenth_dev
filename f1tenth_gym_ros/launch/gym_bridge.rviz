@@ -63,6 +63,26 @@ Visualization Manager:
         Value: /map_updates
       Use Timestamp: false
       Value: true
+    - Alpha: 1
+      Arrow Length: 0.8
+      Axes Length: 0.5
+      Axes Radius: 0.03
+      Class: rviz_default_plugins/Pose
+      Color: 255; 25; 0
+      Enabled: true
+      Head Length: 0.2
+      Head Radius: 0.08
+      Name: PF Inferred Pose
+      Shaft Length: 0.6
+      Shaft Radius: 0.03
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pf/viz/inferred_pose
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Centerline Markers
