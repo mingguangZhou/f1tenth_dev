@@ -2,23 +2,55 @@
   ros__parameters:
     use_sim_time: true
 
-    path_topic: "/centerline_path"
-    drive_topic: "/drive"
-
+    # Shared frames
     global_frame: "map"
     robot_frame: "ego_racecar/base_link"
+    tf_timeout_sec: 0.1
+
+    # ---------------------------------------------------------------------
+    # path_generator_node
+    # Dummy replacement for the future RL agent output:
+    #   - generates a lateral-offset path from /centerline_waypoints
+    #   - publishes a target speed from a curvature-speed rule
+    # ---------------------------------------------------------------------
+    waypoints_topic: "/centerline_waypoints"
+    generated_path_topic: "/path_following_v2/generated_path"
+    target_speed_topic: "/path_following_v2/target_speed"
+
+    publish_rate_hz: 20.0
+
+    # zero:      no offset, pure centerline
+    # constant:  constant_lateral_offset
+    # curvature: dummy inside-of-corner offset based on waypoint curvature
+    lateral_offset_mode: "curvature"
+    constant_lateral_offset: 0.0
+    max_lateral_offset: 0.35
+    curvature_offset_gain: 0.18
+
+    velocity_max: 3.5
+    velocity_min: 0.8
+    curvature_speed_gain: 2.0
+    curvature_lookahead_points: 10
+
+    # ---------------------------------------------------------------------
+    # path_following_v2_node
+    # Pure pursuit follows the generated path and uses target_speed if fresh.
+    # ---------------------------------------------------------------------
+    path_topic: "/path_following_v2/generated_path"
+    drive_topic: "/drive"
 
     control_rate_hz: 20.0
     path_timeout_sec: 1.0
-    tf_timeout_sec: 0.1
 
     lookahead_distance: 0.60
     wheelbase: 0.33
     steering_max_deg: 20.6
 
-    velocity_max: 2.0
-    velocity_min: 0.8
+    # Fallback speed rule if target_speed is missing/stale
     speed_steering_exponent: 1.0
+
+    use_external_target_speed: true
+    target_speed_timeout_sec: 0.5
 
     min_forward_point_x: 0.05
     stop_if_no_path: true

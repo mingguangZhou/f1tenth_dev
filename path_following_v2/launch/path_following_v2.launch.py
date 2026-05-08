@@ -11,9 +11,16 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='path_following_v2',
+            executable='path_generator_node',
+            name='path_generator',
+            output='screen',
+            parameters=[params_file],
+        ),
+        Node(
+            package='path_following_v2',
             executable='path_following_v2_node',
             name='path_following_v2',
             output='screen',
             parameters=[params_file],
-        )
+        ),
     ])

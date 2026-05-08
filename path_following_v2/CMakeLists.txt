@@ -15,11 +15,13 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
 add_executable(path_following_v2_node src/path_following_v2_node.cpp)
+add_executable(path_generator_node src/path_generator_node.cpp)
 
 ament_target_dependencies(path_following_v2_node
   rclcpp
@@ -27,6 +29,17 @@ ament_target_dependencies(path_following_v2_node
   geometry_msgs
   visualization_msgs
   ackermann_msgs
+  std_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+
+ament_target_dependencies(path_generator_node
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  std_msgs
   tf2
   tf2_ros
   tf2_geometry_msgs
@@ -34,6 +47,7 @@ ament_target_dependencies(path_following_v2_node
 
 install(TARGETS
   path_following_v2_node
+  path_generator_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
