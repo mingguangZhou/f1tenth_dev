@@ -28,6 +28,10 @@ RESAMPLE_SPACING_M = 0.10
 SMOOTHING_WINDOW = 9       # must be odd and >= 3
 SMOOTHING_PASSES = 2
 
+# Final direction for exported centerline geometry.
+# normal/csv: keep generated order; reverse: flip order before yaw/curvature export.
+CENTERLINE_DIRECTION = "normal"
+
 # Drivable-region selection tuning
 MIN_COMPONENT_AREA_ABS = 50
 MIN_COMPONENT_AREA_RATIO = 0.01
@@ -127,6 +131,106 @@ def compute_closed_loop_length(world_pts):
     """
     seg_lengths = compute_world_path_lengths(world_pts)
     return float(np.sum(seg_lengths)) if len(seg_lengths) > 0 else 0.0
+
+
+def apply_centerline_direction(world_pts, direction):
+    """
+    Apply final canonical direction before computing yaw/curvature.
+
+    normal/csv:
+      keep generated order
+
+    reverse:
+      reverse point order
+    """
+    direction = direction.lower()
+    if direction == "csv":
+        direction = "normal"
+    if direction not in ("normal", "reverse"):
+        raise ValueError("CENTERLINE_DIRECTION must be 'normal', 'csv', or 'reverse'.")
+
+    closed_pts = ensure_closed_loop_world(world_pts)
+    core = list(closed_pts[:-1])
+
+    if direction == "reverse":
+        core.reverse()
+
+    core.append(core[0])
+    return core
+
+
+def wrap_angle(angle):
+    """Wrap angle to [-pi, pi]."""
+    return float(np.arctan2(np.sin(angle), np.cos(angle)))
+
+
+def compute_yaw_and_curvature(world_pts):
+    """
+    Compute yaw, signed curvature, and absolute curvature for a closed loop.
+
+    Returns rows with:
+      index, x, y, yaw, curvature, curvature_abs
+    """
+    closed_pts = ensure_closed_loop_world(world_pts)
+    pts = np.array(closed_pts[:-1], dtype=np.float64)
+    n = len(pts)
+
+    rows = []
+    for i in range(n):
+        p_prev = pts[(i - 1) % n]
+        p = pts[i]
+        p_next = pts[(i + 1) % n]
+
+        tangent = p_next - p_prev
+        yaw = wrap_angle(np.arctan2(tangent[1], tangent[0]))
+
+        a = p - p_prev
+        b = p_next - p
+        c = p_next - p_prev
+
+        la = np.linalg.norm(a)
+        lb = np.linalg.norm(b)
+        lc = np.linalg.norm(c)
+
+        if la < 1e-9 or lb < 1e-9 or lc < 1e-9:
+            curvature = 0.0
+        else:
+            cross = a[0] * b[1] - a[1] * b[0]
+            curvature = float(2.0 * cross / (la * lb * lc))
+
+        rows.append({
+            "index": i,
+            "x": float(p[0]),
+            "y": float(p[1]),
+            "yaw": float(yaw),
+            "curvature": float(curvature),
+            "curvature_abs": float(abs(curvature)),
+        })
+
+    return rows
+
+
+def rows_to_xy_points(rows):
+    """Convert rich centerline rows back to [(x, y), ...], explicitly closed."""
+    pts = [(float(row["x"]), float(row["y"])) for row in rows]
+    if pts and pts[0] != pts[-1]:
+        pts.append(pts[0])
+    return pts
+
+
+def rows_to_numpy(rows):
+    """Convert rich centerline rows to [N, 6] NumPy array."""
+    return np.array(
+        [[
+            row["index"],
+            row["x"],
+            row["y"],
+            row["yaw"],
+            row["curvature"],
+            row["curvature_abs"],
+        ] for row in rows],
+        dtype=np.float64,
+    )
 
 
 # =========================
@@ -714,16 +818,31 @@ def save_world_centerline_csv(world_pts, csv_path):
             writer.writerow([i, x, y])
 
 
+def save_centerline_geometry_csv(rows, csv_path):
+    """
+    Save final centerline with geometry fields.
+
+    Columns:
+      index, x, y, yaw, curvature, curvature_abs
+    """
+    fieldnames = ["index", "x", "y", "yaw", "curvature", "curvature_abs"]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
 # =========================
 # PHASE 9: FINAL EXPORT PACKAGE
 # =========================
-def save_centerline_npy(world_pts, npy_path):
+def save_centerline_npy(centerline_rows, npy_path):
     """
-    Save world-coordinate centerline points to NumPy binary format.
-    Shape: [N, 2]
+    Save final centerline rows to NumPy binary format.
+    Shape: [N, 6] with columns:
+      index, x, y, yaw, curvature, curvature_abs
     """
-    arr = np.array(world_pts, dtype=np.float64)
-    np.save(npy_path, arr)
+    np.save(npy_path, rows_to_numpy(centerline_rows))
 
 
 def save_metadata_yaml(
@@ -733,7 +852,8 @@ def save_metadata_yaml(
     map_meta,
     region_info,
     raw_loop,
-    smooth_loop
+    smooth_loop,
+    centerline_rows
 ):
     """
     Save pipeline metadata for reproducibility and later ROS integration.
@@ -756,6 +876,8 @@ def save_metadata_yaml(
             "resample_spacing_m": float(RESAMPLE_SPACING_M),
             "smoothing_window": int(SMOOTHING_WINDOW),
             "smoothing_passes": int(SMOOTHING_PASSES),
+            "centerline_direction": str(CENTERLINE_DIRECTION),
+            "geometry_columns": ["index", "x", "y", "yaw", "curvature", "curvature_abs"],
             "min_component_area_abs": int(MIN_COMPONENT_AREA_ABS),
             "min_component_area_ratio": float(MIN_COMPONENT_AREA_RATIO),
         },
@@ -765,7 +887,7 @@ def save_metadata_yaml(
             "smooth_csv": SMOOTH_CSV_NAME,
             "smooth_npy": SMOOTH_NPY_NAME,
             "raw_point_count": int(len(raw_loop)),
-            "smooth_point_count": int(len(smooth_loop)),
+            "smooth_point_count": int(len(centerline_rows)),
             "raw_loop_length_m": float(raw_len),
             "smooth_loop_length_m": float(smooth_len),
         }
@@ -1008,15 +1130,22 @@ def main():
     print(f"  Resampled step mean:  {phase8_metrics['resampled_step_mean_m']:.3f} m")
     print(f"  Smoothed step mean:   {phase8_metrics['smoothed_step_mean_m']:.3f} m")
 
+    # Apply final direction and compute yaw/curvature for exported smooth centerline.
+    world_loop_final = apply_centerline_direction(world_loop_smoothed, CENTERLINE_DIRECTION)
+    centerline_rows = compute_yaw_and_curvature(world_loop_final)
+    world_loop_final_xy = rows_to_xy_points(centerline_rows)
+
     smooth_csv_path = os.path.join(OUTPUT_DIR, SMOOTH_CSV_NAME)
-    save_world_centerline_csv(world_loop_smoothed, smooth_csv_path)
+    save_centerline_geometry_csv(centerline_rows, smooth_csv_path)
     print(f"Saved smooth centerline:{smooth_csv_path}")
+    print(f"  Geometry columns:      index,x,y,yaw,curvature,curvature_abs")
+    print(f"  Export direction:      {CENTERLINE_DIRECTION}")
 
     # Phase 9: final export package
     smooth_npy_path = os.path.join(OUTPUT_DIR, SMOOTH_NPY_NAME)
     metadata_yaml_path = os.path.join(OUTPUT_DIR, METADATA_YAML_NAME)
 
-    save_centerline_npy(world_loop_smoothed, smooth_npy_path)
+    save_centerline_npy(centerline_rows, smooth_npy_path)
     save_metadata_yaml(
         metadata_yaml_path,
         map_path=map_path,
@@ -1024,7 +1153,8 @@ def main():
         map_meta=meta,
         region_info=region_info,
         raw_loop=world_loop_raw,
-        smooth_loop=world_loop_smoothed
+        smooth_loop=world_loop_final_xy,
+        centerline_rows=centerline_rows
     )
 
     print("Phase 9: final export package")
@@ -1057,7 +1187,7 @@ def main():
             meta,
             world_loop_raw,
             world_loop_resampled,
-            world_loop_smoothed,
+            world_loop_final_xy,
             os.path.join(OUTPUT_DIR, DEBUG_PHASE8_PATHS)
         )
 

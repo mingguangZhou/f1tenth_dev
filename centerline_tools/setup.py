@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
-        ('share/' + package_name + '/centerline_output', glob('centerline_output/*.csv')),
+        ('share/' + package_name + '/centerline_output', glob('centerline_output/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

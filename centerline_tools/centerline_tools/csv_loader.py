@@ -19,13 +19,23 @@ class CenterlinePoint:
 
     Known fields are promoted to attributes. Any extra CSV columns are stored in
     ``extras`` so the ROS layer remains forward-compatible with future offline
-    exports such as curvature, heading, width, speed hint, and so on.
+    exports such as yaw, curvature, width, speed hint, and so on.
     """
 
     index: int
     x: float
     y: float
     extras: Dict[str, float | str]
+
+    def get_float(self, name: str, default: float = 0.0) -> float:
+        """Return an extra column as float, with a safe fallback."""
+        value = self.extras.get(name, default)
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+
+        return parsed if math.isfinite(parsed) else default
 
 
 def _parse_numeric_or_string(value: str):

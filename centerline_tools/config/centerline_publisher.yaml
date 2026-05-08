@@ -4,10 +4,15 @@ centerline_publisher:
     frame_id: "map"
     path_topic: "/centerline_path"
     marker_topic: "/centerline_markers"
+    waypoints_topic: "/centerline_waypoints"
+    direction: "csv"  # csv/normal or reverse
     publish_rate_hz: 1.0
     publish_start_marker: true
     publish_point_markers: false
     point_marker_stride: 10
+    publish_direction_arrows: true
+    direction_arrow_stride: 40
+    direction_arrow_length: 0.35
     line_width: 0.03
     point_scale: 0.06
     start_marker_scale: 0.12
