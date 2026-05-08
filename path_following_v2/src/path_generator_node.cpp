@@ -53,6 +53,7 @@ public:
     declare_parameter<double>("velocity_min", 0.8);
     declare_parameter<double>("curvature_speed_gain", 2.0);
     declare_parameter<int>("curvature_lookahead_points", 15);
+    declare_parameter<int>("local_path_horizon_points", 80);
 
     waypoints_topic_ = get_parameter("waypoints_topic").as_string();
     generated_path_topic_ = get_parameter("generated_path_topic").as_string();
@@ -72,6 +73,11 @@ public:
     velocity_min_ = get_parameter("velocity_min").as_double();
     curvature_speed_gain_ = get_parameter("curvature_speed_gain").as_double();
     curvature_lookahead_points_ = get_parameter("curvature_lookahead_points").as_int();
+    local_path_horizon_points_ = get_parameter("local_path_horizon_points").as_int();
+    if (local_path_horizon_points_ < 2) {
+      RCLCPP_WARN(get_logger(), "local_path_horizon_points must be >= 2; forcing to 2.");
+      local_path_horizon_points_ = 2;
+    }
 
     if (lateral_offset_mode_ != "zero" && lateral_offset_mode_ != "constant" && lateral_offset_mode_ != "curvature") {
       RCLCPP_WARN(get_logger(), "Unknown lateral_offset_mode '%s'; falling back to zero.", lateral_offset_mode_.c_str());
@@ -96,6 +102,7 @@ public:
     RCLCPP_INFO(get_logger(), "  generated_path_topic: %s", generated_path_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  target_speed_topic: %s", target_speed_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  lateral_offset_mode: %s", lateral_offset_mode_.c_str());
+    RCLCPP_INFO(get_logger(), "  local_path_horizon_points: %d", local_path_horizon_points_);
   }
 
 private:
@@ -126,6 +133,7 @@ private:
   double velocity_min_{0.8};
   double curvature_speed_gain_{2.0};
   int curvature_lookahead_points_{15};
+  int local_path_horizon_points_{80};
 
   void waypointsCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
   {
@@ -232,14 +240,26 @@ private:
     return tf2::toMsg(q);
   }
 
-  nav_msgs::msg::Path buildOffsetPath() const
+  nav_msgs::msg::Path buildOffsetPath(int nearest_idx) const
   {
     nav_msgs::msg::Path path;
     path.header.stamp = now();
     path.header.frame_id = global_frame_;
-    path.poses.reserve(waypoints_.size());
 
-    for (const auto & wp : waypoints_) {
+    if (waypoints_.empty()) {
+      return path;
+    }
+
+    const int n = static_cast<int>(waypoints_.size());
+    const int horizon = std::min(local_path_horizon_points_, n);
+    path.poses.reserve(static_cast<std::size_t>(horizon));
+
+    // Publish only a local forward segment of the offset path.
+    // The segment starts from the waypoint nearest to the current car pose and
+    // wraps around at the end because the centerline is a closed loop.
+    for (int step = 0; step < horizon; ++step) {
+      const int idx = ((nearest_idx + step) % n + n) % n;
+      const auto & wp = waypoints_[idx];
       const double d = computeOffset(wp);
 
       // Left normal of the waypoint tangent: n = [-sin(yaw), cos(yaw)].
@@ -269,7 +289,7 @@ private:
     const bool pose_ok = lookupRobotPose(tf_map_to_base);
     const int nearest_idx = pose_ok ? findNearestWaypointIndex(tf_map_to_base) : 0;
 
-    const auto path = buildOffsetPath();
+    const auto path = buildOffsetPath(nearest_idx);
     path_pub_->publish(path);
 
     std_msgs::msg::Float64 speed_msg;
@@ -279,8 +299,8 @@ private:
     const double current_offset = computeOffset(waypoints_[nearest_idx]);
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 1000,
-      "dummy path: nearest=%d, speed=%.2f, offset=%.3f, curv_abs=%.3f",
-      nearest_idx, speed_msg.data, current_offset, waypoints_[nearest_idx].curvature_abs);
+      "dummy local path: nearest=%d, horizon=%d, speed=%.2f, offset=%.3f, curv_abs=%.3f",
+      nearest_idx, local_path_horizon_points_, speed_msg.data, current_offset, waypoints_[nearest_idx].curvature_abs);
   }
 };
 

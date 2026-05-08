@@ -32,6 +32,11 @@
     curvature_speed_gain: 2.0
     curvature_lookahead_points: 10
 
+    # Number of centerline waypoints published as the local generated path.
+    # This is the dummy/RL action horizon used by pure pursuit.
+    # Larger = more forward context for controller; smaller = more local/instant behavior.
+    local_path_horizon_points: 80
+
     # ---------------------------------------------------------------------
     # path_following_v2_node
     # Pure pursuit follows the generated path and uses target_speed if fresh.
