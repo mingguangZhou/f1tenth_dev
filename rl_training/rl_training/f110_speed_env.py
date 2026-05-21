@@ -1,0 +1,204 @@
+import math
+from typing import Dict, Tuple
+
+import gym
+import numpy as np
+
+from rl_training.centerline_utils import (
+    load_centerline_csv,
+    get_centerline_state_features,
+    compute_centerline_progress_delta,
+)
+from rl_training.pure_pursuit import compute_pure_pursuit_steering
+
+
+class F110SpeedEnv(gym.Env):
+    """
+    Minimal RL environment for speed-only learning.
+
+    Action:
+        [target_speed]
+
+    Steering:
+        Rule-based pure pursuit.
+
+    Observation:
+        [
+            current_speed,
+            cross_track_error,
+            heading_error,
+            upcoming_curvature_abs,
+        ]
+    """
+
+    def __init__(
+        self,
+        map_path: str,
+        map_ext: str,
+        centerline_csv: str,
+        start_pose: Tuple[float, float, float],
+        lookahead_distance: float = 1.0,
+        wheelbase: float = 0.33,
+        max_steer: float = 0.4189,
+        min_speed: float = 0.5,
+        max_speed: float = 4.0,
+        max_episode_steps: int = 2000,
+    ):
+        super().__init__()
+
+        self.map_path = map_path
+        self.map_ext = map_ext
+        self.centerline = load_centerline_csv(centerline_csv)
+        self.start_pose = np.array([start_pose], dtype=np.float32)
+
+        self.lookahead_distance = lookahead_distance
+        self.wheelbase = wheelbase
+        self.max_steer = max_steer
+        self.min_speed = min_speed
+        self.max_speed = max_speed
+        self.max_episode_steps = max_episode_steps
+
+        self.env = gym.make(
+            "f110_gym:f110-v0",
+            map=self.map_path,
+            map_ext=self.map_ext,
+            num_agents=1,
+        )
+
+        self.action_space = gym.spaces.Box(
+            low=np.array([self.min_speed], dtype=np.float32),
+            high=np.array([self.max_speed], dtype=np.float32),
+            dtype=np.float32,
+        )
+
+        self.observation_space = gym.spaces.Box(
+            low=np.array([0.0, -5.0, -math.pi, 0.0], dtype=np.float32),
+            high=np.array([20.0, 5.0, math.pi, 10.0], dtype=np.float32),
+            dtype=np.float32,
+        )
+
+        self.obs = None
+        self.done = False
+        self.step_count = 0
+        self.previous_centerline_idx = None
+
+    def reset(self):
+        self.obs, _, self.done, _ = self.env.reset(self.start_pose)
+        self.step_count = 0
+        self.previous_centerline_idx = None
+        return self._get_rl_observation()
+
+    def step(self, action):
+        self.step_count += 1
+
+        target_speed = float(np.clip(action[0], self.min_speed, self.max_speed))
+
+        car_x, car_y, car_yaw, car_speed = self._get_car_state()
+
+        steering, lookahead_idx = compute_pure_pursuit_steering(
+            car_x=car_x,
+            car_y=car_y,
+            car_yaw=car_yaw,
+            centerline=self.centerline,
+            lookahead_distance=self.lookahead_distance,
+            wheelbase=self.wheelbase,
+            max_steer=self.max_steer,
+        )
+
+        gym_action = np.array([[steering, target_speed]], dtype=np.float32)
+
+        self.obs, _, self.done, info = self.env.step(gym_action)
+
+        rl_obs, nearest_idx = self._get_rl_observation_with_index()
+
+        reward = self._compute_reward(
+            rl_obs=rl_obs,
+            nearest_idx=nearest_idx,
+            target_speed=target_speed,
+        )
+
+        self.previous_centerline_idx = nearest_idx
+
+        if self.step_count >= self.max_episode_steps:
+            self.done = True
+
+        return rl_obs, reward, self.done, info
+
+    def _get_car_state(self):
+        """
+        Extract ego vehicle state from f1tenth_gym observation.
+        """
+        car_x = float(self.obs["poses_x"][0])
+        car_y = float(self.obs["poses_y"][0])
+        car_yaw = float(self.obs["poses_theta"][0])
+        car_speed = float(self.obs["linear_vels_x"][0])
+
+        return car_x, car_y, car_yaw, car_speed
+
+    def _get_rl_observation(self):
+        rl_obs, _ = self._get_rl_observation_with_index()
+        return rl_obs
+
+    def _get_rl_observation_with_index(self):
+        car_x, car_y, car_yaw, car_speed = self._get_car_state()
+
+        features, nearest_idx = get_centerline_state_features(
+            car_x=car_x,
+            car_y=car_y,
+            car_yaw=car_yaw,
+            car_speed=car_speed,
+            centerline=self.centerline,
+            curvature_lookahead_points=20,
+        )
+
+        return np.array(features, dtype=np.float32), nearest_idx
+
+    def _compute_reward(
+        self,
+        rl_obs: np.ndarray,
+        nearest_idx: int,
+        target_speed: float,
+    ) -> float:
+        """
+        Simple first reward.
+
+        Positive:
+            forward progress along centerline
+
+        Negative:
+            crash
+            large lateral error
+            large heading error
+            too much speed in curves
+        """
+        car_speed = float(rl_obs[0])
+        cross_track_error = float(rl_obs[1])
+        heading_error = float(rl_obs[2])
+        upcoming_curvature_abs = float(rl_obs[3])
+
+        progress_delta = compute_centerline_progress_delta(
+            previous_idx=self.previous_centerline_idx,
+            current_idx=nearest_idx,
+            centerline_size=len(self.centerline),
+        )
+
+        progress_reward = 1.0 * progress_delta
+
+        lateral_penalty = 0.5 * abs(cross_track_error)
+        heading_penalty = 0.2 * abs(heading_error)
+
+        curve_speed_penalty = 0.05 * upcoming_curvature_abs * target_speed * target_speed
+
+        crash_penalty = 0.0
+        if self.done:
+            crash_penalty = 100.0
+
+        reward = (
+            progress_reward
+            - lateral_penalty
+            - heading_penalty
+            - curve_speed_penalty
+            - crash_penalty
+        )
+
+        return float(reward)
