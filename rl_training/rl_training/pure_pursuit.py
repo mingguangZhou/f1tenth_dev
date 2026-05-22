@@ -1,21 +1,51 @@
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from rl_training.centerline_utils import (
     CenterlinePoint,
     find_nearest_centerline_index,
     get_loop_index,
-    wrap_angle,
 )
 
 
-def distance_2d(x1: float, y1: float, x2: float, y2: float) -> float:
+def distance_2d(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> float:
     """
-    Euclidean distance in 2D.
+    Compute 2D Euclidean distance.
     """
     dx = x1 - x2
     dy = y1 - y2
     return math.sqrt(dx * dx + dy * dy)
+
+
+def compute_speed_dependent_lookahead(
+    speed: float,
+    min_lookahead: float = 0.6,
+    max_lookahead: float = 1.6,
+    speed_gain: float = 0.25,
+) -> float:
+    """
+    Compute lookahead distance based on current vehicle speed.
+
+    Logic:
+        Low speed:
+            shorter lookahead, so the controller tracks corners more tightly.
+
+        High speed:
+            longer lookahead, so steering is smoother and less nervous.
+
+    Formula:
+        lookahead = min_lookahead + speed_gain * speed
+
+    Then the result is clamped to:
+        [min_lookahead, max_lookahead]
+    """
+    lookahead = min_lookahead + speed_gain * max(0.0, speed)
+    return max(min_lookahead, min(max_lookahead, lookahead))
 
 
 def find_lookahead_index(
@@ -28,23 +58,36 @@ def find_lookahead_index(
     Find a centerline point approximately lookahead_distance ahead of the car.
 
     Method:
-    1. Find nearest centerline point.
-    2. Move forward along the closed-loop centerline.
-    3. Return the first point whose distance from the car is >= lookahead_distance.
+        1. Find the nearest centerline point to the car.
+        2. Walk forward along the closed-loop centerline.
+        3. Return the first point whose Euclidean distance from the car
+           is greater than or equal to lookahead_distance.
 
-    This is simple and robust enough for the first RL training pipeline.
+    This is intentionally simple and robust for the first RL pipeline.
     """
-    nearest_idx = find_nearest_centerline_index(car_x, car_y, centerline)
+    nearest_idx = find_nearest_centerline_index(
+        x=car_x,
+        y=car_y,
+        centerline=centerline,
+    )
+
     n = len(centerline)
 
     for offset in range(n):
         idx = get_loop_index(nearest_idx + offset, n)
         p = centerline[idx]
 
-        if distance_2d(car_x, car_y, p.x, p.y) >= lookahead_distance:
+        distance = distance_2d(
+            car_x,
+            car_y,
+            p.x,
+            p.y,
+        )
+
+        if distance >= lookahead_distance:
             return idx
 
-    # Fallback should almost never happen on a normal closed track.
+    # Fallback: should rarely happen on a valid closed-loop centerline.
     return nearest_idx
 
 
@@ -59,11 +102,11 @@ def transform_point_to_vehicle_frame(
     Transform a world-frame point into the vehicle frame.
 
     Vehicle frame convention:
-        x forward
-        y left
+        x-axis: forward
+        y-axis: left
 
-    This is needed because pure pursuit steering is easiest to compute
-    using the lookahead point relative to the vehicle.
+    Pure pursuit is easiest to compute when the lookahead target point
+    is expressed relative to the vehicle.
     """
     dx = point_x - car_x
     dy = point_y - car_y
@@ -86,40 +129,59 @@ def compute_pure_pursuit_steering(
     lookahead_distance: float = 1.0,
     wheelbase: float = 0.33,
     max_steer: float = 0.4189,
+    current_speed: Optional[float] = None,
+    use_speed_dependent_lookahead: bool = False,
+    min_lookahead: float = 0.6,
+    max_lookahead: float = 1.6,
+    lookahead_speed_gain: float = 0.25,
 ) -> Tuple[float, int]:
     """
     Compute steering angle using pure pursuit.
 
-    Args:
-        car_x, car_y, car_yaw:
-            Current vehicle pose in map/world frame.
+    There are two modes:
 
-        centerline:
-            Loaded centerline waypoints.
+    1. Fixed lookahead:
+        use_speed_dependent_lookahead = False
 
-        lookahead_distance:
-            Target lookahead distance in meters.
+        The controller uses lookahead_distance directly.
 
-        wheelbase:
-            Vehicle wheelbase in meters.
-            For F1TENTH cars this is often around 0.32-0.34 m.
+    2. Speed-dependent lookahead:
+        use_speed_dependent_lookahead = True
 
-        max_steer:
-            Steering clamp in radians.
-            0.4189 rad is about 24 degrees.
+        The controller computes:
+            active_lookahead = min_lookahead + lookahead_speed_gain * current_speed
+
+        Then clamps it to:
+            [min_lookahead, max_lookahead]
 
     Returns:
-        steering_angle:
-            Steering command in radians.
+        steering:
+            steering angle in radians
 
         lookahead_idx:
-            Index of selected lookahead point.
+            selected lookahead point index on the centerline
     """
+    if use_speed_dependent_lookahead:
+        if current_speed is None:
+            raise ValueError(
+                "current_speed must be provided when "
+                "use_speed_dependent_lookahead=True"
+            )
+
+        active_lookahead_distance = compute_speed_dependent_lookahead(
+            speed=current_speed,
+            min_lookahead=min_lookahead,
+            max_lookahead=max_lookahead,
+            speed_gain=lookahead_speed_gain,
+        )
+    else:
+        active_lookahead_distance = lookahead_distance
+
     lookahead_idx = find_lookahead_index(
         car_x=car_x,
         car_y=car_y,
         centerline=centerline,
-        lookahead_distance=lookahead_distance,
+        lookahead_distance=active_lookahead_distance,
     )
 
     target = centerline[lookahead_idx]
@@ -132,23 +194,23 @@ def compute_pure_pursuit_steering(
         car_yaw=car_yaw,
     )
 
-    # If the selected target is behind the vehicle, steering becomes unstable.
-    # In normal operation this should not happen often, but this guard is useful
-    # during early testing and resets.
+    # If the target is behind the vehicle, the pure pursuit formula can become
+    # unstable. This guard keeps the controller safe during resets or bad states.
     if local_x <= 1e-6:
         return 0.0, lookahead_idx
 
-    # Pure pursuit formula:
-    # curvature = 2 * y / Ld^2
-    # steering = atan(wheelbase * curvature)
+    # Pure pursuit geometry:
     #
-    # Here Ld is the distance from vehicle to target point.
+    #   curvature = 2 * lateral_offset / lookahead_distance^2
+    #   steering  = atan(wheelbase * curvature)
+    #
+    # Here we compute lookahead_distance^2 from the actual local target point.
     ld_sq = local_x * local_x + local_y * local_y
     curvature = 2.0 * local_y / ld_sq
 
     steering = math.atan(wheelbase * curvature)
 
-    # Clamp steering to simulator / vehicle limit.
+    # Clamp to simulator / vehicle steering limit.
     steering = max(-max_steer, min(max_steer, steering))
 
     return steering, lookahead_idx

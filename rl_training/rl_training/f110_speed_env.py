@@ -45,6 +45,10 @@ class F110SpeedEnv(gym.Env):
         max_episode_steps: int = 2000,
         lap_completion_ratio: float = 0.95,
         lap_bonus: float = 500.0,
+        use_speed_dependent_lookahead: bool = True,
+        min_lookahead: float = 0.6,
+        max_lookahead: float = 1.6,
+        lookahead_speed_gain: float = 0.25,
     ):
         super().__init__()
 
@@ -56,6 +60,10 @@ class F110SpeedEnv(gym.Env):
         self.lookahead_distance = lookahead_distance
         self.wheelbase = wheelbase
         self.max_steer = max_steer
+        self.use_speed_dependent_lookahead = use_speed_dependent_lookahead
+        self.min_lookahead = min_lookahead
+        self.max_lookahead = max_lookahead
+        self.lookahead_speed_gain = lookahead_speed_gain
 
         # Same speed range will be used by both rule-based baseline and RL agent.
         self.min_speed = min_speed
@@ -126,7 +134,7 @@ class F110SpeedEnv(gym.Env):
 
         target_speed = float(np.clip(action[0], self.min_speed, self.max_speed))
 
-        car_x, car_y, car_yaw, _ = self._get_car_state()
+        car_x, car_y, car_yaw, car_speed = self._get_car_state()
 
         steering, _ = compute_pure_pursuit_steering(
             car_x=car_x,
@@ -136,6 +144,11 @@ class F110SpeedEnv(gym.Env):
             lookahead_distance=self.lookahead_distance,
             wheelbase=self.wheelbase,
             max_steer=self.max_steer,
+            current_speed=car_speed,
+            use_speed_dependent_lookahead=self.use_speed_dependent_lookahead,
+            min_lookahead=self.min_lookahead,
+            max_lookahead=self.max_lookahead,
+            lookahead_speed_gain=self.lookahead_speed_gain,
         )
 
         gym_action = np.array([[steering, target_speed]], dtype=np.float32)
