@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Tuple
+from typing import Tuple
 
 import gym
 import numpy as np
@@ -43,6 +43,8 @@ class F110SpeedEnv(gym.Env):
         min_speed: float = 0.5,
         max_speed: float = 4.0,
         max_episode_steps: int = 2000,
+        lap_completion_ratio: float = 0.95,
+        lap_bonus: float = 500.0,
     ):
         super().__init__()
 
@@ -54,9 +56,14 @@ class F110SpeedEnv(gym.Env):
         self.lookahead_distance = lookahead_distance
         self.wheelbase = wheelbase
         self.max_steer = max_steer
+
+        # Same speed range will be used by both rule-based baseline and RL agent.
         self.min_speed = min_speed
         self.max_speed = max_speed
+
         self.max_episode_steps = max_episode_steps
+        self.lap_completion_ratio = lap_completion_ratio
+        self.lap_bonus = lap_bonus
 
         self.env = gym.make(
             "f110_gym:f110-v0",
@@ -65,12 +72,15 @@ class F110SpeedEnv(gym.Env):
             num_agents=1,
         )
 
+        # RL action: one continuous value = target speed.
         self.action_space = gym.spaces.Box(
             low=np.array([self.min_speed], dtype=np.float32),
             high=np.array([self.max_speed], dtype=np.float32),
             dtype=np.float32,
         )
 
+        # RL observation:
+        # [current_speed, cross_track_error, heading_error, upcoming_curvature_abs]
         self.observation_space = gym.spaces.Box(
             low=np.array([0.0, -5.0, -math.pi, 0.0], dtype=np.float32),
             high=np.array([20.0, 5.0, math.pi, 10.0], dtype=np.float32),
@@ -80,22 +90,45 @@ class F110SpeedEnv(gym.Env):
         self.obs = None
         self.done = False
         self.step_count = 0
+
         self.previous_centerline_idx = None
+        self.max_progress_idx = 0
+
+        self.lap_completed = False
+        self.crashed = False
+        self.timeout = False
 
     def reset(self):
+        """
+        Start a new episode and clear all episode-level memory.
+        """
         self.obs, _, self.done, _ = self.env.reset(self.start_pose)
+
         self.step_count = 0
         self.previous_centerline_idx = None
+        self.max_progress_idx = 0
+
+        self.lap_completed = False
+        self.crashed = False
+        self.timeout = False
+
         return self._get_rl_observation()
 
     def step(self, action):
+        """
+        One control step.
+
+        RL chooses only target speed.
+        Pure pursuit computes steering.
+        F1TENTH Gym receives [steering, speed].
+        """
         self.step_count += 1
 
         target_speed = float(np.clip(action[0], self.min_speed, self.max_speed))
 
-        car_x, car_y, car_yaw, car_speed = self._get_car_state()
+        car_x, car_y, car_yaw, _ = self._get_car_state()
 
-        steering, lookahead_idx = compute_pure_pursuit_steering(
+        steering, _ = compute_pure_pursuit_steering(
             car_x=car_x,
             car_y=car_y,
             car_yaw=car_yaw,
@@ -107,9 +140,30 @@ class F110SpeedEnv(gym.Env):
 
         gym_action = np.array([[steering, target_speed]], dtype=np.float32)
 
-        self.obs, _, self.done, info = self.env.step(gym_action)
+        self.obs, _, gym_done, info = self.env.step(gym_action)
 
         rl_obs, nearest_idx = self._get_rl_observation_with_index()
+
+        # Update lap progress.
+        self.max_progress_idx = max(self.max_progress_idx, nearest_idx)
+        lap_threshold = int(self.lap_completion_ratio * len(self.centerline))
+
+        if self.max_progress_idx >= lap_threshold:
+            self.lap_completed = True
+
+        # Distinguish episode termination reasons.
+        self.done = False
+
+        if gym_done and not self.lap_completed:
+            self.crashed = True
+            self.done = True
+
+        if self.lap_completed:
+            self.done = True
+
+        if self.step_count >= self.max_episode_steps:
+            self.timeout = True
+            self.done = True
 
         reward = self._compute_reward(
             rl_obs=rl_obs,
@@ -118,9 +172,6 @@ class F110SpeedEnv(gym.Env):
         )
 
         self.previous_centerline_idx = nearest_idx
-
-        if self.step_count >= self.max_episode_steps:
-            self.done = True
 
         return rl_obs, reward, self.done, info
 
@@ -136,10 +187,19 @@ class F110SpeedEnv(gym.Env):
         return car_x, car_y, car_yaw, car_speed
 
     def _get_rl_observation(self):
+        """
+        Return only the RL observation.
+        """
         rl_obs, _ = self._get_rl_observation_with_index()
         return rl_obs
 
     def _get_rl_observation_with_index(self):
+        """
+        Return RL observation plus nearest centerline index.
+
+        The index is not given to the RL agent directly.
+        It is used internally for progress/lap reward.
+        """
         car_x, car_y, car_yaw, car_speed = self._get_car_state()
 
         features, nearest_idx = get_centerline_state_features(
@@ -160,18 +220,18 @@ class F110SpeedEnv(gym.Env):
         target_speed: float,
     ) -> float:
         """
-        Simple first reward.
+        Reward for speed-only RL.
 
         Positive:
-            forward progress along centerline
+            - forward progress along centerline
+            - lap completion bonus
 
         Negative:
-            crash
-            large lateral error
-            large heading error
-            too much speed in curves
+            - crash
+            - large lateral error
+            - large heading error
+            - excessive speed in curves
         """
-        car_speed = float(rl_obs[0])
         cross_track_error = float(rl_obs[1])
         heading_error = float(rl_obs[2])
         upcoming_curvature_abs = float(rl_obs[3])
@@ -187,14 +247,16 @@ class F110SpeedEnv(gym.Env):
         lateral_penalty = 0.5 * abs(cross_track_error)
         heading_penalty = 0.2 * abs(heading_error)
 
-        curve_speed_penalty = 0.05 * upcoming_curvature_abs * target_speed * target_speed
+        curve_speed_penalty = (
+            0.05 * upcoming_curvature_abs * target_speed * target_speed
+        )
 
-        crash_penalty = 0.0
-        if self.done:
-            crash_penalty = 100.0
+        crash_penalty = 100.0 if self.crashed else 0.0
+        lap_reward = self.lap_bonus if self.lap_completed else 0.0
 
         reward = (
             progress_reward
+            + lap_reward
             - lateral_penalty
             - heading_penalty
             - curve_speed_penalty
