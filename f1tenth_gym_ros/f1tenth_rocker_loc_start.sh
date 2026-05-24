@@ -22,6 +22,7 @@ PARTICLE_FILTER_PATH="${SCRIPT_DIR}/../particle_filter"
 CENTERLINE_TOOLS_PATH="${SCRIPT_DIR}/../centerline_tools"
 PATH_FOLLOWING_V2_PATH="${SCRIPT_DIR}/../path_following_v2"
 RL_TRAINING_PATH="${SCRIPT_DIR}/../rl_training"
+RL_SPEED_INFERENCE_PATH="${SCRIPT_DIR}/../rl_speed_inference"
 
 # --------------------------------------------
 # Notify paths
@@ -39,6 +40,7 @@ echo "  ${PARTICLE_FILTER_PATH} → /sim_ws/src/particle_filter"
 echo "  ${CENTERLINE_TOOLS_PATH} → /sim_ws/src/centerline_tools"
 echo "  ${PATH_FOLLOWING_V2_PATH} → /sim_ws/src/path_following_v2"
 echo "  ${RL_TRAINING_PATH} → /sim_ws/src/rl_training"
+echo "  ${RL_SPEED_INFERENCE_PATH} → /sim_ws/src/rl_speed_inference"
 echo ""
 
 # --------------------------------------------
@@ -57,5 +59,6 @@ rocker --nvidia --x11 \
     --volume "${CENTERLINE_TOOLS_PATH}:/sim_ws/src/centerline_tools" \
     --volume "${PATH_FOLLOWING_V2_PATH}:/sim_ws/src/path_following_v2" \
     --volume "${RL_TRAINING_PATH}:/sim_ws/src/rl_training" \
+    --volume "${RL_SPEED_INFERENCE_PATH}:/sim_ws/src/rl_speed_inference" \
     --volume "${GYM_PATH}/install_localization_env.sh:/sim_ws/install_localization_env.sh" \
     -- "${IMAGE_NAME}"

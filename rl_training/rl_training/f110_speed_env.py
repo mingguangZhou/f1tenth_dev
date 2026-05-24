@@ -255,25 +255,42 @@ class F110SpeedEnv(gym.Env):
             centerline_size=len(self.centerline),
         )
 
-        progress_reward = 1.0 * progress_delta
+        # Stronger incentive to move forward along the centerline.
+        # This helps avoid the overly conservative "go slow forever" behavior.
+        progress_reward = 1.5 * progress_delta
 
+        # Keep the original tracking penalties.
         lateral_penalty = 0.5 * abs(cross_track_error)
         heading_penalty = 0.2 * abs(heading_error)
 
+        # Slightly reduce the curve-speed penalty.
+        # Previous value was 0.05. That made PPO very conservative in curves.
         curve_speed_penalty = (
-            0.05 * upcoming_curvature_abs * target_speed * target_speed
+            0.025 * upcoming_curvature_abs * target_speed * target_speed
         )
+
+        # Small bonus for moving fast only when tracking is healthy.
+        # This prevents rewarding reckless speed when the car is far from the path.
+        tracking_is_good = (
+            abs(cross_track_error) < 0.10
+            and abs(heading_error) < 0.15
+        )
+
+        speed_tracking_bonus = 0.0
+        if tracking_is_good:
+            speed_tracking_bonus = 0.05 * float(rl_obs[0])
 
         crash_penalty = 100.0 if self.crashed else 0.0
         lap_reward = self.lap_bonus if self.lap_completed else 0.0
 
         reward = (
-            progress_reward
-            + lap_reward
-            - lateral_penalty
-            - heading_penalty
-            - curve_speed_penalty
-            - crash_penalty
-        )
+        progress_reward
+        + lap_reward
+        + speed_tracking_bonus
+        - lateral_penalty
+        - heading_penalty
+        - curve_speed_penalty
+        - crash_penalty
+    )
 
         return float(reward)

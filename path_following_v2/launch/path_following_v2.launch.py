@@ -14,7 +14,18 @@ def generate_launch_description():
             executable='path_generator_node',
             name='path_generator',
             output='screen',
-            parameters=[params_file],
+            parameters=[
+                params_file,
+                {
+                    # When true, path_generator subscribes to /rl_target_speed
+                    # and uses the PPO model speed if the message is fresh.
+                    # If the RL speed node is stopped/stale, it falls back to
+                    # the original curvature-based speed rule.
+                    'use_rl_speed': True,
+                    'rl_speed_topic': '/rl_target_speed',
+                    'rl_speed_timeout_sec': 0.5,
+                }
+            ],
         ),
         Node(
             package='path_following_v2',

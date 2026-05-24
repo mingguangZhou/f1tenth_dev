@@ -27,8 +27,8 @@
     max_lateral_offset: 0.35
     curvature_offset_gain: 0.18
 
-    velocity_max: 3.5
-    velocity_min: 0.8
+    velocity_max: 4.0
+    velocity_min: 0.5
     curvature_speed_gain: 2.0
     curvature_lookahead_points: 10
 

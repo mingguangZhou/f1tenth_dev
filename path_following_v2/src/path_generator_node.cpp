@@ -8,6 +8,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
@@ -55,6 +56,12 @@ public:
     declare_parameter<int>("curvature_lookahead_points", 15);
     declare_parameter<int>("local_path_horizon_points", 80);
 
+    // Optional PPO/RL speed input.
+    // If enabled and fresh, this replaces the internal curvature-based speed rule.
+    declare_parameter<bool>("use_rl_speed", false);
+    declare_parameter<std::string>("rl_speed_topic", "/rl_target_speed");
+    declare_parameter<double>("rl_speed_timeout_sec", 0.5);
+
     waypoints_topic_ = get_parameter("waypoints_topic").as_string();
     generated_path_topic_ = get_parameter("generated_path_topic").as_string();
     target_speed_topic_ = get_parameter("target_speed_topic").as_string();
@@ -74,6 +81,11 @@ public:
     curvature_speed_gain_ = get_parameter("curvature_speed_gain").as_double();
     curvature_lookahead_points_ = get_parameter("curvature_lookahead_points").as_int();
     local_path_horizon_points_ = get_parameter("local_path_horizon_points").as_int();
+
+    use_rl_speed_ = get_parameter("use_rl_speed").as_bool();
+    rl_speed_topic_ = get_parameter("rl_speed_topic").as_string();
+    rl_speed_timeout_sec_ = get_parameter("rl_speed_timeout_sec").as_double();
+
     if (local_path_horizon_points_ < 2) {
       RCLCPP_WARN(get_logger(), "local_path_horizon_points must be >= 2; forcing to 2.");
       local_path_horizon_points_ = 2;
@@ -89,6 +101,14 @@ public:
       rclcpp::QoS(1).reliable().transient_local(),
       std::bind(&PathGeneratorNode::waypointsCallback, this, std::placeholders::_1));
 
+    // RL speed subscription.
+    // The PPO node publishes Float32 speed, while this path generator republishes
+    // Float64 target speed for the existing path_following_v2 controller.
+    rl_speed_sub_ = create_subscription<std_msgs::msg::Float32>(
+      rl_speed_topic_,
+      10,
+      std::bind(&PathGeneratorNode::rlSpeedCallback, this, std::placeholders::_1));
+
     path_pub_ = create_publisher<nav_msgs::msg::Path>(
       generated_path_topic_, rclcpp::QoS(1).reliable().transient_local());
     speed_pub_ = create_publisher<std_msgs::msg::Float64>(target_speed_topic_, 10);
@@ -103,10 +123,14 @@ public:
     RCLCPP_INFO(get_logger(), "  target_speed_topic: %s", target_speed_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  lateral_offset_mode: %s", lateral_offset_mode_.c_str());
     RCLCPP_INFO(get_logger(), "  local_path_horizon_points: %d", local_path_horizon_points_);
+    RCLCPP_INFO(get_logger(), "  use_rl_speed: %s", use_rl_speed_ ? "true" : "false");
+    RCLCPP_INFO(get_logger(), "  rl_speed_topic: %s", rl_speed_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  rl_speed_timeout_sec: %.2f", rl_speed_timeout_sec_);
   }
 
 private:
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr waypoints_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr rl_speed_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -123,6 +147,7 @@ private:
   std::string global_frame_;
   std::string robot_frame_;
   std::string lateral_offset_mode_;
+  std::string rl_speed_topic_;
 
   double publish_rate_hz_{20.0};
   double tf_timeout_sec_{0.05};
@@ -132,6 +157,14 @@ private:
   double velocity_max_{2.0};
   double velocity_min_{0.8};
   double curvature_speed_gain_{2.0};
+  double rl_speed_timeout_sec_{0.5};
+  double latest_rl_speed_{0.0};
+
+  bool use_rl_speed_{false};
+  bool rl_speed_valid_{false};
+
+  rclcpp::Time latest_rl_speed_stamp_;
+
   int curvature_lookahead_points_{15};
   int local_path_horizon_points_{80};
 
@@ -164,6 +197,19 @@ private:
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 3000,
       "Received %zu centerline waypoints.", waypoints_.size());
+  }
+
+  void rlSpeedCallback(const std_msgs::msg::Float32::SharedPtr msg)
+  {
+    // Store latest PPO speed command.
+    // Clamp it here as a safety guard before republishing to the controller.
+    latest_rl_speed_ = std::clamp(
+      static_cast<double>(msg->data),
+      velocity_min_,
+      velocity_max_);
+
+    latest_rl_speed_stamp_ = now();
+    rl_speed_valid_ = true;
   }
 
   bool lookupRobotPose(tf2::Transform & tf_map_to_base)
@@ -233,6 +279,33 @@ private:
     return std::clamp(raw_speed, velocity_min_, velocity_max_);
   }
 
+  double selectTargetSpeed(int nearest_idx)
+  {
+    const double rule_based_speed = computeTargetSpeed(nearest_idx);
+
+    if (!use_rl_speed_) {
+      return rule_based_speed;
+    }
+
+    if (!rl_speed_valid_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "use_rl_speed=true, but no RL speed received yet. Falling back to rule-based speed.");
+      return rule_based_speed;
+    }
+
+    const double age_sec = (now() - latest_rl_speed_stamp_).seconds();
+    if (age_sec > rl_speed_timeout_sec_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "RL speed is stale: age=%.3f sec > timeout=%.3f sec. Falling back to rule-based speed.",
+        age_sec, rl_speed_timeout_sec_);
+      return rule_based_speed;
+    }
+
+    return latest_rl_speed_;
+  }
+
   geometry_msgs::msg::Quaternion yawToQuaternion(double yaw) const
   {
     tf2::Quaternion q;
@@ -293,14 +366,20 @@ private:
     path_pub_->publish(path);
 
     std_msgs::msg::Float64 speed_msg;
-    speed_msg.data = computeTargetSpeed(nearest_idx);
+    speed_msg.data = selectTargetSpeed(nearest_idx);
     speed_pub_->publish(speed_msg);
 
     const double current_offset = computeOffset(waypoints_[nearest_idx]);
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 1000,
-      "dummy local path: nearest=%d, horizon=%d, speed=%.2f, offset=%.3f, curv_abs=%.3f",
-      nearest_idx, local_path_horizon_points_, speed_msg.data, current_offset, waypoints_[nearest_idx].curvature_abs);
+      "local path: nearest=%d, horizon=%d, speed=%.2f, use_rl_speed=%s, rl_valid=%s, offset=%.3f, curv_abs=%.3f",
+      nearest_idx,
+      local_path_horizon_points_,
+      speed_msg.data,
+      use_rl_speed_ ? "true" : "false",
+      rl_speed_valid_ ? "true" : "false",
+      current_offset,
+      waypoints_[nearest_idx].curvature_abs);
   }
 };
 
