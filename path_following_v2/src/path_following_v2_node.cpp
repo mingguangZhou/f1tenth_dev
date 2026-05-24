@@ -37,6 +37,11 @@ public:
     declare_parameter<double>("tf_timeout_sec", 0.1);
 
     declare_parameter<double>("lookahead_distance", 0.60);
+    declare_parameter<bool>("use_speed_dependent_lookahead", true);
+    declare_parameter<double>("min_lookahead", 0.6);
+    declare_parameter<double>("max_lookahead", 1.6);
+    declare_parameter<double>("lookahead_speed_gain", 0.25);
+
     declare_parameter<double>("wheelbase", 0.33);
     declare_parameter<double>("steering_max_deg", 20.6);
 
@@ -65,6 +70,12 @@ public:
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
 
     lookahead_distance_ = get_parameter("lookahead_distance").as_double();
+    use_speed_dependent_lookahead_ =
+      get_parameter("use_speed_dependent_lookahead").as_bool();
+    min_lookahead_ = get_parameter("min_lookahead").as_double();
+    max_lookahead_ = get_parameter("max_lookahead").as_double();
+    lookahead_speed_gain_ = get_parameter("lookahead_speed_gain").as_double();
+
     wheelbase_ = get_parameter("wheelbase").as_double();
     steering_max_deg_ = get_parameter("steering_max_deg").as_double();
 
@@ -113,8 +124,17 @@ public:
     RCLCPP_INFO(get_logger(), "  drive_topic: %s", drive_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  global_frame: %s", global_frame_.c_str());
     RCLCPP_INFO(get_logger(), "  robot_frame: %s", robot_frame_.c_str());
-    RCLCPP_INFO(get_logger(), "  lookahead_distance: %.3f", lookahead_distance_);
+    RCLCPP_INFO(get_logger(), "  fixed lookahead_distance: %.3f", lookahead_distance_);
+    RCLCPP_INFO(
+      get_logger(),
+      "  use_speed_dependent_lookahead: %s",
+      use_speed_dependent_lookahead_ ? "true" : "false");
+    RCLCPP_INFO(
+      get_logger(),
+      "  min_lookahead: %.3f, max_lookahead: %.3f, lookahead_speed_gain: %.3f",
+      min_lookahead_, max_lookahead_, lookahead_speed_gain_);
     RCLCPP_INFO(get_logger(), "  use_external_target_speed: %s", use_external_target_speed_ ? "true" : "false");
+
     if (use_external_target_speed_) {
       RCLCPP_INFO(get_logger(), "  target_speed_topic: %s", target_speed_topic_.c_str());
     }
@@ -135,6 +155,7 @@ private:
   bool path_valid_{false};
   bool target_speed_valid_{false};
   double latest_target_speed_{0.0};
+  double last_commanded_speed_{0.0};
   rclcpp::Time last_path_receive_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_target_speed_receive_time_{0, 0, RCL_ROS_TIME};
 
@@ -150,7 +171,13 @@ private:
   double control_rate_hz_{20.0};
   double path_timeout_sec_{1.0};
   double tf_timeout_sec_{0.1};
+
   double lookahead_distance_{0.60};
+  bool use_speed_dependent_lookahead_{true};
+  double min_lookahead_{0.6};
+  double max_lookahead_{1.6};
+  double lookahead_speed_gain_{0.25};
+
   double wheelbase_{0.33};
   double steering_max_deg_{20.6};
   double velocity_max_{2.0};
@@ -180,7 +207,6 @@ private:
       "Received centerline path with %zu poses in frame '%s'.",
       latest_path_.poses.size(), latest_path_.header.frame_id.c_str());
   }
-
 
   void targetSpeedCallback(const std_msgs::msg::Float64::SharedPtr msg)
   {
@@ -213,6 +239,14 @@ private:
     return velocity_max_ - shaped * (velocity_max_ - velocity_min_);
   }
 
+  double computeSpeedDependentLookahead(double speed) const
+  {
+    const double lookahead =
+      min_lookahead_ + lookahead_speed_gain_ * std::max(0.0, speed);
+
+    return std::clamp(lookahead, min_lookahead_, max_lookahead_);
+  }
+
   bool lookupRobotPose(tf2::Transform & tf_map_to_base)
   {
     try {
@@ -235,6 +269,7 @@ private:
 
   bool findLookaheadPointInBaseFrame(
     const tf2::Transform & tf_map_to_base,
+    const double active_lookahead_distance,
     geometry_msgs::msg::Point & lookahead_point_base)
   {
     const tf2::Transform tf_base_to_map = tf_map_to_base.inverse();
@@ -258,11 +293,12 @@ private:
       }
 
       const double dist = std::hypot(x, y);
-      if (dist < lookahead_distance_) {
+
+      if (dist < active_lookahead_distance) {
         continue;
       }
 
-      const double dist_error = std::abs(dist - lookahead_distance_);
+      const double dist_error = std::abs(dist - active_lookahead_distance);
       if (dist_error < best_dist_error) {
         best_dist_error = dist_error;
         lookahead_point_base.x = x;
@@ -287,6 +323,7 @@ private:
   void publishStop()
   {
     publishDrive(0.0, 0.0);
+    last_commanded_speed_ = 0.0;
   }
 
   void publishMarkers(
@@ -376,8 +413,21 @@ private:
       return;
     }
 
+    const bool speed_is_fresh = targetSpeedFresh();
+
+    const double speed_for_lookahead =
+      speed_is_fresh ? latest_target_speed_ : last_commanded_speed_;
+
+    const double active_lookahead_distance =
+      use_speed_dependent_lookahead_
+        ? computeSpeedDependentLookahead(speed_for_lookahead)
+        : lookahead_distance_;
+
     geometry_msgs::msg::Point lookahead_point_base;
-    const bool found = findLookaheadPointInBaseFrame(tf_map_to_base, lookahead_point_base);
+    const bool found = findLookaheadPointInBaseFrame(
+      tf_map_to_base,
+      active_lookahead_distance,
+      lookahead_point_base);
 
     if (!found) {
       RCLCPP_WARN_THROTTLE(
@@ -409,15 +459,21 @@ private:
     const double steering_max_rad = steering_max_deg_ * M_PI / 180.0;
     steering_angle = std::clamp(steering_angle, -steering_max_rad, steering_max_rad);
 
-    const double speed = targetSpeedFresh() ? latest_target_speed_ : computeSpeed(steering_angle);
+    const double speed = speed_is_fresh ? latest_target_speed_ : computeSpeed(steering_angle);
+    last_commanded_speed_ = speed;
 
     publishDrive(speed, steering_angle);
     publishMarkers(lookahead_point_base, steering_angle, true);
 
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 1000,
-      "cmd: speed=%.2f m/s, steer=%.3f rad, lookahead=(%.2f, %.2f), speed_source=%s",
-      speed, steering_angle, x, y, targetSpeedFresh() ? "external" : "steering_rule");
+      "cmd: speed=%.2f m/s, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f), speed_source=%s",
+      speed,
+      steering_angle,
+      active_lookahead_distance,
+      x,
+      y,
+      speed_is_fresh ? "external" : "steering_rule");
   }
 };
 
