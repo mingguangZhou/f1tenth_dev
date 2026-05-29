@@ -1,26 +1,67 @@
 # centerline_tools ROS 2 Foxy package
 
-This package publishes an offline-generated centerline CSV into ROS 2 for path following and RViz debugging.
+This package contains two parts:
 
-Runtime outputs:
+1. an offline Python generator, `generate_centerline.py`, which extracts a smoothed centerline and then generates a final smoothed raceline;  
+2. a ROS 2 Foxy publisher, `centerline_publisher`, which now loads and publishes the final smoothed raceline by default.
 
-- `nav_msgs/Path` on `/centerline_path`
-- `visualization_msgs/MarkerArray` on `/centerline_markers`
-- `std_msgs/Float64MultiArray` on `/centerline_waypoints`
+The default ROS topic names are intentionally kept as `/centerline_*` for compatibility with existing downstream nodes that already subscribe to those topics. The data on those topics is now the raceline unless you override `csv_path` back to a centerline CSV.
 
-The RViz marker output now contains a simple direction visualization:
+## Main outputs
 
-- green `LINE_STRIP`: centerline shape
-- red sphere: start point / first CSV point
-- yellow arrows: sampled driving direction along the centerline
-- optional blue spheres: sampled waypoint points, disabled by default
+After running the offline generator, the important files are in `centerline_output/`:
+
+- `centerline_points_smooth.csv`: final smoothed centerline with geometry fields
+- `raceline_points_smooth.csv`: final smoothed raceline with the same geometry fields
+- `raceline_offset_field.csv`: legacy x/y-only raceline export kept for older debug scripts
+- `debug_raceline_offset_field.png`: raceline overlay debug image
+- `debug_raceline_curvature.png`: raceline curvature debug plot
+
+Both `centerline_points_smooth.csv` and `raceline_points_smooth.csv` use this format:
+
+```text
+index,x,y,yaw,curvature,curvature_abs
+```
 
 ## Package placement
 
-Recommended location in the simulator workspace:
+Recommended simulator workspace location:
 
 ```bash
 /sim_ws/src/centerline_tools
+```
+
+## Offline generation
+
+From the package root:
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 generate_centerline.py Spielberg_map.png Spielberg_map.yaml
+```
+
+For another map, replace the image and YAML names:
+
+```bash
+python3 generate_centerline.py <map_image.pgm-or-png> <map.yaml>
+```
+
+Expected final raceline output:
+
+```bash
+centerline_output/raceline_points_smooth.csv
+```
+
+Quick check:
+
+```bash
+head centerline_output/raceline_points_smooth.csv
+```
+
+The header should be:
+
+```text
+index,x,y,yaw,curvature,curvature_abs
 ```
 
 ## Build
@@ -32,7 +73,9 @@ colcon build --packages-select centerline_tools
 source install/setup.bash
 ```
 
-## Basic run
+Because `centerline_output/*` is installed into the package share directory, rebuild after regenerating the offline raceline if you want the installed launch default to use the newest CSV.
+
+## Basic ROS run: publish final smoothed raceline
 
 ```bash
 ros2 launch centerline_tools centerline_publisher.launch.py
@@ -41,35 +84,50 @@ ros2 launch centerline_tools centerline_publisher.launch.py
 By default, the launch file loads:
 
 ```bash
-centerline_output/centerline_points_smooth.csv
+centerline_output/raceline_points_smooth.csv
 ```
 
 relative to the installed package share directory.
 
-## Run with explicit CSV path
+Published outputs:
 
-Use this when testing directly from the source tree:
+- `nav_msgs/Path` on `/centerline_path`
+- `visualization_msgs/MarkerArray` on `/centerline_markers`
+- `std_msgs/Float64MultiArray` on `/centerline_waypoints`
+
+Again, these topic names are legacy-compatible names. The default content is the raceline.
+
+## Run directly from source-tree CSV
+
+Use this if you regenerated the CSV in the source tree but have not rebuilt yet:
 
 ```bash
 ros2 launch centerline_tools centerline_publisher.launch.py \
-  csv_path:=/sim_ws/src/centerline_tools/centerline_output/centerline_points_smooth.csv \
+  csv_path:=/sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv \
   frame_id:=map \
   use_sim_time:=true
 ```
 
+## Publish the centerline instead, if needed
+
+```bash
+ros2 launch centerline_tools centerline_publisher.launch.py \
+  csv_path:=centerline_output/centerline_points_smooth.csv
+```
+
 ## Reverse the published direction
 
-If the arrows point opposite to the desired driving direction, run:
+If the arrows point opposite to the desired driving direction:
 
 ```bash
 ros2 launch centerline_tools centerline_publisher.launch.py \
   direction:=reverse
 ```
 
-Valid direction values are:
+Valid direction values:
 
 - `csv` / `normal`: use the CSV order
-- `reverse`: reverse the centerline order before publishing
+- `reverse`: reverse the loaded path before publishing
 
 The node recomputes yaw and curvature after the final direction choice, so the Path orientation, direction arrows, and waypoint rows stay consistent.
 
@@ -87,12 +145,17 @@ In RViz2:
    - History Policy: `Keep Last`
    - Depth: `1` or higher
 
-The yellow arrows in `/centerline_markers` show the current published centerline direction. The red sphere marks the first point of the published path.
+Marker meaning:
+
+- green `LINE_STRIP`: published raceline shape
+- red sphere: start point / first CSV point
+- yellow arrows: sampled published direction
+- optional blue spheres: sampled waypoint points, disabled by default
 
 ## Useful launch parameters
 
 ```bash
-csv_path:=centerline_output/centerline_points_smooth.csv
+csv_path:=centerline_output/raceline_points_smooth.csv
 frame_id:=map
 path_topic:=/centerline_path
 marker_topic:=/centerline_markers
@@ -108,7 +171,7 @@ point_marker_stride:=10
 use_sim_time:=true
 ```
 
-For a denser direction display:
+For denser direction arrows:
 
 ```bash
 ros2 launch centerline_tools centerline_publisher.launch.py \
@@ -132,9 +195,10 @@ ros2 topic echo /centerline_markers --once
 ros2 topic echo /centerline_waypoints --once
 ros2 node list
 ros2 param list /centerline_publisher
+ros2 param get /centerline_publisher csv_path
 ```
 
-## CSV format
+## CSV format consumed by ROS publisher
 
 Required columns:
 
@@ -142,7 +206,13 @@ Required columns:
 - `x`
 - `y`
 
-Optional columns such as `yaw`, `curvature`, and `curvature_abs` are accepted. The publisher recomputes directional fields at startup so they remain consistent with the chosen `direction` parameter.
+Recommended geometry columns:
+
+- `yaw`
+- `curvature`
+- `curvature_abs`
+
+The publisher accepts missing geometry columns, but it recomputes `yaw`, `curvature`, and `curvature_abs` at startup anyway. This keeps the published Path orientation and waypoint rows consistent with the selected `direction` parameter.
 
 ## Notes
 

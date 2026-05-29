@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     maintainer='OpenAI',
     maintainer_email='support@openai.com',
-    description='ROS 2 tools for publishing offline-generated centerlines.',
+    description='ROS 2 tools for publishing offline-generated centerlines and racelines.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={

@@ -145,7 +145,14 @@ RACELINE_APEX_PULL_SHRINK = 0.85
 RACELINE_GLOBAL_BSPLINE_DEGREE = 5
 RACELINE_GLOBAL_BSPLINE_SMOOTHING_FACTOR_PER_POINT = 0.0050
 
-RACELINE_CSV_NAME = "raceline_offset_field.csv"
+# Final smoothed raceline export used by the ROS 2 publisher by default.
+# It has the same geometry columns as centerline_points_smooth.csv:
+# index,x,y,yaw,curvature,curvature_abs
+RACELINE_CSV_NAME = "raceline_points_smooth.csv"
+
+# Kept as a compatibility alias for older scripts/debug workflows that still
+# look for the previous output name.
+RACELINE_LEGACY_CSV_NAME = "raceline_offset_field.csv"
 RACELINE_GLOBAL_CSV_NAME = "raceline_global_soft_spline.csv"
 DEBUG_RACELINE_PIECEWISE = "debug_raceline_offset_field.png"
 DEBUG_RACELINE_GLOBAL = "debug_raceline_global_soft_spline.png"
@@ -1955,6 +1962,19 @@ def build_piecewise_raceline_from_moved_keypoints(centerline_rows, moved_keypoin
     return raceline, reports, raw_offsets, final_offsets, used_scale
 
 def save_raceline_csv(points, csv_path):
+    """
+    Save final smoothed raceline with the same geometry fields as
+    centerline_points_smooth.csv.
+
+    Columns:
+      index, x, y, yaw, curvature, curvature_abs
+    """
+    rows = compute_yaw_and_curvature(points)
+    save_centerline_geometry_csv(rows, csv_path)
+
+
+def save_legacy_raceline_xy_csv(points, csv_path):
+    """Save x/y-only raceline CSV for backward compatibility."""
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["index", "x", "y"])
@@ -2435,7 +2455,12 @@ def main():
                 raceline_csv_path = os.path.join(OUTPUT_DIR, RACELINE_CSV_NAME)
                 save_raceline_csv(raceline_points, raceline_csv_path)
 
-                print(f"  Saved offset-field raceline CSV: {raceline_csv_path}")
+                legacy_raceline_csv_path = os.path.join(OUTPUT_DIR, RACELINE_LEGACY_CSV_NAME)
+                save_legacy_raceline_xy_csv(raceline_points, legacy_raceline_csv_path)
+
+                print(f"  Saved final smoothed raceline CSV: {raceline_csv_path}")
+                print(f"  Geometry columns:                 index,x,y,yaw,curvature,curvature_abs")
+                print(f"  Saved legacy x/y raceline CSV:    {legacy_raceline_csv_path}")
                 print(f"  Offset smoothing:               {RACELINE_OFFSET_SMOOTHING_METHOD}, window={RACELINE_OFFSET_SMOOTHING_WINDOW}, sigma={RACELINE_OFFSET_GAUSSIAN_SIGMA_POINTS}")
                 print(f"  Offset scale start/min:         {RACELINE_OFFSET_SCALE_START:.3f} / {RACELINE_OFFSET_SCALE_MIN:.3f}")
                 print(f"  Offset scale used:              {raceline_offset_scale:.3f}")

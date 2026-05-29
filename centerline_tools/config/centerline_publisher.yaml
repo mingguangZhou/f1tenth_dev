@@ -1,6 +1,6 @@
 centerline_publisher:
   ros__parameters:
-    csv_path: "centerline_output/centerline_points_smooth.csv"
+    csv_path: "centerline_output/raceline_points_smooth.csv"
     frame_id: "map"
     path_topic: "/centerline_path"
     marker_topic: "/centerline_markers"

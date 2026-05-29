@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ROS 2 node that publishes an offline-generated centerline CSV.
+"""ROS 2 node that publishes an offline-generated raceline CSV.
 
 Foxy-safe behavior:
 - Uses transient-local QoS for static topics.
@@ -28,14 +28,14 @@ from .csv_loader import CenterlinePoint, close_loop, is_closed_loop, load_center
 
 
 class CenterlinePublisherNode(Node):
-    """Publish offline centerline artifacts as ROS 2 static topics."""
+    """Publish offline raceline artifacts as ROS 2 static topics."""
 
     WAYPOINT_FIELDS = ('index', 'x', 'y', 'yaw', 'curvature', 'curvature_abs')
 
     def __init__(self) -> None:
         super().__init__('centerline_publisher')
 
-        self.declare_parameter('csv_path', 'centerline_output/centerline_points_smooth.csv')
+        self.declare_parameter('csv_path', 'centerline_output/raceline_points_smooth.csv')
         self.declare_parameter('frame_id', 'map')
         self.declare_parameter('path_topic', '/centerline_path')
         self.declare_parameter('marker_topic', '/centerline_markers')
@@ -163,21 +163,21 @@ class CenterlinePublisherNode(Node):
 
         if is_closed_loop(points, self.loop_closure_tolerance_m):
             self.get_logger().info(
-                f'Centerline appears closed within tolerance {self.loop_closure_tolerance_m:.3f} m.'
+                f'Raceline appears closed within tolerance {self.loop_closure_tolerance_m:.3f} m.'
             )
         elif self.close_loop_if_needed:
             self.get_logger().warn(
-                f'Centerline is not closed within {self.loop_closure_tolerance_m:.3f} m; appending first point to end.'
+                f'Raceline is not closed within {self.loop_closure_tolerance_m:.3f} m; appending first point to end.'
             )
             points = close_loop(points)
         else:
             self.get_logger().warn(
-                f'Centerline is not closed within {self.loop_closure_tolerance_m:.3f} m and auto-closure is disabled.'
+                f'Raceline is not closed within {self.loop_closure_tolerance_m:.3f} m and auto-closure is disabled.'
             )
 
         if self.direction == 'reverse':
             points = self._reverse_closed_points(points)
-            self.get_logger().warn('Publishing centerline in reversed direction.')
+            self.get_logger().warn('Publishing raceline in reversed direction.')
 
         # Recompute yaw and curvature after final direction choice. This keeps
         # CSV direction, Path orientation, and waypoint curvature consistent.
@@ -296,7 +296,7 @@ class CenterlinePublisherNode(Node):
 
         line_marker = Marker()
         line_marker.header.frame_id = self.frame_id
-        line_marker.ns = 'centerline'
+        line_marker.ns = 'raceline'
         line_marker.id = 0
         line_marker.type = Marker.LINE_STRIP
         line_marker.action = Marker.ADD
@@ -311,7 +311,7 @@ class CenterlinePublisherNode(Node):
         if self.publish_start_marker and points:
             start_marker = Marker()
             start_marker.header.frame_id = self.frame_id
-            start_marker.ns = 'centerline'
+            start_marker.ns = 'raceline'
             start_marker.id = next_marker_id
             start_marker.type = Marker.SPHERE
             start_marker.action = Marker.ADD
@@ -334,7 +334,7 @@ class CenterlinePublisherNode(Node):
             for arrow_index, point in enumerate(sampled_points[::self.direction_arrow_stride]):
                 arrow_marker = Marker()
                 arrow_marker.header.frame_id = self.frame_id
-                arrow_marker.ns = 'centerline_direction'
+                arrow_marker.ns = 'raceline_direction'
                 arrow_marker.id = next_marker_id + arrow_index
                 arrow_marker.type = Marker.ARROW
                 arrow_marker.action = Marker.ADD
@@ -353,7 +353,7 @@ class CenterlinePublisherNode(Node):
             for point_index, point in enumerate(points[::self.point_marker_stride]):
                 point_marker = Marker()
                 point_marker.header.frame_id = self.frame_id
-                point_marker.ns = 'centerline_points'
+                point_marker.ns = 'raceline_points'
                 point_marker.id = next_marker_id + point_index
                 point_marker.type = Marker.SPHERE
                 point_marker.action = Marker.ADD
@@ -404,19 +404,19 @@ class CenterlinePublisherNode(Node):
 
             if self.publish_count <= 3:
                 self.get_logger().info(
-                    f'Published centerline set #{self.publish_count}: '
+                    f'Published raceline set #{self.publish_count}: '
                     f'{len(self.path_msg.poses)} poses, {len(self.marker_msg.markers)} markers, {len(self.points)} waypoint rows.'
                 )
             elif self.publish_debug_every_n > 0 and self.publish_count % self.publish_debug_every_n == 0:
                 self.get_logger().info(
-                    f'Published centerline set #{self.publish_count}: '
+                    f'Published raceline set #{self.publish_count}: '
                     f'{len(self.path_msg.poses)} poses, {len(self.marker_msg.markers)} markers, {len(self.points)} waypoint rows.'
                 )
 
     def _log_startup_summary(self, raw_csv_path: str) -> None:
         extra_text = ', '.join(self.extra_columns) if self.extra_columns else 'none'
         self.get_logger().info(f'CSV path parameter: {raw_csv_path}')
-        self.get_logger().info(f'Resolved centerline CSV: {self.csv_path}')
+        self.get_logger().info(f'Resolved raceline CSV: {self.csv_path}')
         self.get_logger().info(f'Frame id: {self.frame_id}')
         self.get_logger().info(f'Direction parameter: {self.direction}')
         self.get_logger().info(f'Point count: {len(self.points)}')

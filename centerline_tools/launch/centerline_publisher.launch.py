@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Foxy-compatible launch file for centerline publisher.
+"""Foxy-compatible launch file for raceline publisher.
 
 This version intentionally merges the YAML file and launch-argument overrides
 into one final parameter dictionary before creating the node.
@@ -109,7 +109,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'csv_path',
-            default_value='centerline_output/centerline_points_smooth.csv',
+            default_value='centerline_output/raceline_points_smooth.csv',
             description='Relative or absolute CSV path',
         ),
         DeclareLaunchArgument(
@@ -120,12 +120,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'path_topic',
             default_value='/centerline_path',
-            description='Topic for nav_msgs/Path centerline',
+            description='Topic for nav_msgs/Path raceline',
         ),
         DeclareLaunchArgument(
             'marker_topic',
             default_value='/centerline_markers',
-            description='Topic for RViz MarkerArray centerline visualization',
+            description='Topic for RViz MarkerArray raceline visualization',
         ),
         DeclareLaunchArgument(
             'waypoints_topic',
@@ -135,7 +135,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'direction',
             default_value='csv',
-            description='Centerline direction: csv/normal or reverse',
+            description='Raceline direction: csv/normal or reverse',
         ),
         DeclareLaunchArgument(
             'publish_rate_hz',
@@ -160,7 +160,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'publish_direction_arrows',
             default_value='true',
-            description='Whether to publish sampled arrow markers showing centerline direction',
+            description='Whether to publish sampled arrow markers showing raceline direction',
         ),
         DeclareLaunchArgument(
             'direction_arrow_stride',
