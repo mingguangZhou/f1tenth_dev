@@ -2,10 +2,10 @@
 
 This package contains two parts:
 
-1. an offline Python generator, `generate_centerline.py`, which extracts a smoothed centerline and then generates a final smoothed raceline;  
-2. a ROS 2 Foxy publisher, `centerline_publisher`, which now loads and publishes the final smoothed raceline by default.
+1. an offline Python generator, `generate_centerline.py`, which extracts a smoothed centerline and then generates a final smoothed raceline;
+2. a ROS 2 Foxy publisher, `raceline_publisher`, which loads and publishes the final smoothed raceline by default.
 
-The default ROS topic names are intentionally kept as `/centerline_*` for compatibility with existing downstream nodes that already subscribe to those topics. The data on those topics is now the raceline unless you override `csv_path` back to a centerline CSV.
+The package name is still `centerline_tools` because the offline pipeline still contains both centerline and raceline generation. The ROS-facing API now uses `raceline` names for the active published output.
 
 ## Main outputs
 
@@ -77,8 +77,22 @@ Because `centerline_output/*` is installed into the package share directory, reb
 
 ## Basic ROS run: publish final smoothed raceline
 
+Recommended launch command:
+
+```bash
+ros2 launch centerline_tools raceline_publisher.launch.py
+```
+
+A compatibility launch file also remains available:
+
 ```bash
 ros2 launch centerline_tools centerline_publisher.launch.py
+```
+
+Both launch files start the same ROS node:
+
+```text
+/raceline_publisher
 ```
 
 By default, the launch file loads:
@@ -91,18 +105,16 @@ relative to the installed package share directory.
 
 Published outputs:
 
-- `nav_msgs/Path` on `/centerline_path`
-- `visualization_msgs/MarkerArray` on `/centerline_markers`
-- `std_msgs/Float64MultiArray` on `/centerline_waypoints`
-
-Again, these topic names are legacy-compatible names. The default content is the raceline.
+- `nav_msgs/Path` on `/raceline_path`
+- `visualization_msgs/MarkerArray` on `/raceline_markers`
+- `std_msgs/Float64MultiArray` on `/raceline_waypoints`
 
 ## Run directly from source-tree CSV
 
 Use this if you regenerated the CSV in the source tree but have not rebuilt yet:
 
 ```bash
-ros2 launch centerline_tools centerline_publisher.launch.py \
+ros2 launch centerline_tools raceline_publisher.launch.py \
   csv_path:=/sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv \
   frame_id:=map \
   use_sim_time:=true
@@ -110,17 +122,21 @@ ros2 launch centerline_tools centerline_publisher.launch.py \
 
 ## Publish the centerline instead, if needed
 
+The same publisher can still publish the centerline CSV when explicitly requested:
+
 ```bash
-ros2 launch centerline_tools centerline_publisher.launch.py \
+ros2 launch centerline_tools raceline_publisher.launch.py \
   csv_path:=centerline_output/centerline_points_smooth.csv
 ```
+
+If you do this, the topic names still remain `/raceline_*` unless you override them manually.
 
 ## Reverse the published direction
 
 If the arrows point opposite to the desired driving direction:
 
 ```bash
-ros2 launch centerline_tools centerline_publisher.launch.py \
+ros2 launch centerline_tools raceline_publisher.launch.py \
   direction:=reverse
 ```
 
@@ -137,9 +153,9 @@ In RViz2:
 
 1. Set `Fixed Frame` to `map`.
 2. Add a `Path` display:
-   - Topic: `/centerline_path`
+   - Topic: `/raceline_path`
 3. Add a `MarkerArray` display:
-   - Topic: `/centerline_markers`
+   - Topic: `/raceline_markers`
    - Reliability Policy: `Reliable`
    - Durability Policy: `Transient Local`
    - History Policy: `Keep Last`
@@ -157,9 +173,9 @@ Marker meaning:
 ```bash
 csv_path:=centerline_output/raceline_points_smooth.csv
 frame_id:=map
-path_topic:=/centerline_path
-marker_topic:=/centerline_markers
-waypoints_topic:=/centerline_waypoints
+path_topic:=/raceline_path
+marker_topic:=/raceline_markers
+waypoints_topic:=/raceline_waypoints
 direction:=csv
 publish_rate_hz:=1.0
 publish_start_marker:=true
@@ -174,7 +190,7 @@ use_sim_time:=true
 For denser direction arrows:
 
 ```bash
-ros2 launch centerline_tools centerline_publisher.launch.py \
+ros2 launch centerline_tools raceline_publisher.launch.py \
   direction_arrow_stride:=20 \
   direction_arrow_length:=0.25
 ```
@@ -182,20 +198,29 @@ ros2 launch centerline_tools centerline_publisher.launch.py \
 For a cleaner display with no arrows:
 
 ```bash
-ros2 launch centerline_tools centerline_publisher.launch.py \
+ros2 launch centerline_tools raceline_publisher.launch.py \
   publish_direction_arrows:=false
 ```
 
 ## Useful checks
 
 ```bash
-ros2 topic list | grep centerline
-ros2 topic echo /centerline_path --once
-ros2 topic echo /centerline_markers --once
-ros2 topic echo /centerline_waypoints --once
-ros2 node list
-ros2 param list /centerline_publisher
-ros2 param get /centerline_publisher csv_path
+ros2 node list | grep raceline
+ros2 topic list | grep raceline
+ros2 topic echo /raceline_path --once
+ros2 topic echo /raceline_markers --once
+ros2 topic echo /raceline_waypoints --once
+ros2 param list /raceline_publisher
+ros2 param get /raceline_publisher csv_path
+```
+
+Expected active ROS API:
+
+```text
+/raceline_publisher
+/raceline_path
+/raceline_markers
+/raceline_waypoints
 ```
 
 ## CSV format consumed by ROS publisher

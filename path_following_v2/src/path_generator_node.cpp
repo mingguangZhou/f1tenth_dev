@@ -8,7 +8,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
-#include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
@@ -18,7 +17,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
-struct CenterlineWaypoint
+struct RacelineWaypoint
 {
   int index{0};
   double x{0.0};
@@ -36,160 +35,114 @@ public:
     tf_buffer_(this->get_clock()),
     tf_listener_(tf_buffer_)
   {
-    declare_parameter<std::string>("waypoints_topic", "/centerline_waypoints");
-    declare_parameter<std::string>("generated_path_topic", "/path_following_v2/generated_path");
-    declare_parameter<std::string>("target_speed_topic", "/path_following_v2/target_speed");
+    declare_parameter<std::string>("raceline_waypoints_topic", "/raceline_waypoints");
+    declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
+    declare_parameter<std::string>("speed_index_topic", "/path_following_v2/speed_index");
     declare_parameter<std::string>("global_frame", "map");
     declare_parameter<std::string>("robot_frame", "ego_racecar/base_link");
 
     declare_parameter<double>("publish_rate_hz", 20.0);
     declare_parameter<double>("tf_timeout_sec", 0.05);
-
-    declare_parameter<std::string>("lateral_offset_mode", "curvature");
-    declare_parameter<double>("constant_lateral_offset", 0.0);
-    declare_parameter<double>("max_lateral_offset", 0.35);
-    declare_parameter<double>("curvature_offset_gain", 0.18);
-
-    declare_parameter<double>("velocity_max", 2.0);
-    declare_parameter<double>("velocity_min", 0.8);
-    declare_parameter<double>("curvature_speed_gain", 2.0);
-    declare_parameter<int>("curvature_lookahead_points", 15);
     declare_parameter<int>("local_path_horizon_points", 80);
 
-    declare_parameter<bool>("use_rl_speed", false);
-    declare_parameter<std::string>("rl_speed_topic", "/rl_target_speed");
-    declare_parameter<double>("rl_speed_timeout_sec", 0.5);
+    declare_parameter<double>("curvature_speed_gain", 2.0);
+    declare_parameter<int>("curvature_lookahead_points", 10);
+    declare_parameter<double>("min_speed_index", 0.0);
+    declare_parameter<double>("max_speed_index", 1.0);
 
-    waypoints_topic_ = get_parameter("waypoints_topic").as_string();
-    generated_path_topic_ = get_parameter("generated_path_topic").as_string();
-    target_speed_topic_ = get_parameter("target_speed_topic").as_string();
+    raceline_waypoints_topic_ = get_parameter("raceline_waypoints_topic").as_string();
+    local_path_topic_ = get_parameter("local_path_topic").as_string();
+    speed_index_topic_ = get_parameter("speed_index_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
     robot_frame_ = get_parameter("robot_frame").as_string();
 
     publish_rate_hz_ = get_parameter("publish_rate_hz").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
-
-    lateral_offset_mode_ = get_parameter("lateral_offset_mode").as_string();
-    constant_lateral_offset_ = get_parameter("constant_lateral_offset").as_double();
-    max_lateral_offset_ = get_parameter("max_lateral_offset").as_double();
-    curvature_offset_gain_ = get_parameter("curvature_offset_gain").as_double();
-
-    velocity_max_ = get_parameter("velocity_max").as_double();
-    velocity_min_ = get_parameter("velocity_min").as_double();
-    curvature_speed_gain_ = get_parameter("curvature_speed_gain").as_double();
-    curvature_lookahead_points_ = get_parameter("curvature_lookahead_points").as_int();
     local_path_horizon_points_ = get_parameter("local_path_horizon_points").as_int();
 
-    use_rl_speed_ = get_parameter("use_rl_speed").as_bool();
-    rl_speed_topic_ = get_parameter("rl_speed_topic").as_string();
-    rl_speed_timeout_sec_ = get_parameter("rl_speed_timeout_sec").as_double();
+    curvature_speed_gain_ = get_parameter("curvature_speed_gain").as_double();
+    curvature_lookahead_points_ = get_parameter("curvature_lookahead_points").as_int();
+    min_speed_index_ = get_parameter("min_speed_index").as_double();
+    max_speed_index_ = get_parameter("max_speed_index").as_double();
 
     if (local_path_horizon_points_ < 2) {
       RCLCPP_WARN(get_logger(), "local_path_horizon_points must be >= 2; forcing to 2.");
       local_path_horizon_points_ = 2;
     }
 
-    if (
-      lateral_offset_mode_ != "zero" &&
-      lateral_offset_mode_ != "constant" &&
-      lateral_offset_mode_ != "curvature")
-    {
-      RCLCPP_WARN(
-        get_logger(),
-        "Unknown lateral_offset_mode '%s'; falling back to zero.",
-        lateral_offset_mode_.c_str());
-      lateral_offset_mode_ = "zero";
+    min_speed_index_ = std::clamp(min_speed_index_, 0.0, 1.0);
+    max_speed_index_ = std::clamp(max_speed_index_, 0.0, 1.0);
+    if (min_speed_index_ > max_speed_index_) {
+      RCLCPP_WARN(get_logger(), "min_speed_index > max_speed_index; swapping them.");
+      std::swap(min_speed_index_, max_speed_index_);
     }
 
-    waypoints_sub_ = create_subscription<std_msgs::msg::Float64MultiArray>(
-      waypoints_topic_,
+    raceline_sub_ = create_subscription<std_msgs::msg::Float64MultiArray>(
+      raceline_waypoints_topic_,
       rclcpp::QoS(1).reliable().transient_local(),
-      std::bind(&PathGeneratorNode::waypointsCallback, this, std::placeholders::_1));
+      std::bind(&PathGeneratorNode::racelineCallback, this, std::placeholders::_1));
 
-    rl_speed_sub_ = create_subscription<std_msgs::msg::Float32>(
-      rl_speed_topic_,
-      10,
-      std::bind(&PathGeneratorNode::rlSpeedCallback, this, std::placeholders::_1));
+    local_path_pub_ = create_publisher<nav_msgs::msg::Path>(
+      local_path_topic_, rclcpp::QoS(1).reliable().transient_local());
 
-    path_pub_ = create_publisher<nav_msgs::msg::Path>(
-      generated_path_topic_, rclcpp::QoS(1).reliable().transient_local());
-
-    speed_pub_ = create_publisher<std_msgs::msg::Float64>(target_speed_topic_, 10);
+    speed_index_pub_ = create_publisher<std_msgs::msg::Float64>(speed_index_topic_, 10);
 
     const auto period_ms = std::chrono::milliseconds(
       static_cast<int>(1000.0 / std::max(1.0, publish_rate_hz_)));
-
     timer_ = create_wall_timer(period_ms, std::bind(&PathGeneratorNode::publishLoop, this));
 
-    RCLCPP_INFO(get_logger(), "path_generator started");
-    RCLCPP_INFO(get_logger(), "  waypoints_topic: %s", waypoints_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  generated_path_topic: %s", generated_path_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  target_speed_topic: %s", target_speed_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  lateral_offset_mode: %s", lateral_offset_mode_.c_str());
+    RCLCPP_INFO(get_logger(), "path_generator started as clean raceline local-path generator");
+    RCLCPP_INFO(get_logger(), "  raceline_waypoints_topic: %s", raceline_waypoints_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  local_path_topic: %s", local_path_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  speed_index_topic: %s", speed_index_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  local_path_horizon_points: %d", local_path_horizon_points_);
-    RCLCPP_INFO(get_logger(), "  use_rl_speed: %s", use_rl_speed_ ? "true" : "false");
-    RCLCPP_INFO(get_logger(), "  rl_speed_topic: %s", rl_speed_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  rl_speed_timeout_sec: %.2f", rl_speed_timeout_sec_);
   }
 
 private:
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr waypoints_sub_;
-  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr rl_speed_sub_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_pub_;
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr raceline_sub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr local_path_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_index_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
 
-  std::vector<CenterlineWaypoint> waypoints_;
-  bool waypoints_valid_{false};
+  std::vector<RacelineWaypoint> raceline_;
+  bool raceline_valid_{false};
 
-  std::string waypoints_topic_;
-  std::string generated_path_topic_;
-  std::string target_speed_topic_;
+  std::string raceline_waypoints_topic_;
+  std::string local_path_topic_;
+  std::string speed_index_topic_;
   std::string global_frame_;
   std::string robot_frame_;
-  std::string lateral_offset_mode_;
-  std::string rl_speed_topic_;
 
   double publish_rate_hz_{20.0};
   double tf_timeout_sec_{0.05};
-  double constant_lateral_offset_{0.0};
-  double max_lateral_offset_{0.35};
-  double curvature_offset_gain_{0.18};
-  double velocity_max_{2.0};
-  double velocity_min_{0.8};
   double curvature_speed_gain_{2.0};
-  double rl_speed_timeout_sec_{0.5};
-  double latest_rl_speed_{0.0};
+  double min_speed_index_{0.0};
+  double max_speed_index_{1.0};
 
-  bool use_rl_speed_{false};
-  bool rl_speed_valid_{false};
-
-  rclcpp::Time latest_rl_speed_stamp_;
-
-  int curvature_lookahead_points_{15};
   int local_path_horizon_points_{80};
+  int curvature_lookahead_points_{10};
 
-  void waypointsCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
+  void racelineCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
   {
     constexpr std::size_t fields = 6;
 
     if (msg->data.empty() || msg->data.size() % fields != 0) {
       RCLCPP_WARN(
         get_logger(),
-        "Received invalid /centerline_waypoints data size: %zu",
+        "Received invalid raceline waypoint data size: %zu. Expected rows of [index,x,y,yaw,curvature,curvature_abs].",
         msg->data.size());
-      waypoints_valid_ = false;
+      raceline_valid_ = false;
       return;
     }
 
-    std::vector<CenterlineWaypoint> parsed;
+    std::vector<RacelineWaypoint> parsed;
     parsed.reserve(msg->data.size() / fields);
 
     for (std::size_t i = 0; i + fields - 1 < msg->data.size(); i += fields) {
-      CenterlineWaypoint wp;
+      RacelineWaypoint wp;
       wp.index = static_cast<int>(std::lround(msg->data[i + 0]));
       wp.x = msg->data[i + 1];
       wp.y = msg->data[i + 2];
@@ -199,24 +152,13 @@ private:
       parsed.push_back(wp);
     }
 
-    waypoints_ = std::move(parsed);
-    waypoints_valid_ = !waypoints_.empty();
+    raceline_ = std::move(parsed);
+    raceline_valid_ = !raceline_.empty();
 
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 3000,
-      "Received %zu centerline waypoints.",
-      waypoints_.size());
-  }
-
-  void rlSpeedCallback(const std_msgs::msg::Float32::SharedPtr msg)
-  {
-    latest_rl_speed_ = std::clamp(
-      static_cast<double>(msg->data),
-      velocity_min_,
-      velocity_max_);
-
-    latest_rl_speed_stamp_ = now();
-    rl_speed_valid_ = true;
+      "Received %zu raceline waypoints.",
+      raceline_.size());
   }
 
   bool lookupRobotPose(tf2::Transform & tf_map_to_base)
@@ -241,9 +183,9 @@ private:
     }
   }
 
-  int findNearestWaypointIndex(const tf2::Transform & tf_map_to_base) const
+  int findNearestRacelineIndex(const tf2::Transform & tf_map_to_base) const
   {
-    if (waypoints_.empty()) {
+    if (raceline_.empty()) {
       return 0;
     }
 
@@ -253,9 +195,9 @@ private:
     int best_idx = 0;
     double best_dist2 = std::numeric_limits<double>::max();
 
-    for (std::size_t i = 0; i < waypoints_.size(); ++i) {
-      const double dx = waypoints_[i].x - rx;
-      const double dy = waypoints_[i].y - ry;
+    for (std::size_t i = 0; i < raceline_.size(); ++i) {
+      const double dx = raceline_[i].x - rx;
+      const double dy = raceline_[i].y - ry;
       const double d2 = dx * dx + dy * dy;
 
       if (d2 < best_dist2) {
@@ -267,67 +209,6 @@ private:
     return best_idx;
   }
 
-  double computeOffset(const CenterlineWaypoint & wp) const
-  {
-    if (lateral_offset_mode_ == "zero") {
-      return 0.0;
-    }
-
-    if (lateral_offset_mode_ == "constant") {
-      return std::clamp(
-        constant_lateral_offset_,
-        -max_lateral_offset_,
-        max_lateral_offset_);
-    }
-
-    const double raw = curvature_offset_gain_ * wp.curvature;
-    return std::clamp(raw, -max_lateral_offset_, max_lateral_offset_);
-  }
-
-  double computeTargetSpeed(int nearest_idx) const
-  {
-    if (waypoints_.empty()) {
-      return 0.0;
-    }
-
-    const int n = static_cast<int>(waypoints_.size());
-    const int idx = ((nearest_idx + curvature_lookahead_points_) % n + n) % n;
-    const double curvature_abs = waypoints_[idx].curvature_abs;
-
-    const double raw_speed =
-      velocity_max_ / (1.0 + curvature_speed_gain_ * curvature_abs);
-
-    return std::clamp(raw_speed, velocity_min_, velocity_max_);
-  }
-
-  bool getFreshRlSpeed(double & speed_out)
-  {
-    if (!use_rl_speed_) {
-      return false;
-    }
-
-    if (!rl_speed_valid_) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "use_rl_speed=true, but no RL speed received yet. Not publishing target speed; controller should fall back.");
-      return false;
-    }
-
-    const double age_sec = (now() - latest_rl_speed_stamp_).seconds();
-
-    if (age_sec > rl_speed_timeout_sec_) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "RL speed stale: age=%.3f sec > timeout=%.3f sec. Not publishing target speed; controller should fall back.",
-        age_sec,
-        rl_speed_timeout_sec_);
-      return false;
-    }
-
-    speed_out = latest_rl_speed_;
-    return true;
-  }
-
   geometry_msgs::msg::Quaternion yawToQuaternion(double yaw) const
   {
     tf2::Quaternion q;
@@ -335,112 +216,79 @@ private:
     return tf2::toMsg(q);
   }
 
-  nav_msgs::msg::Path buildOffsetPath(int nearest_idx) const
+  nav_msgs::msg::Path buildLocalRacelinePath(int nearest_idx) const
   {
     nav_msgs::msg::Path path;
     path.header.stamp = now();
     path.header.frame_id = global_frame_;
 
-    if (waypoints_.empty()) {
+    if (raceline_.empty()) {
       return path;
     }
 
-    const int n = static_cast<int>(waypoints_.size());
+    const int n = static_cast<int>(raceline_.size());
     const int horizon = std::min(local_path_horizon_points_, n);
-
     path.poses.reserve(static_cast<std::size_t>(horizon));
 
     for (int step = 0; step < horizon; ++step) {
       const int idx = ((nearest_idx + step) % n + n) % n;
-      const auto & wp = waypoints_[idx];
-      const double d = computeOffset(wp);
-
-      const double nx = -std::sin(wp.yaw);
-      const double ny = std::cos(wp.yaw);
+      const auto & wp = raceline_[idx];
 
       geometry_msgs::msg::PoseStamped pose;
       pose.header = path.header;
-      pose.pose.position.x = wp.x + d * nx;
-      pose.pose.position.y = wp.y + d * ny;
+      pose.pose.position.x = wp.x;
+      pose.pose.position.y = wp.y;
       pose.pose.position.z = 0.0;
       pose.pose.orientation = yawToQuaternion(wp.yaw);
-
       path.poses.push_back(pose);
     }
 
     return path;
   }
 
+  double computeSpeedIndex(int nearest_idx) const
+  {
+    if (raceline_.empty()) {
+      return 0.0;
+    }
+
+    const int n = static_cast<int>(raceline_.size());
+    const int idx = ((nearest_idx + curvature_lookahead_points_) % n + n) % n;
+    const double curvature_abs = std::max(0.0, raceline_[idx].curvature_abs);
+
+    // Normalized speed request in [0, 1].
+    // 1.0 means follower speed_max; lower values slow down in high curvature.
+    const double raw_index = 1.0 / (1.0 + curvature_speed_gain_ * curvature_abs);
+    return std::clamp(raw_index, min_speed_index_, max_speed_index_);
+  }
+
   void publishLoop()
   {
-    if (!waypoints_valid_) {
+    if (!raceline_valid_) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
-        "No valid centerline waypoints yet.");
+        "No valid raceline waypoints yet.");
       return;
     }
 
     tf2::Transform tf_map_to_base;
     const bool pose_ok = lookupRobotPose(tf_map_to_base);
-    const int nearest_idx = pose_ok ? findNearestWaypointIndex(tf_map_to_base) : 0;
+    const int nearest_idx = pose_ok ? findNearestRacelineIndex(tf_map_to_base) : 0;
 
-    const auto path = buildOffsetPath(nearest_idx);
-    path_pub_->publish(path);
+    const auto local_path = buildLocalRacelinePath(nearest_idx);
+    local_path_pub_->publish(local_path);
 
-    bool published_speed = false;
-    double published_target_speed = 0.0;
-    std::string speed_source = "none";
+    std_msgs::msg::Float64 speed_index_msg;
+    speed_index_msg.data = computeSpeedIndex(nearest_idx);
+    speed_index_pub_->publish(speed_index_msg);
 
-    if (use_rl_speed_) {
-      double rl_speed = 0.0;
-
-      if (getFreshRlSpeed(rl_speed)) {
-        std_msgs::msg::Float64 speed_msg;
-        speed_msg.data = rl_speed;
-        speed_pub_->publish(speed_msg);
-
-        published_speed = true;
-        published_target_speed = speed_msg.data;
-        speed_source = "rl";
-      } else {
-        speed_source = "not_published";
-      }
-    } else {
-      std_msgs::msg::Float64 speed_msg;
-      speed_msg.data = computeTargetSpeed(nearest_idx);
-      speed_pub_->publish(speed_msg);
-
-      published_speed = true;
-      published_target_speed = speed_msg.data;
-      speed_source = "dummy_rule";
-    }
-
-    const double current_offset = computeOffset(waypoints_[nearest_idx]);
-
-    if (published_speed) {
-      RCLCPP_INFO_THROTTLE(
-        get_logger(), *get_clock(), 1000,
-        "local path: nearest=%d, horizon=%d, speed=%.2f, speed_source=%s, use_rl_speed=%s, rl_valid=%s, offset=%.3f, curv_abs=%.3f",
-        nearest_idx,
-        local_path_horizon_points_,
-        published_target_speed,
-        speed_source.c_str(),
-        use_rl_speed_ ? "true" : "false",
-        rl_speed_valid_ ? "true" : "false",
-        current_offset,
-        waypoints_[nearest_idx].curvature_abs);
-    } else {
-      RCLCPP_INFO_THROTTLE(
-        get_logger(), *get_clock(), 1000,
-        "local path: nearest=%d, horizon=%d, speed=not_published, speed_source=%s, use_rl_speed=%s, rl_valid=%s, offset=%.3f, curv_abs=%.3f",
-        nearest_idx,
-        local_path_horizon_points_,
-        speed_source.c_str(),
-        use_rl_speed_ ? "true" : "false",
-        rl_speed_valid_ ? "true" : "false",
-        current_offset,
-        waypoints_[nearest_idx].curvature_abs);
-    }
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "local raceline: nearest=%d, horizon=%d, speed_index=%.3f, curv_abs=%.3f",
+      nearest_idx,
+      local_path_horizon_points_,
+      speed_index_msg.data,
+      raceline_[nearest_idx].curvature_abs);
   }
 };
 

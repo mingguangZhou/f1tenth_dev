@@ -27,19 +27,19 @@ from visualization_msgs.msg import Marker, MarkerArray
 from .csv_loader import CenterlinePoint, close_loop, is_closed_loop, load_centerline_csv
 
 
-class CenterlinePublisherNode(Node):
+class RacelinePublisherNode(Node):
     """Publish offline raceline artifacts as ROS 2 static topics."""
 
     WAYPOINT_FIELDS = ('index', 'x', 'y', 'yaw', 'curvature', 'curvature_abs')
 
     def __init__(self) -> None:
-        super().__init__('centerline_publisher')
+        super().__init__('raceline_publisher')
 
         self.declare_parameter('csv_path', 'centerline_output/raceline_points_smooth.csv')
         self.declare_parameter('frame_id', 'map')
-        self.declare_parameter('path_topic', '/centerline_path')
-        self.declare_parameter('marker_topic', '/centerline_markers')
-        self.declare_parameter('waypoints_topic', '/centerline_waypoints')
+        self.declare_parameter('path_topic', '/raceline_path')
+        self.declare_parameter('marker_topic', '/raceline_markers')
+        self.declare_parameter('waypoints_topic', '/raceline_waypoints')
         self.declare_parameter('direction', 'csv')  # csv/normal or reverse
         self.declare_parameter('publish_rate_hz', 1.0)
         self.declare_parameter('publish_start_marker', True)
@@ -114,7 +114,7 @@ class CenterlinePublisherNode(Node):
 
         self._publish_thread = threading.Thread(
             target=self._wall_timer_publish_loop,
-            name='centerline_publish_loop',
+            name='raceline_publish_loop',
             daemon=True,
         )
         self._publish_thread.start()
@@ -435,15 +435,15 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = None
     try:
-        node = CenterlinePublisherNode()
+        node = RacelinePublisherNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     except Exception as exc:  # pragma: no cover
         if node is not None:
-            node.get_logger().fatal(f'Centerline publisher failed: {exc}')
+            node.get_logger().fatal(f'Raceline publisher failed: {exc}')
         else:
-            print(f'[centerline_publisher] Fatal startup error: {exc}')
+            print(f'[raceline_publisher] Fatal startup error: {exc}')
         raise
     finally:
         if node is not None:

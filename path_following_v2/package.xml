@@ -2,7 +2,7 @@
 <package format="3">
   <name>path_following_v2</name>
   <version>0.0.1</version>
-  <description>Simple centerline path follower for RoboRacer using pure pursuit.</description>
+  <description>Clean raceline local-path generator and pure-pursuit follower for RoboRacer.</description>
 
   <maintainer email="you@example.com">you</maintainer>
   <license>MIT</license>
