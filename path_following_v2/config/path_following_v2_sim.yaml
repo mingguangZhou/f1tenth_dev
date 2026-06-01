@@ -1,10 +1,10 @@
 path_generator:
   ros__parameters:
-    # use_sim_time: true
+    use_sim_time: true
 
     # Frames
     global_frame: "map"
-    robot_frame: "base_link"
+    robot_frame: "ego_racecar/base_link"
     tf_timeout_sec: 0.05
 
     # Input from centerline_tools raceline publisher.
@@ -35,7 +35,7 @@ path_following_v2:
 
     # Frames
     global_frame: "map"
-    robot_frame: "base_link"
+    robot_frame: "ego_racecar/base_link"
     tf_timeout_sec: 0.1
 
     # Inputs from path_generator.
@@ -73,6 +73,6 @@ path_following_v2:
 
     # Optional RViz debug markers in robot/base frame.
     publish_markers: true
-    marker_frame: "base_link"
+    marker_frame: "ego_racecar/base_link"
     lookahead_marker_topic: "/path_following_v2/lookahead_marker"
     steering_marker_topic: "/path_following_v2/steering_marker"
