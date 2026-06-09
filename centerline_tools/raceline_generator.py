@@ -37,6 +37,75 @@ EDITED_CORNERS_METADATA_YAML_NAME = "corner_key_points_edited_metadata.yaml"
 RESUME_KEYPOINTS_IF_NEWER_THAN_CENTERLINE = True
 
 
+# =========================
+# RACELINE SAFETY / EDGE-DISTANCE TUNING
+# =========================
+# These are local override knobs for the raceline generator.
+#
+# Why they are here:
+#   The actual constants are imported from centerline_reference_generator.py by:
+#       from centerline_reference_generator import *
+#   So in the original separated script, values such as
+#   RACELINE_SAFETY_REGION_MARGIN_M are already assigned before this file's own
+#   code starts, but the assignment is hidden in the imported module.
+#
+# How to use:
+#   Keep a value as None to use the imported/default value.
+#   Set a number here to override it for this script only.
+#
+# Most useful when the generated raceline is too close to the wall:
+#   1) Increase USER_RACELINE_SAFETY_REGION_MARGIN_M first.
+#      Example: None -> 0.30 or 0.35
+#   2) If entrance/exit are still too close to the outside edge, increase
+#      USER_MOVED_ENTRY_EXIT_SAFETY_MARGIN_M.
+#      Example: None -> 0.30
+#   3) If the whole raceline is too aggressive, reduce
+#      USER_RACELINE_OFFSET_SCALE_START.
+#      Example: None -> 0.70
+#
+USER_RACELINE_SAFETY_REGION_MARGIN_M = None
+USER_MOVED_ENTRY_EXIT_SAFETY_MARGIN_M = None
+USER_MOVED_APEX_SAFETY_MARGIN_M = None
+USER_RACELINE_OFFSET_SCALE_START = None
+USER_RACELINE_OFFSET_SCALE_MIN = None
+USER_RACELINE_OFFSET_SCALE_SHRINK = None
+USER_RACELINE_MAX_OFFSET_CHANGE_PER_M = None
+
+
+def _apply_optional_float_override(name, value):
+    """Override an imported global constant only when value is not None."""
+    if value is None:
+        return
+    globals()[name] = float(value)
+
+
+def apply_raceline_tuning_overrides():
+    """
+    Apply user-editable tuning values from the block above.
+
+    This keeps default behavior unchanged while making the edge-distance knobs
+    visible in this file instead of only in centerline_reference_generator.py.
+    """
+    _apply_optional_float_override("RACELINE_SAFETY_REGION_MARGIN_M", USER_RACELINE_SAFETY_REGION_MARGIN_M)
+    _apply_optional_float_override("MOVED_ENTRY_EXIT_SAFETY_MARGIN_M", USER_MOVED_ENTRY_EXIT_SAFETY_MARGIN_M)
+    _apply_optional_float_override("MOVED_APEX_SAFETY_MARGIN_M", USER_MOVED_APEX_SAFETY_MARGIN_M)
+    _apply_optional_float_override("RACELINE_OFFSET_SCALE_START", USER_RACELINE_OFFSET_SCALE_START)
+    _apply_optional_float_override("RACELINE_OFFSET_SCALE_MIN", USER_RACELINE_OFFSET_SCALE_MIN)
+    _apply_optional_float_override("RACELINE_OFFSET_SCALE_SHRINK", USER_RACELINE_OFFSET_SCALE_SHRINK)
+    _apply_optional_float_override("RACELINE_MAX_OFFSET_CHANGE_PER_M", USER_RACELINE_MAX_OFFSET_CHANGE_PER_M)
+
+
+def print_raceline_tuning_values():
+    print("Active raceline safety / edge-distance tuning:")
+    print(f"  RACELINE_SAFETY_REGION_MARGIN_M: {RACELINE_SAFETY_REGION_MARGIN_M:.3f} m")
+    print(f"  MOVED_ENTRY_EXIT_SAFETY_MARGIN_M: {MOVED_ENTRY_EXIT_SAFETY_MARGIN_M:.3f} m")
+    print(f"  MOVED_APEX_SAFETY_MARGIN_M:      {MOVED_APEX_SAFETY_MARGIN_M:.3f} m")
+    print(f"  RACELINE_OFFSET_SCALE_START:     {RACELINE_OFFSET_SCALE_START:.3f}")
+    print(f"  RACELINE_OFFSET_SCALE_MIN:       {RACELINE_OFFSET_SCALE_MIN:.3f}")
+    print(f"  RACELINE_OFFSET_SCALE_SHRINK:    {RACELINE_OFFSET_SCALE_SHRINK:.3f}")
+    print(f"  RACELINE_MAX_OFFSET_CHANGE_PER_M:{RACELINE_MAX_OFFSET_CHANGE_PER_M:.3f} m/m")
+
+
 
 
 

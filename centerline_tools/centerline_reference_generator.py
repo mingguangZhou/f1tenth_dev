@@ -80,7 +80,7 @@ CORNER_APEX_MODE = "max_abs_curvature"
 # Phase 11: moved corner keypoints only
 MOVE_CORNER_KEYPOINTS = True
 MOVED_APEX_SAFETY_MARGIN_M = 0.30
-MOVED_ENTRY_EXIT_SAFETY_MARGIN_M = 0.20
+MOVED_ENTRY_EXIT_SAFETY_MARGIN_M = 0.35
 MOVED_KEYPOINT_RAY_STEP_M = 0.02
 MOVED_KEYPOINTS_CSV_NAME = "moved_corner_keypoints.csv"
 DEBUG_MOVED_KEYPOINTS = "debug_moved_corner_keypoints.png"

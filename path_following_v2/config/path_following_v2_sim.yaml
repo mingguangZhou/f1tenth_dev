@@ -21,6 +21,11 @@ path_generator:
     # Local forward window extracted from the global raceline.
     local_path_horizon_points: 80
 
+    # Speed-index publishing mode.
+    # "rule_based": path_generator publishes curvature-based /path_following_v2/speed_index.
+    # "external": path_generator only publishes local_path; another node, e.g. RL inference, publishes speed_index.
+    speed_index_mode: "rule_based"
+
     # Deterministic baseline speed request.
     # Output is a normalized speed index in [0, 1], not m/s.
     # Follower converts it to speed_min + index * (speed_max - speed_min).
