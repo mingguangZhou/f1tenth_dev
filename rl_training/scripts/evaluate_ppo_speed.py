@@ -4,6 +4,44 @@ import argparse
 import numpy as np
 from stable_baselines3 import PPO
 from rl_training.f110_speed_env import F110SpeedEnv
+from rl_training.config_utils import parse_args_with_config
+
+REWARD_TERM_KEYS = [
+    "reward_progress",
+    "reward_lap",
+    "reward_early_finish",
+    "penalty_tracking",
+    "penalty_curvature_speed_section",
+    "penalty_target_speed_smoothness",
+    "penalty_residual_smoothness",
+    "penalty_residual_excess",
+    "penalty_time",
+    "penalty_crash",
+    "penalty_timeout",
+]
+
+def make_reward_accumulator():
+    return {key: 0.0 for key in REWARD_TERM_KEYS}
+
+def accumulate_reward_terms(acc, info):
+    for key in REWARD_TERM_KEYS:
+        acc[key] += float(info.get(key, 0.0))
+
+def print_reward_breakdown(acc, total_reward):
+    print("")
+    print("=== Reward Breakdown ===")
+    print(f"reward_progress:                  +{acc['reward_progress']:.3f}")
+    print(f"reward_lap:                       +{acc['reward_lap']:.3f}")
+    print(f"reward_early_finish:              +{acc['reward_early_finish']:.3f}")
+    print(f"penalty_tracking:                 -{acc['penalty_tracking']:.3f}")
+    print(f"penalty_curvature_speed_section:  -{acc['penalty_curvature_speed_section']:.3f}")
+    print(f"penalty_target_speed_smoothness:  -{acc['penalty_target_speed_smoothness']:.3f}")
+    print(f"penalty_residual_smoothness:      -{acc['penalty_residual_smoothness']:.3f}")
+    print(f"penalty_residual_excess:          -{acc['penalty_residual_excess']:.3f}")
+    print(f"penalty_time:                     -{acc['penalty_time']:.3f}")
+    print(f"penalty_crash:                    -{acc['penalty_crash']:.3f}")
+    print(f"penalty_timeout:                  -{acc['penalty_timeout']:.3f}")
+    print(f"reward_total_check:                {total_reward:.3f}")
 
 
 def add_common_env_args(parser: argparse.ArgumentParser) -> None:
@@ -48,6 +86,23 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--crash_penalty_value", type=float, default=1000.0)
     parser.add_argument("--timeout_penalty_value", type=float, default=500.0)
     parser.add_argument("--target_speed_smoothness_weight", type=float, default=0.04)
+    parser.add_argument("--reward_curvature_section_start_points", type=int, default=2)
+    parser.add_argument("--reward_curvature_section_end_points", type=int, default=40)
+    parser.add_argument("--curvature_speed_section_weight", type=float, default=0.006)
+    parser.add_argument("--residual_smoothness_weight", type=float, default=0.08)
+    parser.add_argument("--residual_free_band_mps", type=float, default=0.8)
+    parser.add_argument("--residual_excess_weight", type=float, default=0.05)
+    # Optional runtime/inference safety gate for the learned residual.
+    parser.add_argument("--enable_rl_gate", action="store_true")
+    parser.add_argument("--rl_gate_enable_cte", type=float, default=0.25)
+    parser.add_argument("--rl_gate_enable_heading", type=float, default=0.20)
+    parser.add_argument("--rl_gate_disable_cte", type=float, default=0.45)
+    parser.add_argument("--rl_gate_disable_heading", type=float, default=0.35)
+    parser.add_argument("--rl_gate_enable_count", type=int, default=10)
+    parser.add_argument("--rl_gate_disable_count", type=int, default=3)
+    parser.add_argument("--rl_gate_fade_in_step", type=float, default=0.05)
+    parser.add_argument("--rl_gate_fade_out_step", type=float, default=0.10)
+
     parser.add_argument("--random_seed", type=int, default=None)
 
 
@@ -92,6 +147,21 @@ def make_env(args) -> F110SpeedEnv:
         crash_penalty_value=args.crash_penalty_value,
         timeout_penalty_value=args.timeout_penalty_value,
         target_speed_smoothness_weight=args.target_speed_smoothness_weight,
+        reward_curvature_section_start_points=args.reward_curvature_section_start_points,
+        reward_curvature_section_end_points=args.reward_curvature_section_end_points,
+        curvature_speed_section_weight=args.curvature_speed_section_weight,
+        residual_smoothness_weight=args.residual_smoothness_weight,
+        residual_free_band_mps=args.residual_free_band_mps,
+        residual_excess_weight=args.residual_excess_weight,
+        enable_rl_gate=args.enable_rl_gate,
+        rl_gate_enable_cte=args.rl_gate_enable_cte,
+        rl_gate_enable_heading=args.rl_gate_enable_heading,
+        rl_gate_disable_cte=args.rl_gate_disable_cte,
+        rl_gate_disable_heading=args.rl_gate_disable_heading,
+        rl_gate_enable_count=args.rl_gate_enable_count,
+        rl_gate_disable_count=args.rl_gate_disable_count,
+        rl_gate_fade_in_step=args.rl_gate_fade_in_step,
+        rl_gate_fade_out_step=args.rl_gate_fade_out_step,
         random_seed=args.random_seed,
         use_speed_dependent_lookahead=True,
     )
@@ -99,21 +169,25 @@ def make_env(args) -> F110SpeedEnv:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", required=True)
-    parser.add_argument("--map_path", required=True)
-    parser.add_argument("--map_ext", required=True)
-    parser.add_argument("--centerline_csv", required=True)
-    parser.add_argument("--sx", type=float, required=True)
-    parser.add_argument("--sy", type=float, required=True)
-    parser.add_argument("--stheta", type=float, required=True)
+    parser.add_argument("--model_path", default=None)
+    parser.add_argument("--map_path", default=None)
+    parser.add_argument("--map_ext", default=None)
+    parser.add_argument("--centerline_csv", default=None)
+    parser.add_argument("--sx", type=float, default=None)
+    parser.add_argument("--sy", type=float, default=None)
+    parser.add_argument("--stheta", type=float, default=None)
     add_common_env_args(parser)
-    args = parser.parse_args()
+    args = parse_args_with_config(
+        parser,
+        required_keys=["model_path", "map_path", "map_ext", "centerline_csv", "sx", "sy", "stheta"],
+    )
 
     env = make_env(args)
     model = PPO.load(args.model_path)
     obs = env.reset()
 
     total_reward = 0.0
+    reward_acc = make_reward_accumulator()
     speed_sum = 0.0
     executed_steps = 0
 
@@ -126,6 +200,7 @@ def main():
         obs, reward, done, info = env.step(action)
 
         total_reward += reward
+        accumulate_reward_terms(reward_acc, info)
         speed_sum += float(info.get("target_speed_mps", 0.0))
         executed_steps += 1
 
@@ -133,6 +208,8 @@ def main():
             print(
                 f"step={step:04d} "
                 f"action={float(action[0]): .3f} "
+                f"raw_delta={info.get('raw_delta_speed_mps', info.get('delta_speed_mps', 0.0)): .3f} "
+                f"gate={info.get('rl_gate_scale', 1.0): .2f} "
                 f"delta_v={info.get('delta_speed_mps', 0.0): .3f} "
                 f"rule_v={info.get('rule_speed_mps', 0.0): .3f} "
                 f"req_v={info.get('requested_speed_mps', 0.0): .3f} "
@@ -156,6 +233,7 @@ def main():
     print(f"Crashed:         {env.crashed}")
     print(f"Timeout:         {env.timeout}")
     print(f"Bad tracking:    {getattr(env, 'bad_tracking_failure', False)}")
+    print_reward_breakdown(reward_acc, total_reward)
 
 
 if __name__ == "__main__":

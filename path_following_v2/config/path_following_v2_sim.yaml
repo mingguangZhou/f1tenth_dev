@@ -14,25 +14,24 @@ path_generator:
 
     # Outputs consumed by path_following_v2.
     local_path_topic: "/path_following_v2/local_path"
-    speed_index_topic: "/path_following_v2/speed_index"
+    rule_speed_index_topic: "/path_following_v2/rule_speed_index"
 
     publish_rate_hz: 20.0
 
     # Local forward window extracted from the global raceline.
     local_path_horizon_points: 80
 
-    # Speed-index publishing mode.
-    # "rule_based": path_generator publishes curvature-based /path_following_v2/speed_index.
-    # "external": path_generator only publishes local_path; another node, e.g. RL inference, publishes speed_index.
-    speed_index_mode: "rule_based"
+    # Final physical speed envelope. Must match the follower.
+    speed_min: 1.0
+    speed_max: 10.0
 
-    # Deterministic baseline speed request.
-    # Output is a normalized speed index in [0, 1], not m/s.
-    # Follower converts it to speed_min + index * (speed_max - speed_min).
-    curvature_speed_gain: 2.0
-    curvature_lookahead_points: 10
-    min_speed_index: 0.0
-    max_speed_index: 1.0
+    # Rule-based speed baseline, aligned with rl_training.
+    # rule_speed = clip(rule_max / (1 + gain * max_curvature_abs), rule_min, rule_max)
+    # max_curvature_abs is max curvature_abs from nearest_idx to nearest_idx + N.
+    rule_min_speed_mps: 1.0
+    rule_max_speed_mps: 6.0
+    rule_speed_curvature_gain: 2.0
+    rule_speed_curvature_lookahead_points: 3
 
 path_following_v2:
   ros__parameters:
@@ -43,22 +42,32 @@ path_following_v2:
     robot_frame: "ego_racecar/base_link"
     tf_timeout_sec: 0.1
 
-    # Inputs from path_generator.
+    # Inputs from path_generator and optional RL inference.
     local_path_topic: "/path_following_v2/local_path"
-    speed_index_topic: "/path_following_v2/speed_index"
+    rule_speed_index_topic: "/path_following_v2/rule_speed_index"
+    rl_speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
 
     # Output control command.
     drive_topic: "/drive"
 
     control_rate_hz: 20.0
     path_timeout_sec: 1.0
-    speed_index_timeout_sec: 0.5
+    rule_speed_index_timeout_sec: 0.5
+    rl_residual_timeout_sec: 0.5
 
-    # Speed range used to map normalized speed_index to physical speed.
-    # speed = speed_min + speed_index * (speed_max - speed_min)
-    speed_min: 0.8
-    speed_max: 4.0
-    fallback_speed_index: 0.0
+    # speed_mode:
+    #   0 = rule-based only
+    #   1 = rule-based + fresh RL residual; if residual is absent/stale, use rule-based only
+    speed_mode: 1
+
+    # Final physical speed envelope, aligned with rl_training.
+    # The rule_speed_index is mapped by:
+    # speed = speed_min + index * (speed_max - speed_min)
+    speed_min: 1.0
+    speed_max: 10.0
+
+    # Final command rate limit after rule speed + residual, aligned with rl_training.
+    max_speed_delta_per_step_mps: 0.2
 
     # Pure pursuit steering.
     wheelbase: 0.33
@@ -66,15 +75,12 @@ path_following_v2:
     min_forward_point_x: 0.05
     stop_if_no_path: true
 
-    # Speed-dependent lookahead.
-    # Active when use_speed_dependent_lookahead=true:
-    # lookahead = clamp(min_lookahead + lookahead_speed_gain * speed,
-    #                   min_lookahead, max_lookahead)
-    fixed_lookahead_distance: 0.60
-    use_speed_dependent_lookahead: true
-    min_lookahead: 0.6
-    max_lookahead: 1.6
-    lookahead_speed_gain: 0.25
+    # Speed-dependent pure-pursuit steering lookahead, in meters.
+    fixed_steering_lookahead_m: 0.60
+    use_speed_dependent_steering_lookahead: true
+    steering_min_lookahead_m: 0.6
+    steering_max_lookahead_m: 1.6
+    steering_lookahead_speed_gain: 0.25
 
     # Optional RViz debug markers in robot/base frame.
     publish_markers: true

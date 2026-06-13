@@ -100,6 +100,21 @@ class F110SpeedEnv(gym.Env):
         crash_penalty_value: float = 1000.0,
         timeout_penalty_value: float = 500.0,
         target_speed_smoothness_weight: float = 0.04,
+        reward_curvature_section_start_points: int = 2,
+        reward_curvature_section_end_points: int = 40,
+        curvature_speed_section_weight: float = 0.006,
+        residual_smoothness_weight: float = 0.08,
+        residual_free_band_mps: float = 0.8,
+        residual_excess_weight: float = 0.05,
+        enable_rl_gate: bool = False,
+        rl_gate_enable_cte: float = 0.25,
+        rl_gate_enable_heading: float = 0.20,
+        rl_gate_disable_cte: float = 0.45,
+        rl_gate_disable_heading: float = 0.35,
+        rl_gate_enable_count: int = 10,
+        rl_gate_disable_count: int = 3,
+        rl_gate_fade_in_step: float = 0.05,
+        rl_gate_fade_out_step: float = 0.10,
         random_seed: int = None,
         use_speed_dependent_lookahead: bool = True,
         min_lookahead: float = 0.6,
@@ -178,6 +193,35 @@ class F110SpeedEnv(gym.Env):
         self.crash_penalty_value = float(crash_penalty_value)
         self.timeout_penalty_value = float(timeout_penalty_value)
         self.target_speed_smoothness_weight = float(target_speed_smoothness_weight)
+        self.reward_curvature_section_start_points = max(0, int(reward_curvature_section_start_points))
+        self.reward_curvature_section_end_points = max(
+            self.reward_curvature_section_start_points,
+            int(reward_curvature_section_end_points),
+        )
+        self.curvature_speed_section_weight = float(curvature_speed_section_weight)
+        self.residual_smoothness_weight = max(0.0, float(residual_smoothness_weight))
+        self.residual_free_band_mps = max(0.0, float(residual_free_band_mps))
+        self.residual_excess_weight = max(0.0, float(residual_excess_weight))
+        self.last_reward_terms = {}
+
+        # Optional runtime-style safety gate for the learned residual.
+        # When enabled, the PPO residual is used only inside a near-raceline
+        # operating domain. Outside that domain the residual fades to zero and
+        # the car falls back to the curvature-rule speed. Hysteresis and
+        # counters prevent mode flicker during recoverable transient errors.
+        self.enable_rl_gate = bool(enable_rl_gate)
+        self.rl_gate_enable_cte = abs(float(rl_gate_enable_cte))
+        self.rl_gate_enable_heading = abs(float(rl_gate_enable_heading))
+        self.rl_gate_disable_cte = abs(float(rl_gate_disable_cte))
+        self.rl_gate_disable_heading = abs(float(rl_gate_disable_heading))
+        self.rl_gate_enable_count = max(1, int(rl_gate_enable_count))
+        self.rl_gate_disable_count = max(1, int(rl_gate_disable_count))
+        self.rl_gate_fade_in_step = float(np.clip(rl_gate_fade_in_step, 0.0, 1.0))
+        self.rl_gate_fade_out_step = float(np.clip(rl_gate_fade_out_step, 0.0, 1.0))
+        self.rl_gate_enabled = not self.enable_rl_gate
+        self.rl_gate_scale = 1.0 if not self.enable_rl_gate else 0.0
+        self.rl_gate_good_count = 0
+        self.rl_gate_bad_count = 0
 
         self.rng = np.random.default_rng(random_seed)
 
@@ -230,6 +274,7 @@ class F110SpeedEnv(gym.Env):
         self.previous_target_speed_mps = self.min_speed
         self.previous_delta_speed_mps = 0.0
         self.previous_correction_action = 0.0
+        self._reset_rl_gate_state()
         self.lap_completed = False
         self.crashed = False
         self.timeout = False
@@ -247,6 +292,7 @@ class F110SpeedEnv(gym.Env):
         self.previous_target_speed_mps = self.min_speed
         self.previous_delta_speed_mps = 0.0
         self.previous_correction_action = 0.0
+        self._reset_rl_gate_state()
         self.lap_completed = False
         self.crashed = False
         self.timeout = False
@@ -270,7 +316,17 @@ class F110SpeedEnv(gym.Env):
         rule_speed_mps = float(true_pre_obs[1])
 
         correction_action = float(np.clip(action[0], -1.0, 1.0))
-        delta_speed_mps = self.max_delta_speed_mps * correction_action
+        raw_delta_speed_mps = self.max_delta_speed_mps * correction_action
+
+        gate_enabled, gate_scale = self._update_rl_gate(
+            cross_track_error=float(true_pre_obs[2]),
+            heading_error=float(true_pre_obs[3]),
+        )
+
+        # The model action is still visible in info/debug logs, but only the
+        # gated residual is sent into the speed command. If the gate is disabled
+        # or fading out, this smoothly falls back to rule_speed_mps.
+        delta_speed_mps = gate_scale * raw_delta_speed_mps
         requested_speed_mps = float(np.clip(rule_speed_mps + delta_speed_mps, self.min_speed, self.max_speed))
         target_speed = self._rate_limit_speed_mps(requested_speed_mps)
 
@@ -357,6 +413,11 @@ class F110SpeedEnv(gym.Env):
         info["rule_min_speed_mps"] = self.rule_min_speed_mps
         info["rule_max_speed_mps"] = self.rule_max_speed_mps
         info["correction_action"] = correction_action
+        info["raw_delta_speed_mps"] = raw_delta_speed_mps
+        info["rl_gate_enabled"] = bool(gate_enabled)
+        info["rl_gate_scale"] = float(gate_scale)
+        info["rl_gate_good_count"] = int(self.rl_gate_good_count)
+        info["rl_gate_bad_count"] = int(self.rl_gate_bad_count)
         info["delta_speed_mps"] = delta_speed_mps
         info["speed_index_correction"] = delta_speed_mps / max(self.max_speed - self.min_speed, 1e-6)
         info["requested_speed_mps"] = requested_speed_mps
@@ -379,6 +440,8 @@ class F110SpeedEnv(gym.Env):
         info["reset_x"] = float(self.last_reset_pose[0, 0])
         info["reset_y"] = float(self.last_reset_pose[0, 1])
         info["reset_yaw"] = float(self.last_reset_pose[0, 2])
+        for key, value in self.last_reward_terms.items():
+            info[key] = value
 
         return rl_obs, reward, self.done, info
 
@@ -484,22 +547,24 @@ class F110SpeedEnv(gym.Env):
 
     def _compute_reward(self, true_rl_obs: np.ndarray, nearest_idx: int, target_speed: float, delta_speed_mps: float) -> float:
         """
-        Simple physical-residual reward.
+        Behavior-focused physical-residual reward.
 
-        Fast:
-            progress reward, lap reward, early-finish bonus, small time penalty
-        Trackable:
-            cross-track and heading penalties, mild curvature-speed penalty
-        Smooth:
-            residual magnitude/change penalties and final target-speed change penalty
-        Failure:
-            optional bad-tracking termination and high crash penalty for high-speed learning
+        The reward mainly judges the resulting driving behavior, while keeping
+        two mild residual regularizers to discourage oscillatory or excessive
+        residual commands:
+          - make forward progress and finish the lap quickly,
+          - stay close/aligned to the raceline,
+          - avoid high speed through a curved lookahead section,
+          - keep the final target-speed command smooth,
+          - avoid crash/bad-tracking/timeout failures.
+
+        The policy observation still contains short/mid/long curvature preview.
+        The reward separately uses an average absolute curvature over a fixed
+        section ahead of the vehicle, default 2..40 points, roughly 0.1..2.0 m
+        for a 0.05 m waypoint spacing.
         """
         cross_track_error = float(true_rl_obs[2])
         heading_error = float(true_rl_obs[3])
-        curv_short_abs = float(true_rl_obs[4])
-        curv_mid_abs = float(true_rl_obs[5])
-        curv_long_abs = float(true_rl_obs[6])
 
         progress_delta_idx = compute_centerline_progress_delta(
             previous_idx=self.previous_centerline_idx,
@@ -517,20 +582,36 @@ class F110SpeedEnv(gym.Env):
 
         tracking_penalty = 0.8 * abs(cross_track_error) + 0.25 * abs(heading_error)
 
-        curvature_risk_abs = max(curv_short_abs, 0.7 * curv_mid_abs, 0.5 * curv_long_abs)
-        curvature_speed_penalty = 0.006 * curvature_risk_abs * target_speed * target_speed
+        curvature_section_abs = self._get_curvature_section_average_abs(
+            nearest_idx=nearest_idx,
+            start_offset_points=self.reward_curvature_section_start_points,
+            end_offset_points=self.reward_curvature_section_end_points,
+        )
+        curvature_speed_section_penalty = (
+            self.curvature_speed_section_weight
+            * curvature_section_abs
+            * target_speed
+            * target_speed
+        )
 
-        delta_magnitude_penalty = 0.08 * abs(delta_speed_mps)
-        delta_smoothness_penalty = 0.20 * abs(delta_speed_mps - self.previous_delta_speed_mps)
-
-        # Smooth the final speed request, not only the learned residual. This
-        # complements the hard rate limiter and helps optimize the command sent
-        # to the longitudinal controller/VESC. Keep it mild: racing still needs
-        # real braking and acceleration.
+        # Smooth the final speed request, not the learned residual. This is the
+        # clearest indicator for longitudinal command smoothness.
         target_speed_smoothness_penalty = (
             self.target_speed_smoothness_weight
             * abs(target_speed - self.previous_target_speed_mps)
         )
+
+        # Mild residual regularization. This is intentionally weaker and more
+        # targeted than the old direct residual magnitude penalty:
+        #   - residual_smoothness_penalty discourages jumpy model intent,
+        #   - residual_excess_penalty only activates outside a free band, so
+        #     useful moderate residuals are not punished.
+        residual_smoothness_penalty = (
+            self.residual_smoothness_weight
+            * abs(delta_speed_mps - self.previous_delta_speed_mps)
+        )
+        residual_excess = max(0.0, abs(delta_speed_mps) - self.residual_free_band_mps)
+        residual_excess_penalty = self.residual_excess_weight * residual_excess * residual_excess
 
         time_penalty = 0.02
         crash_penalty = self.crash_penalty_value if self.crashed else 0.0
@@ -541,15 +622,108 @@ class F110SpeedEnv(gym.Env):
             + lap_reward
             + early_finish_bonus
             - tracking_penalty
-            - curvature_speed_penalty
-            - delta_magnitude_penalty
-            - delta_smoothness_penalty
+            - curvature_speed_section_penalty
             - target_speed_smoothness_penalty
+            - residual_smoothness_penalty
+            - residual_excess_penalty
             - time_penalty
             - crash_penalty
             - timeout_penalty
         )
+
+        self.last_reward_terms = {
+            "reward_progress": float(progress_reward),
+            "reward_lap": float(lap_reward),
+            "reward_early_finish": float(early_finish_bonus),
+            "penalty_tracking": float(tracking_penalty),
+            "penalty_curvature_speed_section": float(curvature_speed_section_penalty),
+            "penalty_target_speed_smoothness": float(target_speed_smoothness_penalty),
+            "penalty_residual_smoothness": float(residual_smoothness_penalty),
+            "penalty_residual_excess": float(residual_excess_penalty),
+            "residual_excess_mps": float(residual_excess),
+            "penalty_time": float(time_penalty),
+            "penalty_crash": float(crash_penalty),
+            "penalty_timeout": float(timeout_penalty),
+            "reward_total": float(reward),
+            "reward_curvature_section_abs": float(curvature_section_abs),
+        }
         return float(reward)
+
+    def _get_curvature_section_average_abs(self, nearest_idx: int, start_offset_points: int, end_offset_points: int) -> float:
+        """Average absolute curvature over a forward section of the closed raceline."""
+        n = len(self.centerline)
+        if n <= 0:
+            return 0.0
+        start = max(0, int(start_offset_points))
+        end = max(start, int(end_offset_points))
+        values = []
+        for offset in range(start, end + 1):
+            p = self.centerline[(int(nearest_idx) + offset) % n]
+            values.append(abs(float(p.curvature_abs)))
+        if not values:
+            return 0.0
+        return float(np.mean(values))
+
+    def _reset_rl_gate_state(self) -> None:
+        """Reset the residual gate at the beginning of an episode."""
+        if self.enable_rl_gate:
+            self.rl_gate_enabled = False
+            self.rl_gate_scale = 0.0
+        else:
+            self.rl_gate_enabled = True
+            self.rl_gate_scale = 1.0
+        self.rl_gate_good_count = 0
+        self.rl_gate_bad_count = 0
+
+    def _update_rl_gate(self, cross_track_error: float, heading_error: float):
+        """
+        Runtime-style hysteresis gate for the learned speed residual.
+
+        OFF -> ON requires a clearly good tracking state for several cycles.
+        ON -> OFF requires a clearly bad tracking state for several cycles.
+        The returned scale fades the residual in/out to avoid speed-command jumps.
+        """
+        if not self.enable_rl_gate:
+            self.rl_gate_enabled = True
+            self.rl_gate_scale = 1.0
+            self.rl_gate_good_count = 0
+            self.rl_gate_bad_count = 0
+            return self.rl_gate_enabled, self.rl_gate_scale
+
+        abs_cte = abs(float(cross_track_error))
+        abs_heading = abs(float(heading_error))
+
+        good = (
+            abs_cte < self.rl_gate_enable_cte
+            and abs_heading < self.rl_gate_enable_heading
+        )
+        bad = (
+            abs_cte > self.rl_gate_disable_cte
+            or abs_heading > self.rl_gate_disable_heading
+        )
+
+        if good:
+            self.rl_gate_good_count += 1
+        else:
+            self.rl_gate_good_count = 0
+
+        if bad:
+            self.rl_gate_bad_count += 1
+        else:
+            self.rl_gate_bad_count = 0
+
+        if (not self.rl_gate_enabled) and self.rl_gate_good_count >= self.rl_gate_enable_count:
+            self.rl_gate_enabled = True
+
+        if self.rl_gate_enabled and self.rl_gate_bad_count >= self.rl_gate_disable_count:
+            self.rl_gate_enabled = False
+
+        if self.rl_gate_enabled:
+            self.rl_gate_scale = min(1.0, self.rl_gate_scale + self.rl_gate_fade_in_step)
+        else:
+            self.rl_gate_scale = max(0.0, self.rl_gate_scale - self.rl_gate_fade_out_step)
+
+        return self.rl_gate_enabled, self.rl_gate_scale
 
     def _speed_index_to_mps(self, speed_index: float) -> float:
         speed_index = float(np.clip(speed_index, 0.0, 1.0))

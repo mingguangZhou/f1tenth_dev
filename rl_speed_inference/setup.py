@@ -9,6 +9,14 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/config", [
+            "config/rl_speed_inference.yaml",
+            "config/rl_speed_inference_sim.yaml",
+        ]),
+        ("share/" + package_name + "/launch", [
+            "launch/rl_speed_inference_launch.py",
+            "launch/rl_speed_inference_sim_launch.py",
+        ]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

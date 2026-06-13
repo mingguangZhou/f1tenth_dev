@@ -25,6 +25,23 @@ import pandas as pd
 from stable_baselines3 import PPO
 
 from rl_training.f110_speed_env import F110SpeedEnv
+from rl_training.config_utils import parse_args_with_config
+
+
+REWARD_TERM_KEYS = [
+    "reward_progress",
+    "reward_lap",
+    "reward_early_finish",
+    "penalty_tracking",
+    "penalty_curvature_speed_section",
+    "penalty_target_speed_smoothness",
+    "penalty_residual_smoothness",
+    "penalty_residual_excess",
+    "penalty_time",
+    "penalty_crash",
+    "penalty_timeout",
+]
+
 
 
 @dataclass
@@ -119,6 +136,21 @@ def create_env(args) -> F110SpeedEnv:
         crash_penalty_value=args.crash_penalty_value,
         timeout_penalty_value=args.timeout_penalty_value,
         target_speed_smoothness_weight=args.target_speed_smoothness_weight,
+        reward_curvature_section_start_points=args.reward_curvature_section_start_points,
+        reward_curvature_section_end_points=args.reward_curvature_section_end_points,
+        curvature_speed_section_weight=args.curvature_speed_section_weight,
+        residual_smoothness_weight=args.residual_smoothness_weight,
+        residual_free_band_mps=args.residual_free_band_mps,
+        residual_excess_weight=args.residual_excess_weight,
+        enable_rl_gate=args.enable_rl_gate,
+        rl_gate_enable_cte=args.rl_gate_enable_cte,
+        rl_gate_enable_heading=args.rl_gate_enable_heading,
+        rl_gate_disable_cte=args.rl_gate_disable_cte,
+        rl_gate_disable_heading=args.rl_gate_disable_heading,
+        rl_gate_enable_count=args.rl_gate_enable_count,
+        rl_gate_disable_count=args.rl_gate_disable_count,
+        rl_gate_fade_in_step=args.rl_gate_fade_in_step,
+        rl_gate_fade_out_step=args.rl_gate_fade_out_step,
         random_seed=args.random_seed,
         use_speed_dependent_lookahead=True,
     )
@@ -187,6 +219,11 @@ def rollout_policy(args, name: str, model: Optional[PPO]) -> Tuple[pd.DataFrame,
                 "upcoming_curvature_abs": float(obs[5]) if len(obs) >= 6 else float(obs[4]),
                 "previous_delta_speed_mps_obs": float(obs[7]) if len(obs) >= 8 else np.nan,
                 "correction_action": float(info.get("correction_action", action[0])),
+                "raw_delta_speed_mps": float(info.get("raw_delta_speed_mps", info.get("delta_speed_mps", np.nan))),
+                "rl_gate_enabled": bool(info.get("rl_gate_enabled", True)),
+                "rl_gate_scale": float(info.get("rl_gate_scale", 1.0)),
+                "rl_gate_good_count": int(info.get("rl_gate_good_count", 0)),
+                "rl_gate_bad_count": int(info.get("rl_gate_bad_count", 0)),
                 "delta_speed_mps": float(info.get("delta_speed_mps", np.nan)),
                 "rule_speed_mps": float(info.get("rule_speed_mps", np.nan)),
                 "rule_speed_index": float(info.get("rule_speed_index", np.nan)),
@@ -197,6 +234,19 @@ def rollout_policy(args, name: str, model: Optional[PPO]) -> Tuple[pd.DataFrame,
                 "target_speed_mps": target_speed,
                 "steering_rad": float(info.get("steering_rad", np.nan)),
                 "reward": float(reward),
+                "reward_progress": float(info.get("reward_progress", 0.0)),
+                "reward_lap": float(info.get("reward_lap", 0.0)),
+                "reward_early_finish": float(info.get("reward_early_finish", 0.0)),
+                "penalty_tracking": float(info.get("penalty_tracking", 0.0)),
+                "penalty_curvature_speed_section": float(info.get("penalty_curvature_speed_section", 0.0)),
+                "penalty_target_speed_smoothness": float(info.get("penalty_target_speed_smoothness", 0.0)),
+                "penalty_residual_smoothness": float(info.get("penalty_residual_smoothness", 0.0)),
+                "penalty_residual_excess": float(info.get("penalty_residual_excess", 0.0)),
+                "residual_excess_mps": float(info.get("residual_excess_mps", 0.0)),
+                "penalty_time": float(info.get("penalty_time", 0.0)),
+                "penalty_crash": float(info.get("penalty_crash", 0.0)),
+                "penalty_timeout": float(info.get("penalty_timeout", 0.0)),
+                "reward_curvature_section_abs": float(info.get("reward_curvature_section_abs", np.nan)),
                 "lap_completed": bool(env.lap_completed),
                 "crashed": bool(env.crashed),
                 "timeout": bool(env.timeout),
@@ -208,6 +258,8 @@ def rollout_policy(args, name: str, model: Optional[PPO]) -> Tuple[pd.DataFrame,
                 f"[{name}] step={step:05d} idx={nearest_idx:05d} "
                 f"prog={lap_progress_ratio:5.1%} "
                 f"action={rows[-1]['correction_action']: .3f} "
+                f"raw_delta={rows[-1]['raw_delta_speed_mps']: .3f} "
+                f"gate={rows[-1]['rl_gate_scale']: .2f} "
                 f"delta_v={rows[-1]['delta_speed_mps']: .3f} "
                 f"rule_v={rows[-1]['rule_speed_mps']: .3f} "
                 f"v={target_speed: .3f} cte={obs[2]: .3f} "
@@ -494,6 +546,21 @@ def save_corner_table_plot(corner_summary: pd.DataFrame, out_dir: str) -> None:
     plt.close(fig)
 
 
+def write_reward_breakdown(rule_df: pd.DataFrame, model_df: pd.DataFrame, out_dir: str) -> None:
+    rows = []
+    for name, df in [("rule", rule_df), ("model", model_df)]:
+        row = {"name": name}
+        for key in REWARD_TERM_KEYS:
+            row[key] = float(df[key].sum()) if key in df.columns else 0.0
+        row["reward_total_from_steps"] = float(df["reward"].sum()) if "reward" in df.columns else 0.0
+        row["mean_curvature_section_abs"] = float(df["reward_curvature_section_abs"].mean()) if "reward_curvature_section_abs" in df.columns else float("nan")
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    out.to_csv(os.path.join(out_dir, "reward_breakdown_summary.csv"), index=False)
+    print("\n=== Reward breakdown summary ===")
+    print(out.to_string(index=False))
+
+
 def write_summary(summaries: List[Summary], out_dir: str) -> None:
     df = pd.DataFrame([s.__dict__ for s in summaries])
     df.to_csv(os.path.join(out_dir, "evaluation_summary.csv"), index=False)
@@ -503,14 +570,14 @@ def write_summary(summaries: List[Summary], out_dir: str) -> None:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Compare rule-based and residual PPO speed policies along a raceline.")
-    p.add_argument("--model_path", required=True)
-    p.add_argument("--map_path", required=True)
-    p.add_argument("--map_ext", required=True)
-    p.add_argument("--centerline_csv", required=True, help="Usually raceline_points_smooth.csv")
+    p.add_argument("--model_path", default=None)
+    p.add_argument("--map_path", default=None)
+    p.add_argument("--map_ext", default=None)
+    p.add_argument("--centerline_csv", default=None, help="Usually raceline_points_smooth.csv")
     p.add_argument("--corner_csv", default=None, help="Optional corner_key_points_edited.csv for corner labels/tables")
-    p.add_argument("--sx", type=float, required=True)
-    p.add_argument("--sy", type=float, required=True)
-    p.add_argument("--stheta", type=float, required=True)
+    p.add_argument("--sx", type=float, default=None)
+    p.add_argument("--sy", type=float, default=None)
+    p.add_argument("--stheta", type=float, default=None)
     p.add_argument("--steps", type=int, default=12000)
     p.add_argument("--min_speed", type=float, default=0.8)
     p.add_argument("--max_speed", type=float, default=5.0)
@@ -551,10 +618,30 @@ def parse_args():
     p.add_argument("--crash_penalty_value", type=float, default=1000.0)
     p.add_argument("--timeout_penalty_value", type=float, default=500.0)
     p.add_argument("--target_speed_smoothness_weight", type=float, default=0.04)
+    p.add_argument("--reward_curvature_section_start_points", type=int, default=2)
+    p.add_argument("--reward_curvature_section_end_points", type=int, default=40)
+    p.add_argument("--curvature_speed_section_weight", type=float, default=0.006)
+    p.add_argument("--residual_smoothness_weight", type=float, default=0.08)
+    p.add_argument("--residual_free_band_mps", type=float, default=0.8)
+    p.add_argument("--residual_excess_weight", type=float, default=0.05)
+    # Optional runtime/inference safety gate for the learned residual.
+    p.add_argument("--enable_rl_gate", action="store_true")
+    p.add_argument("--rl_gate_enable_cte", type=float, default=0.25)
+    p.add_argument("--rl_gate_enable_heading", type=float, default=0.20)
+    p.add_argument("--rl_gate_disable_cte", type=float, default=0.45)
+    p.add_argument("--rl_gate_disable_heading", type=float, default=0.35)
+    p.add_argument("--rl_gate_enable_count", type=int, default=10)
+    p.add_argument("--rl_gate_disable_count", type=int, default=3)
+    p.add_argument("--rl_gate_fade_in_step", type=float, default=0.05)
+    p.add_argument("--rl_gate_fade_out_step", type=float, default=0.10)
+
     p.add_argument("--random_seed", type=int, default=None)
     p.add_argument("--out_dir", default="speed_policy_analysis")
     p.add_argument("--print_every", type=int, default=200, help="0 disables rollout progress printing")
-    return p.parse_args()
+    return parse_args_with_config(
+        p,
+        required_keys=["model_path", "map_path", "map_ext", "centerline_csv", "sx", "sy", "stheta"],
+    )
 
 
 def main():
@@ -605,12 +692,14 @@ def main():
     save_tracking_plot(rule_df, model_df, corner_rows, total_len_m, args.out_dir)
     save_xy_plot(raceline, rule_df, model_df, args.out_dir)
     save_corner_table_plot(corner_summary, args.out_dir)
+    write_reward_breakdown(rule_df, model_df, args.out_dir)
     write_summary([rule_summary, model_summary], args.out_dir)
 
     print("\nWrote analysis outputs to:", os.path.abspath(args.out_dir))
     print("Key files:")
     for f in [
         "evaluation_summary.csv",
+        "reward_breakdown_summary.csv",
         "rule_timeseries.csv",
         "model_timeseries.csv",
         "aligned_by_cumulative_progress.csv",

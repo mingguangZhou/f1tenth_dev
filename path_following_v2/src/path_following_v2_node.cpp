@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <string>
@@ -27,20 +28,31 @@ public:
     tf_listener_(tf_buffer_)
   {
     declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
-    declare_parameter<std::string>("speed_index_topic", "/path_following_v2/speed_index");
+    declare_parameter<std::string>("rule_speed_index_topic", "/path_following_v2/rule_speed_index");
+    declare_parameter<std::string>("rl_speed_residual_topic", "/rl_speed_inference/speed_residual_mps");
     declare_parameter<std::string>("drive_topic", "/drive");
     declare_parameter<std::string>("global_frame", "map");
     declare_parameter<std::string>("robot_frame", "ego_racecar/base_link");
 
     declare_parameter<double>("control_rate_hz", 20.0);
     declare_parameter<double>("path_timeout_sec", 1.0);
-    declare_parameter<double>("speed_index_timeout_sec", 0.5);
+    declare_parameter<double>("rule_speed_index_timeout_sec", 0.5);
+    declare_parameter<double>("rl_residual_timeout_sec", 0.5);
     declare_parameter<double>("tf_timeout_sec", 0.1);
 
-    declare_parameter<double>("speed_min", 0.8);
-    declare_parameter<double>("speed_max", 4.0);
-    declare_parameter<double>("fallback_speed_index", 0.0);
+    // speed_mode = 0: rule-based speed only.
+    // speed_mode = 1: rule-based speed + fresh RL residual, otherwise rule-based speed only.
+    declare_parameter<int>("speed_mode", 0);
+    declare_parameter<double>("speed_min", 1.0);
+    declare_parameter<double>("speed_max", 10.0);
+    declare_parameter<double>("max_speed_delta_per_step_mps", 0.2);
 
+    declare_parameter<double>("fixed_steering_lookahead_m", 0.60);
+    declare_parameter<bool>("use_speed_dependent_steering_lookahead", true);
+    declare_parameter<double>("steering_min_lookahead_m", 0.6);
+    declare_parameter<double>("steering_max_lookahead_m", 1.6);
+    declare_parameter<double>("steering_lookahead_speed_gain", 0.25);
+    // Deprecated aliases kept to avoid breaking older YAML files immediately.
     declare_parameter<double>("fixed_lookahead_distance", 0.60);
     declare_parameter<bool>("use_speed_dependent_lookahead", true);
     declare_parameter<double>("min_lookahead", 0.6);
@@ -58,25 +70,28 @@ public:
     declare_parameter<std::string>("steering_marker_topic", "/path_following_v2/steering_marker");
 
     local_path_topic_ = get_parameter("local_path_topic").as_string();
-    speed_index_topic_ = get_parameter("speed_index_topic").as_string();
+    rule_speed_index_topic_ = get_parameter("rule_speed_index_topic").as_string();
+    rl_speed_residual_topic_ = get_parameter("rl_speed_residual_topic").as_string();
     drive_topic_ = get_parameter("drive_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
     robot_frame_ = get_parameter("robot_frame").as_string();
 
     control_rate_hz_ = get_parameter("control_rate_hz").as_double();
     path_timeout_sec_ = get_parameter("path_timeout_sec").as_double();
-    speed_index_timeout_sec_ = get_parameter("speed_index_timeout_sec").as_double();
+    rule_speed_index_timeout_sec_ = get_parameter("rule_speed_index_timeout_sec").as_double();
+    rl_residual_timeout_sec_ = get_parameter("rl_residual_timeout_sec").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
 
+    speed_mode_ = get_parameter("speed_mode").as_int();
     speed_min_ = get_parameter("speed_min").as_double();
     speed_max_ = get_parameter("speed_max").as_double();
-    fallback_speed_index_ = get_parameter("fallback_speed_index").as_double();
+    max_speed_delta_per_step_mps_ = get_parameter("max_speed_delta_per_step_mps").as_double();
 
-    fixed_lookahead_distance_ = get_parameter("fixed_lookahead_distance").as_double();
-    use_speed_dependent_lookahead_ = get_parameter("use_speed_dependent_lookahead").as_bool();
-    min_lookahead_ = get_parameter("min_lookahead").as_double();
-    max_lookahead_ = get_parameter("max_lookahead").as_double();
-    lookahead_speed_gain_ = get_parameter("lookahead_speed_gain").as_double();
+    fixed_steering_lookahead_m_ = get_parameter("fixed_steering_lookahead_m").as_double();
+    use_speed_dependent_steering_lookahead_ = get_parameter("use_speed_dependent_steering_lookahead").as_bool();
+    steering_min_lookahead_m_ = get_parameter("steering_min_lookahead_m").as_double();
+    steering_max_lookahead_m_ = get_parameter("steering_max_lookahead_m").as_double();
+    steering_lookahead_speed_gain_ = get_parameter("steering_lookahead_speed_gain").as_double();
 
     wheelbase_ = get_parameter("wheelbase").as_double();
     steering_max_deg_ = get_parameter("steering_max_deg").as_double();
@@ -92,17 +107,25 @@ public:
       RCLCPP_WARN(get_logger(), "speed_min > speed_max; swapping them.");
       std::swap(speed_min_, speed_max_);
     }
-    fallback_speed_index_ = std::clamp(fallback_speed_index_, 0.0, 1.0);
+    if (speed_mode_ != 0 && speed_mode_ != 1) {
+      RCLCPP_WARN(get_logger(), "Unsupported speed_mode=%d; forcing rule-based mode 0.", speed_mode_);
+      speed_mode_ = 0;
+    }
+    max_speed_delta_per_step_mps_ = std::max(0.0, max_speed_delta_per_step_mps_);
+    last_commanded_speed_ = speed_min_;
 
     path_sub_ = create_subscription<nav_msgs::msg::Path>(
       local_path_topic_,
       rclcpp::QoS(1).reliable().transient_local(),
       std::bind(&PathFollowingV2Node::pathCallback, this, std::placeholders::_1));
 
-    speed_index_sub_ = create_subscription<std_msgs::msg::Float64>(
-      speed_index_topic_,
-      10,
-      std::bind(&PathFollowingV2Node::speedIndexCallback, this, std::placeholders::_1));
+    rule_speed_index_sub_ = create_subscription<std_msgs::msg::Float64>(
+      rule_speed_index_topic_, 10,
+      std::bind(&PathFollowingV2Node::ruleSpeedIndexCallback, this, std::placeholders::_1));
+
+    rl_speed_residual_sub_ = create_subscription<std_msgs::msg::Float64>(
+      rl_speed_residual_topic_, 10,
+      std::bind(&PathFollowingV2Node::rlSpeedResidualCallback, this, std::placeholders::_1));
 
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
 
@@ -117,20 +140,24 @@ public:
       static_cast<int>(1000.0 / std::max(1.0, control_rate_hz_)));
     timer_ = create_wall_timer(period_ms, std::bind(&PathFollowingV2Node::controlLoop, this));
 
-    RCLCPP_INFO(get_logger(), "path_following_v2 started as clean pure-pursuit follower");
+    RCLCPP_INFO(get_logger(), "path_following_v2 started as pure-pursuit follower");
     RCLCPP_INFO(get_logger(), "  local_path_topic: %s", local_path_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  speed_index_topic: %s", speed_index_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  rule_speed_index_topic: %s", rule_speed_index_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  rl_speed_residual_topic: %s", rl_speed_residual_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  drive_topic: %s", drive_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
+    RCLCPP_INFO(get_logger(), "  speed_mode: %d (%s)", speed_mode_, speed_mode_ == 0 ? "rule_based" : "rule_plus_rl_residual");
+    RCLCPP_INFO(get_logger(), "  final speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
+    RCLCPP_INFO(get_logger(), "  max_speed_delta_per_step_mps: %.2f", max_speed_delta_per_step_mps_);
     RCLCPP_INFO(
       get_logger(),
-      "  use_speed_dependent_lookahead: %s",
-      use_speed_dependent_lookahead_ ? "true" : "false");
+      "  use_speed_dependent_steering_lookahead: %s",
+      use_speed_dependent_steering_lookahead_ ? "true" : "false");
   }
 
 private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
-  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr speed_index_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rule_speed_index_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rl_speed_residual_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr steering_marker_pub_;
@@ -138,17 +165,23 @@ private:
 
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
 
   nav_msgs::msg::Path latest_path_;
   bool path_valid_{false};
-  bool speed_index_valid_{false};
-  double latest_speed_index_{0.0};
+  bool rule_speed_index_valid_{false};
+  bool rl_speed_residual_valid_{false};
+  bool rl_residual_was_fresh_{false};
+  double latest_rule_speed_index_{0.0};
+  double latest_rl_speed_residual_mps_{0.0};
   double last_commanded_speed_{0.0};
-  rclcpp::Time last_path_receive_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_speed_index_receive_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_path_receive_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_rule_speed_index_receive_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_rl_speed_residual_receive_time_{0, 0, RCL_STEADY_TIME};
 
   std::string local_path_topic_;
-  std::string speed_index_topic_;
+  std::string rule_speed_index_topic_;
+  std::string rl_speed_residual_topic_;
   std::string drive_topic_;
   std::string global_frame_;
   std::string robot_frame_;
@@ -158,18 +191,20 @@ private:
 
   double control_rate_hz_{20.0};
   double path_timeout_sec_{1.0};
-  double speed_index_timeout_sec_{0.5};
+  double rule_speed_index_timeout_sec_{0.5};
+  double rl_residual_timeout_sec_{0.5};
   double tf_timeout_sec_{0.1};
 
-  double speed_min_{0.8};
-  double speed_max_{4.0};
-  double fallback_speed_index_{0.0};
+  int speed_mode_{0};
+  double speed_min_{1.0};
+  double speed_max_{10.0};
+  double max_speed_delta_per_step_mps_{0.2};
 
-  double fixed_lookahead_distance_{0.60};
-  bool use_speed_dependent_lookahead_{true};
-  double min_lookahead_{0.6};
-  double max_lookahead_{1.6};
-  double lookahead_speed_gain_{0.25};
+  double fixed_steering_lookahead_m_{0.60};
+  bool use_speed_dependent_steering_lookahead_{true};
+  double steering_min_lookahead_m_{0.6};
+  double steering_max_lookahead_m_{1.6};
+  double steering_lookahead_speed_gain_{0.25};
 
   double wheelbase_{0.33};
   double steering_max_deg_{20.6};
@@ -188,35 +223,50 @@ private:
 
     latest_path_ = *msg;
     path_valid_ = true;
-    last_path_receive_time_ = now();
+    last_path_receive_time_ = steady_clock_.now();
 
     RCLCPP_INFO_THROTTLE(
-      get_logger(), *get_clock(), 3000,
+      get_logger(), steady_clock_, 3000,
       "Received local raceline path with %zu poses in frame '%s'.",
       latest_path_.poses.size(), latest_path_.header.frame_id.c_str());
   }
 
-  void speedIndexCallback(const std_msgs::msg::Float64::SharedPtr msg)
+  void ruleSpeedIndexCallback(const std_msgs::msg::Float64::SharedPtr msg)
   {
-    latest_speed_index_ = std::clamp(msg->data, 0.0, 1.0);
-    speed_index_valid_ = true;
-    last_speed_index_receive_time_ = now();
+    latest_rule_speed_index_ = std::clamp(msg->data, 0.0, 1.0);
+    rule_speed_index_valid_ = true;
+    last_rule_speed_index_receive_time_ = steady_clock_.now();
   }
 
-  bool pathFresh() const
+  void rlSpeedResidualCallback(const std_msgs::msg::Float64::SharedPtr msg)
+  {
+    latest_rl_speed_residual_mps_ = msg->data;
+    rl_speed_residual_valid_ = true;
+    last_rl_speed_residual_receive_time_ = steady_clock_.now();
+  }
+
+  bool pathFresh()
   {
     if (!path_valid_) {
       return false;
     }
-    return (now() - last_path_receive_time_).seconds() <= path_timeout_sec_;
+    return (steady_clock_.now() - last_path_receive_time_).seconds() <= path_timeout_sec_;
   }
 
-  bool speedIndexFresh() const
+  bool ruleSpeedIndexFresh()
   {
-    if (!speed_index_valid_) {
+    if (!rule_speed_index_valid_) {
       return false;
     }
-    return (now() - last_speed_index_receive_time_).seconds() <= speed_index_timeout_sec_;
+    return (steady_clock_.now() - last_rule_speed_index_receive_time_).seconds() <= rule_speed_index_timeout_sec_;
+  }
+
+  bool rlResidualFresh()
+  {
+    if (!rl_speed_residual_valid_) {
+      return false;
+    }
+    return (steady_clock_.now() - last_rl_speed_residual_receive_time_).seconds() <= rl_residual_timeout_sec_;
   }
 
   double speedFromIndex(double speed_index) const
@@ -225,10 +275,21 @@ private:
     return speed_min_ + idx * (speed_max_ - speed_min_);
   }
 
-  double computeSpeedDependentLookahead(double speed) const
+  double rateLimitSpeed(double requested_speed) const
   {
-    const double lookahead = min_lookahead_ + lookahead_speed_gain_ * std::max(0.0, speed);
-    return std::clamp(lookahead, min_lookahead_, max_lookahead_);
+    requested_speed = std::clamp(requested_speed, speed_min_, speed_max_);
+    if (max_speed_delta_per_step_mps_ <= 0.0) {
+      return requested_speed;
+    }
+    const double lower = last_commanded_speed_ - max_speed_delta_per_step_mps_;
+    const double upper = last_commanded_speed_ + max_speed_delta_per_step_mps_;
+    return std::clamp(requested_speed, lower, upper);
+  }
+
+  double computeSpeedDependentSteeringLookahead(double speed) const
+  {
+    const double lookahead = steering_min_lookahead_m_ + steering_lookahead_speed_gain_ * std::max(0.0, speed);
+    return std::clamp(lookahead, steering_min_lookahead_m_, steering_max_lookahead_m_);
   }
 
   bool lookupRobotPose(tf2::Transform & tf_map_to_base)
@@ -244,7 +305,7 @@ private:
       return true;
     } catch (const tf2::TransformException & ex) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
+        get_logger(), steady_clock_, 2000,
         "TF lookup failed (%s -> %s): %s",
         global_frame_.c_str(), robot_frame_.c_str(), ex.what());
       return false;
@@ -375,11 +436,21 @@ private:
   {
     if (!pathFresh()) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
+        get_logger(), steady_clock_, 2000,
         "Local path missing or stale. Holding stop.");
       if (stop_if_no_path_) {
         publishStop();
       }
+      geometry_msgs::msg::Point p;
+      publishMarkers(p, 0.0, false);
+      return;
+    }
+
+    if (!ruleSpeedIndexFresh()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), steady_clock_, 2000,
+        "Rule speed index missing or stale. Holding stop.");
+      publishStop();
       geometry_msgs::msg::Point p;
       publishMarkers(p, 0.0, false);
       return;
@@ -395,17 +466,32 @@ private:
       return;
     }
 
-    const bool speed_index_is_fresh = speedIndexFresh();
-    const double active_speed_index =
-      speed_index_is_fresh ? latest_speed_index_ : fallback_speed_index_;
-    const double requested_speed = speedFromIndex(active_speed_index);
+    const double rule_speed_mps = speedFromIndex(latest_rule_speed_index_);
+    const bool residual_is_fresh = rlResidualFresh();
+    const bool use_rl_residual = (speed_mode_ == 1) && residual_is_fresh;
+
+    if (speed_mode_ == 1 && residual_is_fresh && !rl_residual_was_fresh_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "RL speed residual is fresh; using rule speed + RL residual.");
+    }
+    if (speed_mode_ == 1 && !residual_is_fresh && rl_residual_was_fresh_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "RL speed residual is stale/unhealthy; falling back to rule-based speed only.");
+    }
+    rl_residual_was_fresh_ = residual_is_fresh;
+
+    const double residual_mps = use_rl_residual ? latest_rl_speed_residual_mps_ : 0.0;
+    const double requested_speed = std::clamp(rule_speed_mps + residual_mps, speed_min_, speed_max_);
+    const double commanded_speed = rateLimitSpeed(requested_speed);
 
     const double speed_for_lookahead =
-      use_speed_dependent_lookahead_ ? requested_speed : last_commanded_speed_;
+      use_speed_dependent_steering_lookahead_ ? commanded_speed : last_commanded_speed_;
     const double active_lookahead_distance =
-      use_speed_dependent_lookahead_
-        ? computeSpeedDependentLookahead(speed_for_lookahead)
-        : fixed_lookahead_distance_;
+      use_speed_dependent_steering_lookahead_
+        ? computeSpeedDependentSteeringLookahead(speed_for_lookahead)
+        : fixed_steering_lookahead_m_;
 
     geometry_msgs::msg::Point lookahead_point_base;
     const bool found = findLookaheadPointInBaseFrame(
@@ -415,7 +501,7 @@ private:
 
     if (!found) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
+        get_logger(), steady_clock_, 2000,
         "No valid forward lookahead point found.");
       if (stop_if_no_path_) {
         publishStop();
@@ -443,16 +529,18 @@ private:
     const double steering_max_rad = steering_max_deg_ * M_PI / 180.0;
     steering_angle = std::clamp(steering_angle, -steering_max_rad, steering_max_rad);
 
-    last_commanded_speed_ = requested_speed;
-    publishDrive(requested_speed, steering_angle);
+    last_commanded_speed_ = commanded_speed;
+    publishDrive(commanded_speed, steering_angle);
     publishMarkers(lookahead_point_base, steering_angle, true);
 
     RCLCPP_INFO_THROTTLE(
-      get_logger(), *get_clock(), 1000,
-      "cmd: speed=%.2f m/s, speed_index=%.3f (%s), steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
-      requested_speed,
-      active_speed_index,
-      speed_index_is_fresh ? "fresh" : "fallback",
+      get_logger(), steady_clock_, 1000,
+      "cmd: speed=%.2f m/s, rule=%.2f, residual=%.2f (%s), mode=%d, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
+      commanded_speed,
+      rule_speed_mps,
+      residual_mps,
+      use_rl_residual ? "fresh" : "rule_only",
+      speed_mode_,
       steering_angle,
       active_lookahead_distance,
       x,

@@ -7,6 +7,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
 from rl_training.f110_speed_env import F110SpeedEnv
+from rl_training.config_utils import parse_args_with_config
 
 
 def add_common_env_args(parser: argparse.ArgumentParser) -> None:
@@ -57,6 +58,23 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--crash_penalty_value", type=float, default=1000.0)
     parser.add_argument("--timeout_penalty_value", type=float, default=500.0)
     parser.add_argument("--target_speed_smoothness_weight", type=float, default=0.04)
+    parser.add_argument("--reward_curvature_section_start_points", type=int, default=2)
+    parser.add_argument("--reward_curvature_section_end_points", type=int, default=40)
+    parser.add_argument("--curvature_speed_section_weight", type=float, default=0.006)
+    parser.add_argument("--residual_smoothness_weight", type=float, default=0.08)
+    parser.add_argument("--residual_free_band_mps", type=float, default=0.8)
+    parser.add_argument("--residual_excess_weight", type=float, default=0.05)
+    # Optional runtime/inference safety gate for the learned residual.
+    parser.add_argument("--enable_rl_gate", action="store_true")
+    parser.add_argument("--rl_gate_enable_cte", type=float, default=0.25)
+    parser.add_argument("--rl_gate_enable_heading", type=float, default=0.20)
+    parser.add_argument("--rl_gate_disable_cte", type=float, default=0.45)
+    parser.add_argument("--rl_gate_disable_heading", type=float, default=0.35)
+    parser.add_argument("--rl_gate_enable_count", type=int, default=10)
+    parser.add_argument("--rl_gate_disable_count", type=int, default=3)
+    parser.add_argument("--rl_gate_fade_in_step", type=float, default=0.05)
+    parser.add_argument("--rl_gate_fade_out_step", type=float, default=0.10)
+
     parser.add_argument("--random_seed", type=int, default=None)
 
 
@@ -101,6 +119,21 @@ def make_env(args) -> F110SpeedEnv:
         crash_penalty_value=args.crash_penalty_value,
         timeout_penalty_value=args.timeout_penalty_value,
         target_speed_smoothness_weight=args.target_speed_smoothness_weight,
+        reward_curvature_section_start_points=args.reward_curvature_section_start_points,
+        reward_curvature_section_end_points=args.reward_curvature_section_end_points,
+        curvature_speed_section_weight=args.curvature_speed_section_weight,
+        residual_smoothness_weight=args.residual_smoothness_weight,
+        residual_free_band_mps=args.residual_free_band_mps,
+        residual_excess_weight=args.residual_excess_weight,
+        enable_rl_gate=args.enable_rl_gate,
+        rl_gate_enable_cte=args.rl_gate_enable_cte,
+        rl_gate_enable_heading=args.rl_gate_enable_heading,
+        rl_gate_disable_cte=args.rl_gate_disable_cte,
+        rl_gate_disable_heading=args.rl_gate_disable_heading,
+        rl_gate_enable_count=args.rl_gate_enable_count,
+        rl_gate_disable_count=args.rl_gate_disable_count,
+        rl_gate_fade_in_step=args.rl_gate_fade_in_step,
+        rl_gate_fade_out_step=args.rl_gate_fade_out_step,
         random_seed=args.random_seed,
         use_speed_dependent_lookahead=True,
     )
@@ -109,17 +142,19 @@ def make_env(args) -> F110SpeedEnv:
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--map_path", required=True)
-    parser.add_argument("--map_ext", required=True)
-    parser.add_argument("--centerline_csv", required=True)
+    parser.add_argument("--map_path", default=None)
+    parser.add_argument("--map_ext", default=None)
+    parser.add_argument("--centerline_csv", default=None)
 
-    parser.add_argument("--sx", type=float, required=True)
-    parser.add_argument("--sy", type=float, required=True)
-    parser.add_argument("--stheta", type=float, required=True)
+    parser.add_argument("--sx", type=float, default=None)
+    parser.add_argument("--sy", type=float, default=None)
+    parser.add_argument("--stheta", type=float, default=None)
 
     parser.add_argument("--total_timesteps", type=int, default=50000)
     parser.add_argument("--model_dir", default="models")
     parser.add_argument("--model_name", default="ppo_speed_agent")
+    parser.add_argument("--load_model_path", default=None, help="Optional existing PPO .zip model to continue training from")
+    parser.add_argument("--reset_num_timesteps", action="store_true", help="Reset SB3 timestep counter when continuing training. Default keeps cumulative timesteps.")
     add_common_env_args(parser)
 
     # PPO hyperparameters kept configurable for faster experiments.
@@ -131,26 +166,44 @@ def main():
     parser.add_argument("--clip_range", type=float, default=0.15)
     parser.add_argument("--ent_coef", type=float, default=0.001)
 
-    args = parser.parse_args()
+    args = parse_args_with_config(
+        parser,
+        required_keys=["map_path", "map_ext", "centerline_csv", "sx", "sy", "stheta"],
+    )
     os.makedirs(args.model_dir, exist_ok=True)
 
     env = Monitor(make_env(args))
 
-    model = PPO(
-        policy="MlpPolicy",
-        env=env,
-        verbose=1,
-        learning_rate=args.learning_rate,
-        n_steps=args.n_steps,
-        batch_size=args.batch_size,
-        gamma=args.gamma,
-        gae_lambda=args.gae_lambda,
-        clip_range=args.clip_range,
-        ent_coef=args.ent_coef,
-        tensorboard_log=os.path.join(args.model_dir, "tensorboard"),
-    )
+    tensorboard_log = os.path.join(args.model_dir, "tensorboard")
 
-    model.learn(total_timesteps=args.total_timesteps)
+    if args.load_model_path:
+        print(f"Continuing PPO training from: {args.load_model_path}")
+        model = PPO.load(
+            args.load_model_path,
+            env=env,
+            tensorboard_log=tensorboard_log,
+        )
+        print(f"Loaded model timesteps before learn(): {model.num_timesteps}")
+        print(f"reset_num_timesteps={args.reset_num_timesteps}")
+    else:
+        model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            verbose=1,
+            learning_rate=args.learning_rate,
+            n_steps=args.n_steps,
+            batch_size=args.batch_size,
+            gamma=args.gamma,
+            gae_lambda=args.gae_lambda,
+            clip_range=args.clip_range,
+            ent_coef=args.ent_coef,
+            tensorboard_log=tensorboard_log,
+        )
+
+    model.learn(
+        total_timesteps=args.total_timesteps,
+        reset_num_timesteps=args.reset_num_timesteps,
+    )
 
     save_path = os.path.join(args.model_dir, args.model_name)
     model.save(save_path)

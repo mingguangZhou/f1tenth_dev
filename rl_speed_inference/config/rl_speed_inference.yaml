@@ -1,0 +1,31 @@
+ppo_speed_node:
+  ros__parameters:
+    use_sim_time: false
+
+    model_path: "/sim_ws/src/rl_training/models/ppo_speed_spielberg_section_reward_v2_1000k_continued.zip"
+    centerline_csv: "/sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv"
+
+    odom_topic: "/pf/pose/odom"
+    speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
+
+    speed_min: 0.5
+    speed_max: 2.0
+    rule_min_speed_mps: 0.5
+    rule_max_speed_mps: 2.0
+    max_delta_speed_mps: 0.5
+
+    curvature_gain: 2.0
+    rule_curvature_lookahead_points: 3
+    model_curvature_short_points: 10
+    model_curvature_mid_points: 40
+    model_curvature_long_points: 80
+
+    enable_rl_gate: true
+    rl_gate_enable_cte: 0.25
+    rl_gate_enable_heading: 0.20
+    rl_gate_disable_cte: 0.45
+    rl_gate_disable_heading: 0.35
+    rl_gate_enable_count: 10
+    rl_gate_disable_count: 3
+    rl_gate_fade_in_step: 0.05
+    rl_gate_fade_out_step: 0.10

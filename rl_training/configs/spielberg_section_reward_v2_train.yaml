@@ -1,0 +1,79 @@
+# Spielberg section-curvature reward v2: adds mild residual smoothness and soft residual excess penalties.
+map:
+  map_path: ../f1tenth_gym_ros/maps/Spielberg_map
+  map_ext: .png
+  centerline_csv: ../centerline_tools/centerline_output/raceline_points_smooth.csv
+  corner_csv: ../centerline_tools/centerline_output/corner_key_points_edited.csv
+start:
+  sx: 0.0
+  sy: 0.0
+  stheta: 0.0
+  random_start_along_centerline: true
+  random_start_min_index: -1
+  random_start_max_index: -1
+  start_lateral_noise_std: 0.02
+  start_lateral_noise_max: 0.05
+  start_yaw_noise_std: 0.02
+  start_yaw_noise_max: 0.05
+  start_xy_noise_std: 0.0
+  start_xy_noise_max: 0.05
+observation_noise:
+  obs_cte_noise_std: 0.01
+  obs_heading_noise_std: 0.01
+  obs_speed_noise_std: 0.03
+speed:
+  min_speed: 1.0
+  max_speed: 10.0
+  rule_min_speed_mps: 1.0
+  rule_max_speed_mps: 6.0
+  max_delta_speed_mps: 4.0
+  max_speed_delta_per_step_mps: 0.2
+  max_speed_index_delta: 0.05
+  residual_correction_scale: 0.25
+curvature:
+  curvature_gain: 2.0
+  rule_curvature_lookahead_points: 3
+  model_curvature_short_points: 10
+  model_curvature_mid_points: 40
+  model_curvature_long_points: 80
+reward:
+  target_lap_steps: 6350
+  crash_penalty_value: 1500.0
+  timeout_penalty_value: 500.0
+  target_speed_smoothness_weight: 0.04
+  reward_curvature_section_start_points: 2
+  reward_curvature_section_end_points: 40
+  curvature_speed_section_weight: 0.006
+  residual_smoothness_weight: 0.08
+  residual_free_band_mps: 0.8
+  residual_excess_weight: 0.05
+termination:
+  enable_bad_tracking_termination: true
+  bad_tracking_min_steps: 120
+  bad_tracking_cte_threshold: 0.75
+  bad_tracking_heading_threshold: 0.9
+gate:
+  enable_rl_gate: false
+  rl_gate_enable_cte: 0.25
+  rl_gate_enable_heading: 0.2
+  rl_gate_disable_cte: 0.45
+  rl_gate_disable_heading: 0.35
+  rl_gate_enable_count: 10
+  rl_gate_disable_count: 3
+  rl_gate_fade_in_step: 0.05
+  rl_gate_fade_out_step: 0.1
+ppo:
+  total_timesteps: 1000000
+  learning_rate: 0.0002
+  n_steps: 2048
+  batch_size: 128
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.15
+  ent_coef: 0.001
+  model_dir: models
+  model_name: ppo_speed_spielberg_section_reward_v2
+  load_model_path: null
+  reset_num_timesteps: false
+misc:
+  random_seed: null
