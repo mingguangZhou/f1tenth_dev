@@ -72,7 +72,7 @@ ppo:
   clip_range: 0.15
   ent_coef: 0.001
   model_dir: models
-  model_name: ppo_speed_spielberg_section_reward_v2
+  model_name: V0_reward_ppo_speed_spielberg_new_training
   load_model_path: null
   reset_num_timesteps: false
 misc:

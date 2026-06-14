@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_FILE=${CONFIG_FILE:-experiments/spielberg_section_reward_v1.env}
+CONFIG_FILE=${CONFIG_FILE:-experiments/V0_reward_ppo_speed_spielberg_1000k_20260612.env}
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "Config file not found: $CONFIG_FILE" >&2
   exit 1
@@ -46,6 +46,9 @@ COMMON_ENV_ARGS=(
   --reward_curvature_section_end_points "$REWARD_CURVATURE_SECTION_END_POINTS"
   --curvature_speed_section_weight "$CURVATURE_SPEED_SECTION_WEIGHT"
   --target_speed_smoothness_weight "$TARGET_SPEED_SMOOTHNESS_WEIGHT"
+  --residual_smoothness_weight "$RESIDUAL_SMOOTHNESS_WEIGHT"
+  --residual_free_band_mps "$RESIDUAL_FREE_BAND_MPS"
+  --residual_excess_weight "$RESIDUAL_EXCESS_WEIGHT"
   --crash_penalty_value "$CRASH_PENALTY_VALUE"
   --timeout_penalty_value "$TIMEOUT_PENALTY_VALUE"
   "${BAD_TRACKING_ARGS[@]}"

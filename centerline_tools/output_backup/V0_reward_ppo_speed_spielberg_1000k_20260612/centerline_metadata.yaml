@@ -1,0 +1,47 @@
+source_files:
+  map_image: Spielberg_map.png
+  map_yaml: Spielberg_map.yaml
+map_metadata:
+  resolution: 0.05796
+  origin:
+  - -84.85359914210505
+  - -36.30299725862132
+  - 0.0
+pipeline_parameters:
+  inflation_radius_m: 0.1
+  spur_dilation_radius: 1
+  resample_spacing_m: 0.05
+  smoothing_window: 9
+  smoothing_passes: 2
+  use_bspline_centerline_smoothing: true
+  bspline_degree: 3
+  bspline_smoothing_factor_per_point: 0.0005
+  centerline_direction: normal
+  geometry_columns:
+  - index
+  - x
+  - y
+  - yaw
+  - curvature
+  - curvature_abs
+  min_component_area_abs: 50
+  min_component_area_ratio: 0.01
+drivable_region_selection:
+  mode: filtered_enclosed_component
+  label_id: 2
+  area: 221201
+  skeleton_pixels: 5452
+  endpoint_count: 0
+  junction_count: 0
+  num_enclosed_candidates: 2
+  num_filtered_candidates: 2
+  largest_enclosed_area: 661699
+  min_area_threshold: 6616
+outputs:
+  raw_csv: centerline_points_raw.csv
+  smooth_csv: centerline_points_smooth.csv
+  smooth_npy: centerline_points_smooth.npy
+  raw_point_count: 5453
+  smooth_point_count: 6846
+  raw_loop_length_m: 359.88421144136424
+  smooth_loop_length_m: 342.2918707418385

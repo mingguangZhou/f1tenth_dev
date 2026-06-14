@@ -4,27 +4,24 @@ map:
   map_ext: .png
   centerline_csv: ../centerline_tools/centerline_output/raceline_points_smooth.csv
   corner_csv: ../centerline_tools/centerline_output/corner_key_points_edited.csv
-model:
-  model_path: models/ppo_speed_spielberg_section_reward_v2.zip
 start:
   sx: 0.0
   sy: 0.0
   stheta: 0.0
-  random_start_along_centerline: false
+  random_start_along_centerline: true
   random_start_min_index: -1
   random_start_max_index: -1
-  start_lateral_noise_std: 0.0
+  start_lateral_noise_std: 0.02
   start_lateral_noise_max: 0.05
-  start_yaw_noise_std: 0.0
+  start_yaw_noise_std: 0.02
   start_yaw_noise_max: 0.05
   start_xy_noise_std: 0.0
   start_xy_noise_max: 0.05
 observation_noise:
-  obs_cte_noise_std: 0.0
-  obs_heading_noise_std: 0.0
-  obs_speed_noise_std: 0.0
+  obs_cte_noise_std: 0.01
+  obs_heading_noise_std: 0.01
+  obs_speed_noise_std: 0.03
 speed:
-  steps: 9000
   min_speed: 1.0
   max_speed: 10.0
   rule_min_speed_mps: 1.0
@@ -56,7 +53,7 @@ termination:
   bad_tracking_cte_threshold: 0.75
   bad_tracking_heading_threshold: 0.9
 gate:
-  enable_rl_gate: true
+  enable_rl_gate: false
   rl_gate_enable_cte: 0.25
   rl_gate_enable_heading: 0.2
   rl_gate_disable_cte: 0.45
@@ -65,8 +62,18 @@ gate:
   rl_gate_disable_count: 3
   rl_gate_fade_in_step: 0.05
   rl_gate_fade_out_step: 0.1
-analysis:
-  out_dir: speed_policy_analysis_section_reward_v2_fixed_start_gate
-  print_every: 100
+ppo:
+  total_timesteps: 1000000
+  learning_rate: 0.0002
+  n_steps: 2048
+  batch_size: 128
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.15
+  ent_coef: 0.001
+  model_dir: models
+  model_name: V0_reward_ppo_speed_spielberg_new_training
+  load_model_path: null
+  reset_num_timesteps: false
 misc:
   random_seed: null

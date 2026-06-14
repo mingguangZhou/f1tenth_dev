@@ -5,7 +5,7 @@ map:
   centerline_csv: ../centerline_tools/centerline_output/raceline_points_smooth.csv
   corner_csv: ../centerline_tools/centerline_output/corner_key_points_edited.csv
 model:
-  model_path: models/ppo_speed_spielberg_section_reward_v2.zip
+  model_path: models/V0_reward_ppo_speed_spielberg_1000k_20260612.zip
 start:
   sx: -68.92078884541472
   sy: 54.336121707961446

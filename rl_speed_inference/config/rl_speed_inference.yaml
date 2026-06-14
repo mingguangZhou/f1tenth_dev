@@ -2,7 +2,7 @@ ppo_speed_node:
   ros__parameters:
     use_sim_time: false
 
-    model_path: "/sim_ws/src/rl_training/models/ppo_speed_spielberg_section_reward_v2_1000k_continued.zip"
+    model_path: "/sim_ws/src/rl_training/models/V0_reward_ppo_speed_spielberg_1000k_20260612.zip"
     centerline_csv: "/sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv"
 
     odom_topic: "/pf/pose/odom"
