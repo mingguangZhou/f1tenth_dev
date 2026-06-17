@@ -189,7 +189,11 @@ cd /sim_ws
 source /opt/ros/foxy/setup.bash
 colcon build --packages-select centerline_tools
 source install/local_setup.bash
-ros2 launch centerline_tools raceline_publisher_sim.launch.py
+ros2 launch centerline_tools raceline_publisher_sim_launch.py
+```
+or if want to launch the raceline in the reverse direction:
+```bash
+ros2 launch centerline_tools raceline_publisher_sim_launch.py direction:=reverse
 ```
 
 Expected important topics:
