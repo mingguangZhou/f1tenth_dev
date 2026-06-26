@@ -78,8 +78,8 @@ path_following_v2:
     # Speed-dependent pure-pursuit steering lookahead, in meters.
     fixed_steering_lookahead_m: 0.60
     use_speed_dependent_steering_lookahead: true
-    steering_min_lookahead_m: 0.6
-    steering_max_lookahead_m: 1.6
+    steering_min_lookahead_m: 0.3
+    steering_max_lookahead_m: 1.5
     steering_lookahead_speed_gain: 0.25
 
     # Optional RViz debug markers in robot/base frame.

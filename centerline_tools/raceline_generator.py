@@ -72,6 +72,62 @@ USER_RACELINE_OFFSET_SCALE_SHRINK = None
 USER_RACELINE_MAX_OFFSET_CHANGE_PER_M = None
 
 
+# =========================
+# FINAL RACELINE CURVATURE CONTROL
+# =========================
+# Step-1 improvement only: this does not change manual corner editing,
+# moved keypoint generation, or corner auto-detection. It only controls
+# whether a generated final raceline is accepted.
+
+# Enable/disable steering-capability curvature validation.
+RACELINE_ENFORCE_STEERING_CURVATURE_LIMIT = True
+
+# Approximate wheelbase of the 1/10 car [m]. Tune to the real vehicle.
+RACELINE_WHEELBASE_M = 0.33
+
+# Practical front-wheel steering angle limit [deg]. Use the trackable limit,
+# not the theoretical servo/mechanical hard-stop limit.
+RACELINE_MAX_STEERING_ANGLE_DEG = 24.0
+
+# Conservative factor applied to tan(delta_max) / wheelbase.
+RACELINE_CURVATURE_LIMIT_SAFETY_FACTOR = 0.99
+
+# Use a percentile instead of absolute max for the accept/reject decision to
+# avoid one numerical closure spike rejecting an otherwise usable path.
+# The absolute max is still printed for debugging.
+RACELINE_CURVATURE_CHECK_PERCENTILE = 99.0
+
+# If a candidate is inside the safety mask but above the curvature limit, try
+# stronger final B-spline smoothing before shrinking the offset scale. These
+# are multipliers of RACELINE_BSPLINE_SMOOTHING_FACTOR_PER_POINT.
+RACELINE_CURVATURE_EXTRA_BSPLINE_SMOOTHING_FACTORS = [
+    0.50, 0.75, 1.00, 1.10, 1.20, 1.30, 1.50
+]
+
+
+# =========================
+# MOVED KEYPOINT ROBUSTNESS
+# =========================
+# Step-2 improvement only: keep the manual E/A/X indices unchanged, but make
+# the lateral movement direction more robust and handle overlapping neighboring
+# corner anchors before building the final offset field.
+
+# Use the signed curvature integrated over the whole E->X corner section to
+# decide whether a manually edited corner is generally left or right. This is
+# more robust than using the local curvature exactly at the apex index.
+MOVED_KEYPOINT_USE_SECTION_TURN_SIGN = True
+
+# If two neighboring corner sections overlap in centerline index order, replace
+# their conflicting boundary anchors using a simple rule:
+#   same turn direction:     E1 -> A1 -> midpoint(X1,E2) -> A2 -> X2
+#   opposite turn direction: E1 -> A1 -> A2 -> X2
+MOVED_KEYPOINT_RESOLVE_OVERLAPPING_NEIGHBOR_CORNERS = True
+
+# Also treat corners as overlapping when the next entrance is only a few points
+# after the previous exit. Keep 0 for the strict overlap-only behavior.
+MOVED_KEYPOINT_OVERLAP_GAP_POINTS = 0
+
+
 def _apply_optional_float_override(name, value):
     """Override an imported global constant only when value is not None."""
     if value is None:
@@ -639,8 +695,9 @@ def show_corner_keypoint_edit_ui(img, yaml_data, centerline_rows, corners, outpu
       - Escape: cancel UI edits and continue with original input
     """
     if len(corners) == 0:
-        print("Phase 1 UI: skipped; no detected corners to edit.")
-        return centerline_rows, corners, "normal", False
+        print("Phase 1 UI: no detected corners; opening editor in add-corner mode.")
+        print("  Click on the centerline near each desired apex to create manual E/A/X triplets.")
+        print("  Then drag/step E/A/X to refine, and press Enter/Accept to continue.")
 
     interactive_ok = try_enable_interactive_matplotlib_backend()
 
@@ -654,7 +711,9 @@ def show_corner_keypoint_edit_ui(img, yaml_data, centerline_rows, corners, outpu
         "direction_label": str(initial_direction).lower() if str(initial_direction).lower() in ("normal", "reverse") else "normal",
         "selected": None,  # (corner_list_index, role_short)
         "dragging": False,
-        "add_mode": False,
+        # If automatic detection found no corners, start directly in add mode
+        # so the first map click creates a manual E/A/X triplet.
+        "add_mode": (len(corners) == 0),
         "last_mouse_xy": None,
         "view_initialized": False,
         "accepted": False,
@@ -990,6 +1049,9 @@ def show_corner_keypoint_edit_ui(img, yaml_data, centerline_rows, corners, outpu
     if interactive_ok:
         print("Phase 1 UI: opening interactive keypoint editor window.")
         print("  Drag E/A/X, or use ↑/↓ to step selected point by 1 centerline index.")
+        if len(corners) == 0:
+            print("  No corners were detected, so add-corner mode starts ON.")
+            print("  Left-click near each desired apex to create a manual corner triplet.")
         print("  Press n/Add to create a corner, Delete/d/Delete button to remove selected corner, f to flip, Enter/Accept to continue.")
         try:
             plt.show(block=True)
@@ -1590,12 +1652,219 @@ def move_corner_keypoint_to_safe_side(centerline_rows, index, lateral_sign, safe
     }
 
 
+
+def estimate_corner_section_turn_sign(centerline_rows, corner):
+    """
+    Estimate the general left/right direction of a corner section by summing
+    signed curvature over the complete entrance->exit index span.
+
+    This is deliberately more robust for manually edited corners than using
+    only the local curvature at the apex index. If the apex lands on a tiny
+    local counter-curvature/noisy point, the section-integrated sign still
+    represents the overall corner direction.
+    """
+    n = len(centerline_rows)
+    if n <= 0:
+        return int(corner.get("turn_sign", 1) or 1)
+
+    entrance = int(corner.get("entrance_index", 0)) % n
+    exit_idx = int(corner.get("exit_index", entrance)) % n
+    apex_idx = int(corner.get("apex_index", entrance)) % n
+
+    idxs = circular_segment_indices(entrance, exit_idx, n)
+    if len(idxs) == 0:
+        idxs = [apex_idx]
+
+    curv = np.array([float(centerline_rows[i].get("curvature", 0.0)) for i in idxs], dtype=np.float64)
+    finite = curv[np.isfinite(curv)]
+    if len(finite) == 0:
+        finite = np.array([float(centerline_rows[apex_idx].get("curvature", 0.0))], dtype=np.float64)
+
+    # Integrated curvature is the net heading change over the section for
+    # approximately uniform spacing, so its sign is a good general turn sign.
+    k_sum = float(np.sum(finite))
+    k_abs_sum = float(np.sum(np.abs(finite)))
+
+    # If the section is almost perfectly balanced, fall back to the apex sign.
+    if k_abs_sum <= 1e-9 or abs(k_sum) < 0.10 * k_abs_sum:
+        k_apex = float(centerline_rows[apex_idx].get("curvature", 0.0))
+        if abs(k_apex) > 1e-9:
+            return 1 if k_apex >= 0.0 else -1
+        old_sign = int(corner.get("turn_sign", 1) or 1)
+        return 1 if old_sign >= 0 else -1
+
+    return 1 if k_sum >= 0.0 else -1
+
+
+def resolve_corner_turn_sign_for_movement(centerline_rows, corner):
+    """
+    Return the turn sign used by Phase 11 keypoint movement.
+    Positive means left turn, negative means right turn.
+    """
+    if not MOVED_KEYPOINT_USE_SECTION_TURN_SIGN:
+        old_sign = int(corner.get("turn_sign", 1) or 1)
+        return 1 if old_sign >= 0 else -1
+
+    section_sign = estimate_corner_section_turn_sign(centerline_rows, corner)
+    old_sign = int(corner.get("turn_sign", section_sign) or section_sign)
+    if old_sign != section_sign:
+        print(
+            f"  Movement turn-sign correction C{int(corner.get('corner_id', -1)):02d}: "
+            f"local/apex sign={old_sign:+d}, section sign={section_sign:+d} "
+            f"({'left' if section_sign > 0 else 'right'})"
+        )
+    return section_sign
+
+
+def _keypoint_by_corner_and_role(keypoints):
+    by = {}
+    for kp in keypoints:
+        by[(int(kp["corner_id"]), str(kp["role"]))] = kp
+    return by
+
+
+def _copy_keypoint_with_role(kp, role):
+    out = dict(kp)
+    out["role"] = str(role)
+    return out
+
+
+def make_shared_midpoint_keypoint(centerline_rows, kp_a, kp_b, new_role="shared_outside_midpoint"):
+    """
+    Build one synthetic anchor between two conflicting neighboring anchors.
+
+    The XY position is the geometric midpoint of the two moved keypoints. The
+    center_index is placed halfway from kp_b.center_index to kp_a.center_index
+    along the circular centerline order, which is the overlapped region between
+    next entrance and previous exit.
+    """
+    n = len(centerline_rows)
+    idx_a = int(kp_a["center_index"]) % n
+    idx_b = int(kp_b["center_index"]) % n
+    dist_b_to_a = circular_index_distance(idx_b, idx_a, n)
+    mid_idx = int((idx_b + dist_b_to_a // 2) % n)
+    row = centerline_rows[mid_idx]
+
+    x = 0.5 * (float(kp_a["x"]) + float(kp_b["x"]))
+    y = 0.5 * (float(kp_a["y"]) + float(kp_b["y"]))
+
+    return {
+        "moved_keypoint_id": -1,
+        "corner_id": int(kp_a["corner_id"]),
+        "role": str(new_role),
+        "turn_direction": str(kp_a.get("turn_direction", "unknown")),
+        "turn_sign": int(kp_a.get("turn_sign", 0)),
+        "center_index": int(mid_idx),
+        "x": float(x),
+        "y": float(y),
+        "center_x": float(row["x"]),
+        "center_y": float(row["y"]),
+        "center_yaw": float(row["yaw"]),
+        "lateral_sign": int(kp_a.get("lateral_sign", kp_b.get("lateral_sign", 0))),
+        "available_to_limit_m": min(float(kp_a.get("available_to_limit_m", 0.0)), float(kp_b.get("available_to_limit_m", 0.0))),
+        "safety_margin_m": max(float(kp_a.get("safety_margin_m", 0.0)), float(kp_b.get("safety_margin_m", 0.0))),
+        "move_dist_m": 0.5 * (float(kp_a.get("move_dist_m", 0.0)) + float(kp_b.get("move_dist_m", 0.0))),
+    }
+
+
+def resolve_overlapping_neighbor_moved_keypoints(centerline_rows, keypoints):
+    """
+    Resolve overlapping neighboring corner anchors before offset-field creation.
+
+    If corner i and corner j overlap in index order, the pair
+        exit_i, entrance_j
+    can create an aggressive or reversed offset transition.
+
+    Rule implemented:
+      - Same turn direction:
+            entrance_i -> apex_i -> midpoint(exit_i, entrance_j) -> apex_j -> exit_j
+        So remove exit_i and entrance_j, and insert one shared outside midpoint.
+      - Opposite turn direction:
+            entrance_i -> apex_i -> apex_j -> exit_j
+        So remove exit_i and entrance_j without adding a midpoint.
+    """
+    if not MOVED_KEYPOINT_RESOLVE_OVERLAPPING_NEIGHBOR_CORNERS:
+        return keypoints
+
+    n = len(centerline_rows)
+    if n <= 0 or len(keypoints) < 6:
+        return keypoints
+
+    by = _keypoint_by_corner_and_role(keypoints)
+    corner_ids = sorted(set(int(kp["corner_id"]) for kp in keypoints))
+    if len(corner_ids) < 2:
+        return keypoints
+
+    remove = set()
+    add = []
+    overlap_gap = int(MOVED_KEYPOINT_OVERLAP_GAP_POINTS)
+
+    for pos, cid1 in enumerate(corner_ids):
+        cid2 = corner_ids[(pos + 1) % len(corner_ids)]
+
+        e1 = by.get((cid1, "entrance_outside"))
+        a1 = by.get((cid1, "apex_inside"))
+        x1 = by.get((cid1, "exit_outside"))
+        e2 = by.get((cid2, "entrance_outside"))
+        a2 = by.get((cid2, "apex_inside"))
+        x2 = by.get((cid2, "exit_outside"))
+        if e1 is None or a1 is None or x1 is None or e2 is None or a2 is None or x2 is None:
+            continue
+
+        e1_idx = int(e1["center_index"]) % n
+        x1_idx = int(x1["center_index"]) % n
+        e2_idx = int(e2["center_index"]) % n
+
+        # Overlap means the next entrance lies inside or immediately after the
+        # current corner's E->X span in forward centerline order.
+        dist_e1_to_x1 = circular_index_distance(e1_idx, x1_idx, n)
+        dist_e1_to_e2 = circular_index_distance(e1_idx, e2_idx, n)
+        overlap = dist_e1_to_e2 <= dist_e1_to_x1 + overlap_gap
+        if not overlap:
+            continue
+
+        same_direction = int(a1.get("turn_sign", 0)) == int(a2.get("turn_sign", 0))
+
+        remove.add((cid1, "exit_outside"))
+        remove.add((cid2, "entrance_outside"))
+
+        if same_direction:
+            mid = make_shared_midpoint_keypoint(centerline_rows, x1, e2, new_role="shared_outside_midpoint")
+            add.append(mid)
+            print(
+                f"  Overlap corner merge C{cid1:02d}->C{cid2:02d}: same direction, "
+                f"replace X{cid1}/E{cid2} with shared outside midpoint at idx {mid['center_index']}."
+            )
+        else:
+            print(
+                f"  Overlap corner merge C{cid1:02d}->C{cid2:02d}: opposite direction, "
+                f"remove X{cid1}/E{cid2} and connect apex-to-apex."
+            )
+
+    if not remove and not add:
+        return keypoints
+
+    out = []
+    for kp in keypoints:
+        key = (int(kp["corner_id"]), str(kp["role"]))
+        if key in remove:
+            continue
+        out.append(dict(kp))
+    out.extend(add)
+
+    # Reassign IDs after synthetic insert/remove so the CSV is clean.
+    out = sorted(out, key=lambda kp: (int(kp["center_index"]), int(kp.get("corner_id", -1))))
+    for i, kp in enumerate(out):
+        kp["moved_keypoint_id"] = int(i)
+    return out
+
 def build_moved_corner_keypoints(centerline_rows, corners, drivable_mask, yaml_data):
     keypoints = []
 
     for c in corners:
         cid = int(c["corner_id"])
-        turn_sign = int(c["turn_sign"])
+        turn_sign = resolve_corner_turn_sign_for_movement(centerline_rows, c)
+        turn_direction = "left" if turn_sign > 0 else "right"
 
         inside_sign = turn_sign
         outside_sign = -turn_sign
@@ -1619,11 +1888,12 @@ def build_moved_corner_keypoints(centerline_rows, corners, drivable_mask, yaml_d
                 "moved_keypoint_id": len(keypoints),
                 "corner_id": cid,
                 "role": role,
-                "turn_direction": c["turn_direction"],
+                "turn_direction": turn_direction,
                 "turn_sign": turn_sign,
             })
             keypoints.append(moved)
 
+    keypoints = resolve_overlapping_neighbor_moved_keypoints(centerline_rows, keypoints)
     return keypoints
 
 
@@ -1668,7 +1938,7 @@ def overlay_moved_corner_keypoints(img, yaml_data, centerline_rows, keypoints, p
         plt.scatter(
             [kp["x"]], [kp["y"]],
             s=90 if role == "apex_inside" else 50,
-            marker=marker_by_role[role],
+            marker=marker_by_role.get(role, "o"),
             label=label
         )
 
@@ -1967,6 +2237,159 @@ def maybe_smooth_raceline_bspline(raceline_points):
     )
 
 
+def smooth_raceline_bspline_with_factor(raceline_points, smoothing_factor_per_point):
+    """
+    Smooth final XY raceline with a specified periodic B-spline smoothing factor.
+
+    This is used only as a final geometry repair step. It does not change
+    manually edited corner keypoints, moved keypoints, or offset anchors.
+    """
+    if len(raceline_points) < 5:
+        return raceline_points
+
+    return smooth_closed_loop_bspline(
+        raceline_points,
+        spacing_m=RACELINE_RESAMPLE_SPACING_M,
+        smoothing_factor_per_point=float(smoothing_factor_per_point),
+        degree=RACELINE_BSPLINE_DEGREE
+    )
+
+
+def raceline_max_allowed_curvature():
+    """
+    Compute practical maximum path curvature from steering capability.
+
+    Bicycle model approximation:
+        curvature = tan(steering_angle) / wheelbase
+    """
+    wheelbase = float(RACELINE_WHEELBASE_M)
+    if wheelbase <= 1e-9:
+        raise RuntimeError("RACELINE_WHEELBASE_M must be > 0.")
+
+    steer_rad = np.deg2rad(float(RACELINE_MAX_STEERING_ANGLE_DEG))
+    safety = float(RACELINE_CURVATURE_LIMIT_SAFETY_FACTOR)
+    return float(safety * np.tan(steer_rad) / wheelbase)
+
+
+def summarize_raceline_curvature(points):
+    """
+    Compute final raceline curvature summary from XY geometry.
+
+    The CSV writer also recomputes yaw/curvature from XY, so this checks the
+    same final geometry that will be exported.
+    """
+    if len(points) < 5:
+        return {
+            "max_abs_curvature": 0.0,
+            "p_abs_curvature": 0.0,
+            "mean_abs_curvature": 0.0,
+        }
+
+    rows = compute_yaw_and_curvature(points)
+    curv = np.array([float(r["curvature"]) for r in rows], dtype=np.float64)
+    abs_curv = np.abs(curv[np.isfinite(curv)])
+
+    if len(abs_curv) == 0:
+        return {
+            "max_abs_curvature": 0.0,
+            "p_abs_curvature": 0.0,
+            "mean_abs_curvature": 0.0,
+        }
+
+    percentile = float(RACELINE_CURVATURE_CHECK_PERCENTILE)
+    percentile = max(0.0, min(100.0, percentile))
+
+    return {
+        "max_abs_curvature": float(np.max(abs_curv)),
+        "p_abs_curvature": float(np.percentile(abs_curv, percentile)),
+        "mean_abs_curvature": float(np.mean(abs_curv)),
+    }
+
+
+def raceline_curvature_is_ok(points):
+    """
+    Check final raceline curvature against the steering capability limit.
+
+    Returns:
+      ok, summary, limit
+    """
+    summary = summarize_raceline_curvature(points)
+
+    if not RACELINE_ENFORCE_STEERING_CURVATURE_LIMIT:
+        return True, summary, float("inf")
+
+    limit = raceline_max_allowed_curvature()
+    ok = summary["p_abs_curvature"] <= limit
+    return bool(ok), summary, limit
+
+
+def try_curvature_repair_smoothing(candidate_points, safety_mask, yaml_data):
+    """
+    Try stronger final B-spline smoothing when curvature is too high.
+
+    This function only modifies the candidate final XY raceline for this retry.
+    It does not rewrite edited keypoints, moved keypoints, or offset anchors.
+
+    Important Fix A behavior:
+      If no smoothing attempt satisfies the curvature limit, return the best
+      safe smoothing candidate instead of falling back to the original failed
+      candidate. "Best" means the lowest percentile absolute curvature among
+      candidates that are inside the safety mask.
+
+    Returns:
+      repaired_points, curvature_summary, curvature_limit, repair_mode
+    """
+    ok, summary, limit = raceline_curvature_is_ok(candidate_points)
+    if ok:
+        return candidate_points, summary, limit, "base"
+
+    base_inside, base_outside = validate_points_in_mask(candidate_points, safety_mask, yaml_data)
+    best_points = candidate_points
+    best_summary = summary
+    best_limit = limit
+    best_mode = "base"
+    best_outside = base_outside
+
+    base_s = float(RACELINE_BSPLINE_SMOOTHING_FACTOR_PER_POINT)
+
+    for factor in RACELINE_CURVATURE_EXTRA_BSPLINE_SMOOTHING_FACTORS:
+        s = base_s * float(factor)
+        repaired = smooth_raceline_bspline_with_factor(candidate_points, s)
+
+        inside_ratio, outside_count = validate_points_in_mask(repaired, safety_mask, yaml_data)
+        repaired_ok, repaired_summary, repaired_limit = raceline_curvature_is_ok(repaired)
+
+        print(
+            f"    curvature repair smoothing x{float(factor):.2f}: "
+            f"inside={inside_ratio:.3f}, outside={outside_count}, "
+            f"kappa_p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}="
+            f"{repaired_summary['p_abs_curvature']:.3f}, "
+            f"kappa_max={repaired_summary['max_abs_curvature']:.3f}, "
+            f"kappa_limit={repaired_limit:.3f}"
+        )
+
+        # Accept immediately if the repaired candidate is safe and feasible.
+        if outside_count == 0 and repaired_ok:
+            return repaired, repaired_summary, repaired_limit, f"bspline_x{float(factor):.2f}"
+
+        # Otherwise keep the best safe repair candidate. This prevents the
+        # final fallback from accidentally saving a worse base/last candidate.
+        if outside_count == 0:
+            current_score = float(repaired_summary["p_abs_curvature"])
+            best_score = float(best_summary["p_abs_curvature"])
+            if best_outside != 0 or current_score < best_score:
+                best_points = repaired
+                best_summary = repaired_summary
+                best_limit = repaired_limit
+                best_mode = f"best_bspline_x{float(factor):.2f}"
+                best_outside = outside_count
+
+    if best_mode != "base":
+        return best_points, best_summary, best_limit, best_mode
+
+    return candidate_points, summary, limit, "failed"
+
+
 def build_offset_field_raceline_from_moved_keypoints(centerline_rows, moved_keypoints, safety_mask, yaml_data):
     """
     Build raceline using the smoothed centerline as the geometric backbone.
@@ -1992,17 +2415,65 @@ def build_offset_field_raceline_from_moved_keypoints(centerline_rows, moved_keyp
     last_outside = 0
     last_inside_ratio = 0.0
 
+    # Fix A: keep the best safe candidate across all offset scales and repair
+    # attempts. If no candidate satisfies the steering curvature limit, return
+    # this best safe candidate instead of the last attempted candidate.
+    best_safe_points = None
+    best_safe_offsets = None
+    best_safe_scale = None
+    best_safe_inside_ratio = 0.0
+    best_safe_outside = 0
+    best_safe_summary = None
+    best_safe_repair_mode = "none"
+
     while scale >= float(RACELINE_OFFSET_SCALE_MIN) - 1e-9:
         # Scale first, then apply geometric safety filters.
         candidate_offsets = scale * smoothed_offsets_base
         candidate_offsets = postprocess_offset_signal(centerline_rows, candidate_offsets)
 
+        # 1) Generate candidate raceline from the current offset scale.
         candidate_points = generate_raceline_from_offsets(centerline_rows, candidate_offsets)
+
+        # 2) Apply the normal configured final B-spline smoothing.
         candidate_points = maybe_smooth_raceline_bspline(candidate_points)
 
-        # Validate AFTER optional final B-spline smoothing, because smoothing may
+        # 3) Check safety mask after normal smoothing, because smoothing may
         # move points outside the eroded safety region.
         inside_ratio, outside_count = validate_points_in_mask(candidate_points, safety_mask, yaml_data)
+
+        # 4) Check steering-capability curvature limit.
+        curvature_ok, curvature_summary, curvature_limit = raceline_curvature_is_ok(candidate_points)
+        repair_mode = "base"
+
+        print(
+            f"  Raceline candidate scale={scale:.3f}, repair={repair_mode}: "
+            f"inside={inside_ratio:.3f}, outside={outside_count}, "
+            f"kappa_p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}="
+            f"{curvature_summary['p_abs_curvature']:.3f}, "
+            f"kappa_max={curvature_summary['max_abs_curvature']:.3f}, "
+            f"kappa_limit={curvature_limit:.3f}"
+        )
+
+        # 5) If safe but curvature is too high, try stronger B-spline smoothing
+        # before shrinking the offset scale. This keeps the manually edited
+        # corners and moved keypoints unchanged.
+        if outside_count == 0 and not curvature_ok:
+            candidate_points, curvature_summary, curvature_limit, repair_mode = try_curvature_repair_smoothing(
+                candidate_points,
+                safety_mask,
+                yaml_data
+            )
+            inside_ratio, outside_count = validate_points_in_mask(candidate_points, safety_mask, yaml_data)
+            curvature_ok, curvature_summary, curvature_limit = raceline_curvature_is_ok(candidate_points)
+
+            print(
+                f"  Raceline candidate scale={scale:.3f}, repair={repair_mode}: "
+                f"inside={inside_ratio:.3f}, outside={outside_count}, "
+                f"kappa_p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}="
+                f"{curvature_summary['p_abs_curvature']:.3f}, "
+                f"kappa_max={curvature_summary['max_abs_curvature']:.3f}, "
+                f"kappa_limit={curvature_limit:.3f}"
+            )
 
         last_points = candidate_points
         last_offsets = candidate_offsets
@@ -2010,10 +2481,49 @@ def build_offset_field_raceline_from_moved_keypoints(centerline_rows, moved_keyp
         last_inside_ratio = inside_ratio
 
         if outside_count == 0:
+            candidate_score = float(curvature_summary["p_abs_curvature"])
+            best_score = float("inf") if best_safe_summary is None else float(best_safe_summary["p_abs_curvature"])
+            if best_safe_summary is None or candidate_score < best_score:
+                best_safe_points = candidate_points
+                best_safe_offsets = candidate_offsets.copy()
+                best_safe_scale = float(scale)
+                best_safe_inside_ratio = float(inside_ratio)
+                best_safe_outside = int(outside_count)
+                best_safe_summary = dict(curvature_summary)
+                best_safe_repair_mode = str(repair_mode)
+                print(
+                    f"  Best safe raceline updated: scale={best_safe_scale:.3f}, "
+                    f"repair={best_safe_repair_mode}, "
+                    f"kappa_p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}="
+                    f"{best_safe_summary['p_abs_curvature']:.3f}, "
+                    f"kappa_max={best_safe_summary['max_abs_curvature']:.3f}"
+                )
+
+        if outside_count == 0 and curvature_ok:
             reports = summarize_offset_field_reports(anchors, raw_offsets, candidate_offsets, scale, inside_ratio, outside_count)
             return candidate_points, reports, raw_offsets, candidate_offsets, scale
 
         scale *= float(RACELINE_OFFSET_SCALE_SHRINK)
+
+    if best_safe_points is not None:
+        print(
+            "  WARNING: no raceline candidate satisfied the steering curvature limit.\n"
+            f"  Saving best safe fallback instead: scale={best_safe_scale:.3f}, "
+            f"repair={best_safe_repair_mode}, "
+            f"kappa_p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}="
+            f"{best_safe_summary['p_abs_curvature']:.3f}, "
+            f"kappa_max={best_safe_summary['max_abs_curvature']:.3f}, "
+            f"kappa_limit={raceline_max_allowed_curvature():.3f}"
+        )
+        reports = summarize_offset_field_reports(
+            anchors,
+            raw_offsets,
+            best_safe_offsets,
+            best_safe_scale,
+            best_safe_inside_ratio,
+            best_safe_outside,
+        )
+        return best_safe_points, reports, raw_offsets, best_safe_offsets, best_safe_scale
 
     reports = summarize_offset_field_reports(anchors, raw_offsets, last_offsets, scale, last_inside_ratio, last_outside)
     return last_points, reports, raw_offsets, last_offsets, scale
@@ -2393,8 +2903,13 @@ def main():
             print(f"  Offset raw range:               {float(np.min(raceline_raw_offsets)):.3f} .. {float(np.max(raceline_raw_offsets)):.3f} m")
             print(f"  Offset final range:             {float(np.min(raceline_final_offsets)):.3f} .. {float(np.max(raceline_final_offsets)):.3f} m")
             print(f"  Raceline points:                {len(raceline_points)}")
+            curvature_ok, curvature_summary, curvature_limit = raceline_curvature_is_ok(raceline_points)
             print(f"  Raceline inside ratio:          {inside_ratio:.3f}")
             print(f"  Raceline outside count:         {outside_count}")
+            print(f"  Steering curvature limit:       {curvature_limit:.3f} 1/m")
+            print(f"  Raceline curvature p{float(RACELINE_CURVATURE_CHECK_PERCENTILE):.1f}:        {curvature_summary['p_abs_curvature']:.3f} 1/m")
+            print(f"  Raceline curvature max:         {curvature_summary['max_abs_curvature']:.3f} 1/m")
+            print(f"  Raceline curvature accepted:    {curvature_ok}")
             for rep in corner_reports:
                 print(
                     f"    C{rep['corner_id']:02d} {rep['turn_direction']:5s}: "
