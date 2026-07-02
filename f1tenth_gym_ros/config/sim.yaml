@@ -53,8 +53,13 @@ bridge:
     num_agent: 1
 
     # ego starting pose on map
-    sx: 2.0
+    sx: 0.0
     sy: 0.0
+    stheta: 0.0
+
+    # ego starting pose on Spielberg for PF loc initialization
+    sx: 8.0
+    sy: 2.0
     stheta: 0.0
 
     # opp starting pose on map
