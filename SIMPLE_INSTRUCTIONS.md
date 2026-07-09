@@ -391,6 +391,76 @@ cat README.md
 
 The runtime inference package does not need `rl_training` to be built as a ROS package, but it does need the trained model `.zip` file.
 
+## 5.3 Obstacle map creation
+
+Workspace:
+
+```bash
+cd /sim_ws/src/centerline_tools
+```
+
+The obstacle creation tool allows one or more square obstacles to be manually placed along the generated centerline for obstacle detection and avoidance testing.
+
+Run:
+
+```bash
+python3 obstacle_creation_tool.py \
+    Spielberg_map.png \
+    Spielberg_map.yaml
+```
+
+By default, the tool uses:
+
+```bash
+centerline_output/centerline_points_smooth.csv
+```
+
+The UI allows:
+
+* selecting `left` or `right` relative to the centerline driving direction;
+* setting the desired boundary gap in meters;
+* setting the square obstacle size in meters;
+* clicking near the centerline to add obstacles;
+* undoing, resetting, and saving the generated obstacle map.
+
+The main configurable constraints are defined near the top of:
+
+```bash
+obstacle_creation_tool.py
+```
+
+Current defaults include:
+
+```bash
+MIN_BOUNDARY_GAP_M = 0.50
+MAX_OBSTACLE_SIZE_M = 0.50
+```
+
+The generated simulator map files are written by default to:
+
+```bash
+obstacle_output/
+```
+
+For example:
+
+```bash
+obstacle_output/
+├── Spielberg_map_obstacles.png
+├── Spielberg_map_obstacles.yaml
+├── Spielberg_map_obstacles_clearance.csv
+└── Spielberg_map_obstacles_debug.png
+```
+
+The essential files used by the simulator map server are:
+
+```bash
+Spielberg_map_obstacles.png
+Spielberg_map_obstacles.yaml
+```
+
+The original map files are not overwritten.
+
 ---
 
 # 6. Useful cleanup and rebuild commands
