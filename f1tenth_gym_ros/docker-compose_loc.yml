@@ -2,15 +2,24 @@
 #
 # Copyright (c) 2020 Hongrui Zheng
 #
-# Minimal localization/RoboRacer compose variant aligned with
-# f1tenth_rocker_loc_start.sh mounts and image name.
+# Localization/RoboRacer compose variant.
+# Aligned with f1tenth_rocker_loc_start.sh mounts, but without NVIDIA/rocker.
+#
+# Use from:
+#   ~/f1tenth_dev/f1tenth_gym_ros
+#
+# Start:
+#   docker-compose -f docker-compose_loc.yml up
+#
+# Enter:
+#   docker exec -it f1tenth_gym_ros_loc /bin/bash
 
-version: '3'
+version: "3"
+
 services:
   sim:
-    image: f1tenth_gym_ros_localization_ready
+    image: f1tenth_gym_ros_localization_ready:latest
     container_name: f1tenth_gym_ros_loc
-    build: ./
     volumes:
       - .:/sim_ws/src/f1tenth_gym_ros
       - ../reactive_control/safety_bubble:/sim_ws/src/safety_bubble
@@ -25,17 +34,17 @@ services:
       - ../rl_training:/sim_ws/src/rl_training
       - ../rl_speed_inference:/sim_ws/src/rl_speed_inference
       - ./install_localization_env.sh:/sim_ws/install_localization_env.sh
-
     environment:
       - DISPLAY=novnc:0.0
     networks:
       - x11
+    working_dir: /sim_ws
     stdin_open: true
     tty: true
     cap_add:
-      - SYS_PTRACE  # Allow ptrace which is needed for GDB
+      - SYS_PTRACE
     security_opt:
-      - seccomp:unconfined  # Turn off seccomp filtering to allow more permissions for debugging
+      - seccomp:unconfined
 
   novnc:
     image: theasp/novnc:latest
