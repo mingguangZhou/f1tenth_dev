@@ -16,16 +16,16 @@ corridor_planner:
     scan_timeout_sec: 0.30
     odom_timeout_sec: 0.50
     require_fresh_odom: false
-    planning_angle_min_deg: -100.0
-    planning_angle_max_deg: 100.0
+    planning_angle_min_deg: -90.0
+    planning_angle_max_deg: 90.0
     scan_range_cap_m: 6.0
     median_filter_window: 3
     min_valid_beam_ratio: 0.35
 
     # Vehicle envelope
-    vehicle_width_m: 0.32
+    vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.08
-    obstacle_endpoint_margin_m: 0.00
+    obstacle_endpoint_margin_m: 0.01
 
     # Corridor construction
     forward_start_m: 0.25
@@ -48,7 +48,7 @@ corridor_planner:
     spatial_smoothing_passes: 3
     spatial_smoothing_weight: 0.45
     temporal_smoothing_alpha: 0.40
-    path_start_anchor_points: 2
+    path_start_anchor_points: 4
 
     # Pure pursuit (kept close to the existing path-following controller)
     lookahead_distance_m: 0.50
@@ -57,7 +57,7 @@ corridor_planner:
     steering_filter_alpha: 0.55
 
     # Simple nominal speed profile
-    velocity_max_mps: 1.50
+    velocity_max_mps: 2.50
     velocity_min_mps: 1.00
     slow_reach_distance_m: 1.50
     stop_reach_distance_m: 0.60
