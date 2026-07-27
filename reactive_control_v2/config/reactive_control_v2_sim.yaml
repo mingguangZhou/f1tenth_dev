@@ -1,0 +1,69 @@
+corridor_planner:
+  ros__parameters:
+    use_sim_time: true
+
+    # ROS interfaces
+    scan_topic: "/scan"
+    odom_topic: "/ego_racecar/odom"
+    enable_topic: "/reactive_control_v2/enable"
+    command_topic: "/reactive_control_v2/nominal_cmd"
+    path_topic: "/reactive_control_v2/local_path"
+    marker_topic: "/reactive_control_v2/markers"
+    status_topic: "/reactive_control_v2/status"
+    require_enable_message: false
+
+    # Input handling
+    scan_timeout_sec: 0.30
+    odom_timeout_sec: 0.50
+    require_fresh_odom: false
+    planning_angle_min_deg: -100.0
+    planning_angle_max_deg: 100.0
+    scan_range_cap_m: 6.0
+    median_filter_window: 3
+    min_valid_beam_ratio: 0.35
+
+    # Vehicle envelope
+    vehicle_width_m: 0.32
+    lateral_safety_margin_m: 0.08
+    obstacle_endpoint_margin_m: 0.00
+
+    # Corridor construction
+    forward_start_m: 0.25
+    forward_max_m: 5.0
+    forward_slice_step_m: 0.20
+    lateral_limit_m: 2.0
+    lateral_sample_step_m: 0.05
+    min_interval_width_m: 0.10
+    max_interval_shift_per_slice_m: 0.25
+    min_path_reach_m: 0.80
+
+    # Corridor persistence
+    reach_tie_tolerance_m: 0.30
+    width_tie_tolerance_m: 0.08
+    switch_reach_advantage_m: 0.50
+    switch_confirmation_cycles: 3
+    side_deadband_m: 0.12
+
+    # Local-path smoothing
+    spatial_smoothing_passes: 3
+    spatial_smoothing_weight: 0.45
+    temporal_smoothing_alpha: 0.40
+    path_start_anchor_points: 2
+
+    # Pure pursuit (kept close to the existing path-following controller)
+    lookahead_distance_m: 0.50
+    wheelbase_m: 0.33
+    steering_max_deg: 20.6
+    steering_filter_alpha: 0.55
+
+    # Simple nominal speed profile
+    velocity_max_mps: 1.50
+    velocity_min_mps: 1.00
+    slow_reach_distance_m: 1.50
+    stop_reach_distance_m: 0.60
+
+    # Debug
+    publish_visualization: true
+    marker_lifetime_sec: 0.25
+    # Print immediately on state/reason changes, otherwise at this wall-time period.
+    terminal_status_period_sec: 2.0
