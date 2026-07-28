@@ -36,6 +36,8 @@
 namespace
 {
 
+// Small mathematical and formatting helpers are kept outside the ROS node because
+// they do not depend on node state.
 constexpr double kPi = 3.14159265358979323846;
 constexpr char kPackageVersion[] = "0.1.5";
 
@@ -70,6 +72,9 @@ struct Point2
   double y{0.0};
 };
 
+// Planar rigid transform from the incoming LaserScan frame to base_frame.
+// x/y describe the laser origin in base_frame; cos_yaw/sin_yaw describe its
+// orientation. Keeping both directions here avoids repeating frame mathematics.
 struct LaserToBaseTransform
 {
   double x{0.0};
@@ -96,6 +101,8 @@ struct LaserToBaseTransform
 
 struct Interval
 {
+  // One continuous lateral band of usable vehicle-centre positions at a fixed x.
+  // Vehicle width and safety margin have already been applied when this is built.
   double x{0.0};
   double low{0.0};
   double high{0.0};
@@ -106,6 +113,8 @@ struct Interval
 
 struct Branch
 {
+  // A corridor is a sequence of connected free intervals from near to far.
+  // min_width and lateral_motion are cached for later branch ranking.
   std::vector<Interval> intervals;
   double min_width{std::numeric_limits<double>::infinity()};
   double lateral_motion{0.0};
@@ -118,6 +127,9 @@ struct Branch
 
 struct BeamData
 {
+  // Preprocessed scan indexed exactly like the original LaserScan.
+  // observed distinguishes valid knowledge from missing data; hit distinguishes
+  // a real obstacle return from a ray known to be clear up to its usable maximum.
   std::vector<double> ranges;
   std::vector<uint8_t> observed;
   std::vector<uint8_t> hit;
@@ -128,6 +140,8 @@ struct BeamData
 
 struct ValidationFailure
 {
+  // Detailed evidence for the first rejected sample along one candidate path.
+  // These fields feed terminal diagnostics, diagnostic_msgs and RViz markers.
   bool failed{false};
   std::string path_source{"none"};
   std::string check_code{"NONE"};
@@ -153,6 +167,7 @@ struct ValidationFailure
 
 struct PlanResult
 {
+  // Complete output of one scan-to-command planning cycle.
   bool valid{false};
   std::string state{"BLOCKED"};
   std::string reason{"no connected corridor"};
@@ -178,6 +193,8 @@ public:
   UpperCorridorFollower()
   : Node("upper_corridor_follower")
   {
+    // Parameters are declared first so launch/YAML overrides are available,
+    // then copied into typed members and constrained to safe numeric ranges.
     declareParameters();
     readParameters();
     validateParameters();
@@ -193,6 +210,8 @@ public:
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // LaserScan drives planning. Odometry is used for freshness/status checking,
+    // while the enable input allows an external supervisor to disable this layer.
     using std::placeholders::_1;
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
@@ -206,6 +225,7 @@ public:
       std::chrono::milliseconds(50),
       std::bind(&UpperCorridorFollower::watchdogCallback, this));
 
+    // Without a mandatory enable message, the upper controller starts enabled.
     enabled_ = !require_enable_message_;
     last_scan_receive_time_ = now();
     last_odom_receive_time_ = now();
@@ -302,6 +322,7 @@ private:
   double terminal_status_period_sec_{2.0};
 
   // Runtime state
+  // The callbacks and watchdog share these values, so every callback takes mutex_.
   std::mutex mutex_;
   bool enabled_{true};
   bool scan_received_{false};
@@ -328,6 +349,8 @@ private:
 
   void declareParameters()
   {
+    // This block defines defaults only. Values supplied by YAML replace them
+    // before readParameters() copies them into the member variables.
     declare_parameter<std::string>("scan_topic", "/scan");
     declare_parameter<std::string>("odom_topic", "/ego_racecar/odom");
     declare_parameter<std::string>("enable_topic", "/reactive_control_v2/enable");
@@ -389,6 +412,8 @@ private:
 
   void readParameters()
   {
+    // Normalize the configured frame name so "/base_link" and "base_link"
+    // behave identically in TF lookups.
     scan_topic_ = get_parameter("scan_topic").as_string();
     odom_topic_ = get_parameter("odom_topic").as_string();
     enable_topic_ = get_parameter("enable_topic").as_string();
@@ -455,6 +480,8 @@ private:
 
   void validateParameters()
   {
+    // Clamp settings that would otherwise cause invalid geometry, division by
+    // zero, an even median-filter window, or values outside blending ranges.
     if (base_frame_.empty()) {
       base_frame_ = "base_link";
       RCLCPP_WARN(get_logger(), "Empty base_frame parameter; using base_link.");
@@ -485,6 +512,8 @@ private:
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // The current implementation does not use odometry to build the path.
+    // It stores forward speed for freshness checks and diagnostic reporting.
     current_speed_mps_ = msg->twist.twist.linear.x;
     last_odom_receive_time_ = now();
     odom_received_ = true;
@@ -495,6 +524,8 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     enabled_ = msg->data;
     if (!enabled_) {
+      // Do not carry steering, path smoothing or branch-persistence history
+      // across a period in which the upper controller is disabled.
       resetPlannerHistory();
       publishStop("DISABLED", "enable input is false", last_frame_id_);
     }
@@ -505,17 +536,22 @@ private:
     LaserToBaseTransform & output,
     std::string & error) const
   {
+    // All planning and control geometry uses base_frame. The LaserScan may come
+    // from a differently named and physically offset sensor frame.
     const std::string scan_frame = normalizeFrameId(scan.header.frame_id);
     if (scan_frame.empty()) {
       error = "LaserScan frame_id is empty";
       return false;
     }
     if (scan_frame == base_frame_) {
+      // Identity transform: the scan is already expressed in the control frame.
       output = LaserToBaseTransform{};
       return true;
     }
 
     try {
+      // Query TF at the scan timestamp so moving-frame data is not mixed across
+      // different instants. The existing static laser transform also works here.
       const auto transform = tf_buffer_->lookupTransform(
         base_frame_, scan_frame, rclcpp::Time(scan.header.stamp),
         rclcpp::Duration::from_seconds(transform_timeout_sec_));
@@ -541,6 +577,10 @@ private:
     const Point2 & point,
     const LaserToBaseTransform & laser_to_base) const
   {
+    // A forward-mounted laser cannot directly observe the short region between
+    // base_link and its own origin. Model that region as a capsule around the
+    // connecting segment so valid start-path samples are not rejected merely
+    // because no laser ray points backward into it.
     const double segment_length_squared =
       laser_to_base.x * laser_to_base.x + laser_to_base.y * laser_to_base.y;
     if (segment_length_squared < 1e-9) {
@@ -551,14 +591,20 @@ private:
       segment_length_squared, 0.0, 1.0);
     const double nearest_x = projection * laser_to_base.x;
     const double nearest_y = projection * laser_to_base.y;
+    // This function only grants observed-space coverage. obstacleClear() is
+    // evaluated separately, so the start-region exception does not ignore hits.
     return std::hypot(point.x - nearest_x, point.y - nearest_y) <= envelope_radius_;
   }
 
   bool obstacleClear(
     const Point2 & point, const BeamData & beam_data) const
   {
+    // Treat the planned point as the vehicle centre and reject it if any obstacle
+    // endpoint lies inside the circular half-width-plus-margin envelope.
     const double envelope_squared = envelope_radius_ * envelope_radius_;
     for (const auto & obstacle : beam_data.obstacle_points) {
+      // Cheap axis-aligned rejection avoids computing a squared distance for
+      // obstacle points that cannot possibly be inside the circle.
       if (std::abs(obstacle.x - point.x) > envelope_radius_ ||
         std::abs(obstacle.y - point.y) > envelope_radius_)
       {
@@ -577,6 +623,8 @@ private:
     const sensor_msgs::msg::LaserScan & scan,
     const LaserToBaseTransform & laser_to_base) const
   {
+    // Stage 1: classify raw rays, apply conservative filtering, then convert
+    // actual obstacle endpoints from the laser frame into base_frame.
     BeamData output;
     output.laser_to_base = laser_to_base;
     const size_t count = scan.ranges.size();
@@ -595,6 +643,8 @@ private:
     size_t valid_beams = 0;
 
     for (size_t i = 0; i < count; ++i) {
+      // A beam is included in scan-validity statistics only when its direction,
+      // after rotation into base_frame, lies inside the configured planning sector.
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
       const double direction_x =
         laser_to_base.cos_yaw * std::cos(angle) -
@@ -616,6 +666,8 @@ private:
         std::isinf(raw) || (std::isfinite(raw) && raw > scan.range_max);
 
       if (finite_hit) {
+        // A finite measurement at usable_max is observed space but is not stored
+        // as an obstacle endpoint, because it represents the planning-range cap.
         output.ranges[i] = std::min(raw, usable_max);
         output.observed[i] = 1;
         output.hit[i] = raw < usable_max ? 1 : 0;
@@ -623,6 +675,8 @@ private:
           ++valid_beams;
         }
       } else if (clear_to_max) {
+        // Positive infinity is the normal LaserScan representation for a ray
+        // with no return; it still proves free space up to usable_max.
         output.ranges[i] = usable_max;
         output.observed[i] = 1;
         if (in_planning_sector) {
@@ -635,6 +689,8 @@ private:
       static_cast<double>(valid_beams) / static_cast<double>(planning_beams) : 0.0;
 
     if (median_filter_window_ > 1) {
+      // The one-sided median filter may shorten a suspiciously long ray but
+      // deliberately cannot lengthen a close return and erase an obstacle.
       const std::vector<double> original = output.ranges;
       const int radius = median_filter_window_ / 2;
       std::vector<double> window;
@@ -663,6 +719,7 @@ private:
 
     output.obstacle_points.reserve(count);
     for (size_t i = 0; i < count; ++i) {
+      // Only finite hits become obstacle points used by the envelope check.
       if (!output.observed[i] || !output.hit[i]) {
         continue;
       }
@@ -681,6 +738,8 @@ private:
       }
       const double range = std::max(
         0.0, output.ranges[i] - obstacle_endpoint_margin_m_);
+      // Pull the endpoint slightly toward the sensor before transforming it.
+      // This intentionally makes the collision model more conservative.
       output.obstacle_points.push_back(laser_to_base.laserToBase(
           Point2{range * std::cos(angle), range * std::sin(angle)}));
     }
@@ -691,6 +750,10 @@ private:
     const double x, const double y, const sensor_msgs::msg::LaserScan & scan,
     const BeamData & beam_data) const
   {
+    // A candidate vehicle-centre position is usable only if it is:
+    //   1. inside the planning sector,
+    //   2. outside every inflated obstacle envelope, and
+    //   3. supported by an observed laser ray (or the protected start region).
     const Point2 point{x, y};
     const double base_angle = std::atan2(y, x);
     if (base_angle < planning_angle_min_rad_ || base_angle > planning_angle_max_rad_) {
@@ -701,16 +764,22 @@ private:
     }
 
     const Point2 laser_point = beam_data.laser_to_base.baseToLaser(point);
+    // Convert the candidate back to laser coordinates because LaserScan ranges
+    // are indexed by angles measured in the laser frame.
     const double laser_angle = std::atan2(laser_point.y, laser_point.x);
     const double index_f = (laser_angle - scan.angle_min) / scan.angle_increment;
     const int index = static_cast<int>(std::lround(index_f));
     if (index < 0 || index >= static_cast<int>(beam_data.ranges.size()) ||
       !beam_data.observed[static_cast<size_t>(index)])
     {
+      // Missing ray data is never assumed free, except for the geometrically
+      // protected base_link-to-laser start region described above.
       return pointIsInStartRegion(point, beam_data.laser_to_base);
     }
 
     const double radial_distance = std::hypot(laser_point.x, laser_point.y);
+    // Reject points at or beyond the measured endpoint after reserving the
+    // configured endpoint margin. This prevents planning behind an obstacle.
     if (radial_distance + obstacle_endpoint_margin_m_ >
       beam_data.ranges[static_cast<size_t>(index)])
     {
@@ -723,6 +792,8 @@ private:
     const double x, const sensor_msgs::msg::LaserScan & scan,
     const BeamData & beam_data) const
   {
+    // Stage 2: at one forward x slice, scan y from right to left and group
+    // consecutive observedFree() samples into continuous lateral intervals.
     std::vector<Interval> intervals;
     bool inside = false;
     double start_y = 0.0;
@@ -735,9 +806,11 @@ private:
         static_cast<double>(sample) * lateral_sample_step_m_;
       const bool usable = observedFree(x, y, scan, beam_data);
       if (usable && !inside) {
+        // Entering a new run of usable lateral samples.
         inside = true;
         start_y = y;
       } else if (!usable && inside) {
+        // Leaving a run: retain it only if its sampled width is meaningful.
         const double end_y = previous_y;
         if (end_y - start_y >= min_interval_width_m_) {
           intervals.push_back(Interval{x, start_y, end_y});
@@ -754,12 +827,17 @@ private:
 
   bool intervalsConnect(const Interval & previous, const Interval & current) const
   {
+    // Expanded-overlap test between consecutive x slices. This permits a free
+    // band to move sideways by max_interval_shift_per_slice_m_ without breaking
+    // the corridor. It does not directly limit midpoint-to-midpoint movement.
     return current.low <= previous.high + max_interval_shift_per_slice_m_ &&
            current.high >= previous.low - max_interval_shift_per_slice_m_;
   }
 
   static bool betterPredecessor(const Branch & lhs, const Branch & rhs)
   {
+    // When several older branches merge into the same new interval, preserve
+    // the history with the better bottleneck width, then the straighter history.
     if (std::abs(lhs.min_width - rhs.min_width) > 1e-6) {
       return lhs.min_width > rhs.min_width;
     }
@@ -770,6 +848,8 @@ private:
     const sensor_msgs::msg::LaserScan & scan, const BeamData & beam_data,
     double & furthest_detected_reach, size_t & raw_branch_count) const
   {
+    // Stage 3: connect free intervals across increasing x slices. Active
+    // branches reach the current slice; completed branches ended earlier.
     std::vector<Branch> active;
     std::vector<Branch> completed;
 
@@ -779,6 +859,8 @@ private:
     {
       const auto intervals = buildSliceIntervals(x, scan, beam_data);
       if (first_slice) {
+        // Root a corridor only in an interval containing y=0 or sufficiently
+        // close to it. This prevents choosing disconnected remote free space.
         for (const auto & interval : intervals) {
           const double distance_to_center =
             0.0 < interval.low ? interval.low :
@@ -801,6 +883,8 @@ private:
       std::vector<Branch> next;
       std::vector<uint8_t> predecessor_used(active.size(), 0);
       for (const auto & interval : intervals) {
+        // One interval can continue from multiple earlier branches after paths
+        // merge. Retain only the best predecessor for this new interval.
         bool found = false;
         Branch best;
         size_t best_index = 0;
@@ -809,6 +893,7 @@ private:
             continue;
           }
           Branch candidate = active[branch_index];
+          // Accumulate absolute midpoint movement as a simple path-wandering cost.
           candidate.lateral_motion +=
             std::abs(interval.center() - candidate.intervals.back().center());
           candidate.intervals.push_back(interval);
@@ -826,6 +911,7 @@ private:
       }
 
       for (size_t i = 0; i < active.size(); ++i) {
+        // An unused predecessor did not reach this slice, so its corridor ends.
         if (!predecessor_used[i]) {
           completed.push_back(std::move(active[i]));
         }
@@ -848,6 +934,8 @@ private:
     }
 
     completed.erase(
+      // Keep raw_branch_count for diagnostics, but return only corridors long
+      // enough to control and containing enough intervals to define a path.
       std::remove_if(
         completed.begin(), completed.end(),
         [this](const Branch & branch) {
@@ -859,6 +947,8 @@ private:
 
   int branchSide(const Branch & branch) const
   {
+    // Classify branch tendency using its centres from approximately 1 m onward,
+    // where a left/right decision is more meaningful than near the vehicle.
     if (branch.intervals.empty()) {
       return 0;
     }
@@ -883,6 +973,8 @@ private:
 
   bool branchBetter(const Branch & candidate, const Branch & reference) const
   {
+    // Lexicographic preference with tolerances:
+    // longer reach, then larger minimum width, then less lateral movement.
     if (candidate.reach() > reference.reach() + reach_tie_tolerance_m_) {
       return true;
     }
@@ -900,6 +992,8 @@ private:
 
   size_t chooseBranch(const std::vector<Branch> & branches)
   {
+    // Stage 4: find the best instantaneous branch, then apply side persistence
+    // so small scan-to-scan differences do not repeatedly flip left/right.
     size_t best_index = 0;
     for (size_t i = 1; i < branches.size(); ++i) {
       if (branchBetter(branches[i], branches[best_index])) {
@@ -908,6 +1002,7 @@ private:
     }
 
     if (current_side_ == 0) {
+      // No established left/right history yet: accept the current best branch.
       current_side_ = branchSide(branches[best_index]);
       pending_side_ = current_side_;
       pending_side_cycles_ = 0;
@@ -915,6 +1010,7 @@ private:
     }
 
     size_t persistent_index = branches.size();
+    // Find the best branch that preserves the previously selected side.
     for (size_t i = 0; i < branches.size(); ++i) {
       if (branchSide(branches[i]) != current_side_) {
         continue;
@@ -927,6 +1023,7 @@ private:
     }
 
     if (persistent_index == branches.size()) {
+      // The old side no longer exists, so switching immediately is necessary.
       current_side_ = branchSide(branches[best_index]);
       pending_side_ = current_side_;
       pending_side_cycles_ = 0;
@@ -938,6 +1035,8 @@ private:
       branches[best_index].reach() >=
       branches[persistent_index].reach() + switch_reach_advantage_m_;
     if (best_side == current_side_ || !clearly_better) {
+      // Keep the persistent branch unless the alternative has enough reach
+      // advantage to justify starting the confirmation counter.
       pending_side_ = current_side_;
       pending_side_cycles_ = 0;
       return persistent_index;
@@ -950,6 +1049,7 @@ private:
       pending_side_cycles_ = 1;
     }
     if (pending_side_cycles_ >= switch_confirmation_cycles_) {
+      // Switch only after the same advantageous side wins for enough scans.
       current_side_ = best_side;
       pending_side_cycles_ = 0;
       return best_index;
@@ -959,6 +1059,8 @@ private:
 
   double previousPathYAt(const double x) const
   {
+    // Interpolate the previous accepted path at an arbitrary current slice x.
+    // This lets temporal smoothing work even if path lengths differ by one scan.
     if (previous_path_.empty()) {
       return 0.0;
     }
@@ -981,6 +1083,8 @@ private:
   std::vector<Point2> generatePath(
     const Branch & branch, std::vector<Point2> & raw_path)
   {
+    // Stage 5: the raw candidate follows every selected interval midpoint,
+    // starting at the base_link/control origin.
     raw_path.clear();
     raw_path.reserve(branch.intervals.size() + 1);
     raw_path.push_back(Point2{0.0, 0.0});
@@ -990,6 +1094,8 @@ private:
     std::vector<Point2> path = raw_path;
 
     if (!previous_path_.empty()) {
+      // Temporal smoothing blends the new lateral request with the last accepted
+      // path. Clamp back into the current interval to preserve free-space support.
       for (size_t i = 1; i < path.size(); ++i) {
         const auto & interval = branch.intervals[i - 1];
         const double blended =
@@ -1003,9 +1109,13 @@ private:
       static_cast<size_t>(std::max(0, path_start_anchor_points_)),
       path.size() - 1);
     for (int pass = 0; pass < spatial_smoothing_passes_; ++pass) {
+      // Each spatial pass reduces local zig-zags. A separate vector prevents
+      // early points in this pass from immediately influencing later points.
       std::vector<Point2> smoothed = path;
       for (size_t i = 1; i + 1 < path.size(); ++i) {
         if (i <= anchor_index && anchor_index > 0) {
+          // Shape the beginning as a linear transition from (0,0) to the anchor.
+          // Anchoring is intentionally performed inside every smoothing pass.
           const double anchor_ratio =
             path[i].x / std::max(1e-6, path[anchor_index].x);
           const double anchored = anchor_ratio * path[anchor_index].y;
@@ -1014,6 +1124,7 @@ private:
           continue;
         }
         const double neighbor_mean = 0.5 * (path[i - 1].y + path[i + 1].y);
+        // Convex blend between the point itself and its two-neighbour mean.
         const double candidate =
           (1.0 - spatial_smoothing_weight_) * path[i].y +
           spatial_smoothing_weight_ * neighbor_mean;
@@ -1022,6 +1133,7 @@ private:
       }
       path = std::move(smoothed);
     }
+    // Never allow smoothing to move the control origin.
     path.front() = Point2{0.0, 0.0};
     return path;
   }
@@ -1033,6 +1145,9 @@ private:
     const std::string & path_source,
     ValidationFailure & failure) const
   {
+    // Stage 6: midpoint samples may each be free while a connecting or smoothed
+    // segment cuts a corner. Densely resample every segment and run exactly the
+    // same observedFree() test used during corridor construction.
     failure = ValidationFailure{};
     failure.path_source = path_source;
     if (path.size() < 2) {
@@ -1048,11 +1163,15 @@ private:
       const double length = std::hypot(dx, dy);
       const int samples = std::max(1, static_cast<int>(std::ceil(length / validation_step)));
       for (int sample = 1; sample <= samples; ++sample) {
+        // Start at sample 1 because the previous segment already covered its
+        // start point; include samples to guarantee the endpoint is checked.
         const double ratio =
           static_cast<double>(sample) / static_cast<double>(samples);
         const double x = path[i].x + ratio * dx;
         const double y = path[i].y + ratio * dy;
         if (!observedFree(x, y, scan, beam_data)) {
+          // Stop at the first failed sample so diagnostics identify the earliest
+          // place where this candidate ceases to be safe/observed.
           failure.failed = true;
           failure.segment_index = i;
           failure.segment_count = path.size() - 1;
@@ -1077,6 +1196,8 @@ private:
     const BeamData & beam_data,
     ValidationFailure & failure) const
   {
+    // Re-evaluate the rejected point in the same order as observedFree(), but
+    // record quantitative evidence instead of returning only true/false.
     const Point2 point{x, y};
     failure.required_clearance_m = envelope_radius_;
 
@@ -1095,6 +1216,7 @@ private:
       failure.nearest_obstacle_available = true;
     }
     if (nearest_distance < envelope_radius_) {
+      // The path sample lies inside the inflated obstacle envelope.
       failure.check_code = "OBSTACLE_ENVELOPE_COLLISION";
       return;
     }
@@ -1107,6 +1229,7 @@ private:
     }
 
     const Point2 laser_point = beam_data.laser_to_base.baseToLaser(point);
+    // Ray-coverage diagnostics must use the original LaserScan coordinate frame.
     const double laser_angle = std::atan2(laser_point.y, laser_point.x);
     failure.beam_angle_deg = laser_angle * 180.0 / kPi;
     failure.point_range_m = std::hypot(laser_point.x, laser_point.y);
@@ -1141,6 +1264,8 @@ private:
 
   bool findLookahead(const std::vector<Point2> & path, Point2 & target) const
   {
+    // Use the first discrete path point at least lookahead_distance_m_ from the
+    // base_link origin. No interpolation between path points is performed here.
     for (const auto & point : path) {
       if (std::hypot(point.x, point.y) >= lookahead_distance_m_) {
         target = point;
@@ -1153,6 +1278,9 @@ private:
   PlanResult makePlan(
     const sensor_msgs::msg::LaserScan & scan, const BeamData & beam_data)
   {
+    // One complete planning pipeline:
+    // scan quality -> branches -> persistent selection -> candidate paths ->
+    // swept validation -> pure pursuit -> steering/reach speed modulation.
     PlanResult result;
     result.scan_valid_ratio = beam_data.valid_ratio;
     if (beam_data.valid_ratio < min_valid_beam_ratio_) {
@@ -1162,6 +1290,8 @@ private:
     }
 
     size_t raw_branch_count = 0;
+    // raw_branch_count includes short completed branches for diagnosis, whereas
+    // branches contains only candidates that pass the minimum reach/size filter.
     const auto branches = constructBranches(
       scan, beam_data, result.furthest_detected_reach, raw_branch_count);
     result.detected_branches = raw_branch_count;
@@ -1178,6 +1308,9 @@ private:
     std::vector<Point2> raw_path;
     result.path = generatePath(result.branch, raw_path);
     ValidationFailure smoothed_failure;
+    // Prefer the smoother candidate. If smoothing created a collision or moved
+    // outside observed space, retry the unsmoothed midpoint path for this same
+    // selected branch; these are not alternative left/right branches.
     if (!pathIsValid(
         result.path, scan, beam_data, "smoothed", smoothed_failure))
     {
@@ -1187,6 +1320,7 @@ private:
         result.path = std::move(raw_path);
         result.used_raw_fallback = true;
       } else {
+        // Both geometric candidates are invalid, so no nominal command is safe.
         result.raw_failure = raw_failure;
         result.state = "PATH_INVALID";
         result.reason =
@@ -1194,6 +1328,8 @@ private:
         return result;
       }
     }
+    // Only a path that passed complete validation may influence the next scan's
+    // temporal smoothing.
     previous_path_ = result.path;
     if (!findLookahead(result.path, result.lookahead)) {
       result.state = "BLOCKED";
@@ -1203,11 +1339,13 @@ private:
 
     const double target_distance =
       std::hypot(result.lookahead.x, result.lookahead.y);
+    // Pure-pursuit curvature for a target expressed in the vehicle/base frame.
     const double curvature =
       2.0 * result.lookahead.y / (target_distance * target_distance);
     const double raw_steering = clampValue(
       std::atan(wheelbase_m_ * curvature), -steering_max_rad_, steering_max_rad_);
     result.steering =
+      // Low-pass filtering reduces scan-to-scan steering command jumps.
       steering_filter_alpha_ * raw_steering +
       (1.0 - steering_filter_alpha_) * previous_steering_;
     previous_steering_ = result.steering;
@@ -1215,13 +1353,18 @@ private:
     const double steering_ratio = clampValue(
       std::abs(result.steering) / std::max(1e-6, steering_max_rad_), 0.0, 1.0);
     const double steering_speed =
+      // Interpolate from maximum straight speed toward minimum speed as the
+      // filtered steering magnitude approaches steering_max_rad_.
       velocity_max_mps_ -
       steering_ratio * (velocity_max_mps_ - velocity_min_mps_);
     const double reach_factor = clampValue(
+      // A corridor at/below stop reach gets factor 0; at/above slow reach it
+      // gets factor 1; the interval between those thresholds is linear.
       (result.branch.reach() - stop_reach_distance_m_) /
       (slow_reach_distance_m_ - stop_reach_distance_m_), 0.0, 1.0);
     result.speed = steering_speed * reach_factor;
     if (result.branch.reach() <= stop_reach_distance_m_) {
+      // Explicit guard documents and enforces the exact stop threshold.
       result.speed = 0.0;
     }
 
@@ -1237,6 +1380,7 @@ private:
 
   std::string validationFailureText(const ValidationFailure & failure) const
   {
+    // Render one compact but complete description of the first failed sample.
     if (!failure.failed) {
       return "none";
     }
@@ -1296,6 +1440,8 @@ private:
 
   void logTerminalStatus(const PlanResult & result)
   {
+    // Default mode reports state transitions only. Full mode also reports
+    // periodic geometry/control evidence useful during tuning and debugging.
     const auto wall_now = std::chrono::steady_clock::now();
     const bool state_changed =
       result.state != last_terminal_state_ || result.reason != last_terminal_reason_;
@@ -1401,12 +1547,16 @@ private:
 
   void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan)
   {
+    // LaserScan is the main execution clock: one valid scan produces at most one
+    // new plan and nominal Ackermann command.
     std::lock_guard<std::mutex> lock(mutex_);
     scan_received_ = true;
     last_scan_receive_time_ = now();
     last_frame_id_ = base_frame_;
 
     if (!enabled_) {
+      // All failure gates publish an explicit zero command rather than silently
+      // returning and leaving an earlier command active.
       publishStop("DISABLED", "enable input is false", base_frame_);
       return;
     }
@@ -1424,6 +1574,8 @@ private:
     LaserToBaseTransform laser_to_base;
     std::string transform_error;
     if (!lookupLaserToBaseTransform(*scan, laser_to_base, transform_error)) {
+      // Never fall back to treating the laser origin as base_link; doing so
+      // would shift both the path origin and collision envelope.
       publishStop(
         "TF_UNAVAILABLE",
         "cannot transform LaserScan into configured base_frame", base_frame_);
@@ -1448,6 +1600,7 @@ private:
 
     const BeamData beam_data = preprocessScan(*scan, laser_to_base);
     PlanResult result = makePlan(*scan, beam_data);
+    // Every published geometry item is now expressed in base_frame.
     std_msgs::msg::Header output_header = scan->header;
     output_header.frame_id = base_frame_;
     publishResult(result, output_header);
@@ -1455,6 +1608,7 @@ private:
 
   void watchdogCallback()
   {
+    // Independent of LaserScan callbacks, repeatedly stop if scan input ceases.
     std::lock_guard<std::mutex> lock(mutex_);
     const double scan_age = (now() - last_scan_receive_time_).seconds();
     if (!scan_received_ || scan_age > scan_timeout_sec_) {
@@ -1468,6 +1622,7 @@ private:
 
   void resetPlannerHistory()
   {
+    // Clear only state that influences future planning/control decisions.
     previous_path_.clear();
     current_side_ = 0;
     pending_side_ = 0;
@@ -1478,6 +1633,8 @@ private:
   void publishResult(
     const PlanResult & result, const std_msgs::msg::Header & source_header)
   {
+    // A PlanResult is the single source for command, path, status, markers and
+    // terminal logs, keeping all outputs consistent for the same scan cycle.
     ackermann_msgs::msg::AckermannDriveStamped command;
     command.header = source_header;
     command.drive.speed = result.valid ? result.speed : 0.0;
@@ -1509,6 +1666,7 @@ private:
     }
 
     if (!result.valid) {
+      // Restart steering filtering from zero after a stop condition clears.
       previous_steering_ = 0.0;
     }
     logTerminalStatus(result);
@@ -1518,6 +1676,8 @@ private:
     const std::string & state, const std::string & reason,
     const std::string & frame_id)
   {
+    // Represent every stop as an invalid PlanResult so all output channels are
+    // updated consistently, including an explicit zero Ackermann command.
     PlanResult stopped;
     stopped.state = state;
     stopped.reason = reason;
@@ -1530,6 +1690,8 @@ private:
   void publishPath(
     const std::vector<Point2> & path, const std_msgs::msg::Header & header)
   {
+    // Convert the internal planar polyline into nav_msgs/Path. Pose yaw follows
+    // the next segment (or the previous segment for the final point).
     nav_msgs::msg::Path message;
     message.header = header;
     message.poses.reserve(path.size());
@@ -1555,6 +1717,8 @@ private:
   void publishStatus(
     const PlanResult & result, const builtin_interfaces::msg::Time & stamp)
   {
+    // Publish machine-readable planner state and the same failure evidence used
+    // by terminal diagnostics. A future safety layer can consume these fields.
     diagnostic_msgs::msg::DiagnosticArray array;
     array.header.stamp = stamp;
     diagnostic_msgs::msg::DiagnosticStatus status;
@@ -1657,6 +1821,7 @@ private:
     const std_msgs::msg::Header & header, const std::string & ns,
     const int id, const int type) const
   {
+    // Shared initialization for all short-lived RViz markers.
     visualization_msgs::msg::Marker marker;
     marker.header = header;
     marker.ns = ns;
@@ -1671,6 +1836,8 @@ private:
   void publishMarkers(
     const PlanResult & result, const std_msgs::msg::Header & header)
   {
+    // Clear old marker IDs first so stale paths/targets disappear immediately
+    // when the planner changes state or becomes invalid.
     visualization_msgs::msg::MarkerArray array;
     visualization_msgs::msg::Marker clear;
     clear.header = header;
@@ -1678,6 +1845,8 @@ private:
     array.markers.push_back(clear);
 
     if (!result.branch.intervals.empty()) {
+      // Orange boundaries and fill visualize the selected free-centre corridor,
+      // not the raw physical road edges.
       auto fill = baseMarker(
         header, "corridor_fill", 0, visualization_msgs::msg::Marker::TRIANGLE_LIST);
       // RViz validates scale for every marker type. TRIANGLE_LIST uses the
@@ -1722,6 +1891,7 @@ private:
     }
 
     if (result.valid) {
+      // Red sphere: pure-pursuit lookahead target.
       auto lookahead = baseMarker(
         header, "lookahead", 3, visualization_msgs::msg::Marker::SPHERE);
       lookahead.pose.position.x = result.lookahead.x;
@@ -1733,6 +1903,7 @@ private:
       lookahead.color.b = 0.1F;
       lookahead.color.a = 1.0F;
 
+      // Blue arrow: filtered steering command direction from base_link.
       auto steering = baseMarker(
         header, "steering", 4, visualization_msgs::msg::Marker::ARROW);
       steering.points.push_back(markerPoint(0.0, 0.0, 0.05));
@@ -1755,6 +1926,8 @@ private:
       const std::string & marker_namespace,
       const float red, const float green, const float blue)
       {
+        // Red/magenta spheres identify the first rejected smoothed/raw path
+        // sample. They are validation evidence, not LaserScan obstacle points.
         if (!failure.failed) {
           return;
         }
@@ -1783,6 +1956,7 @@ private:
 
 int main(int argc, char ** argv)
 {
+  // Standard ROS 2 lifecycle: initialize, process callbacks, then shut down.
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<UpperCorridorFollower>());
   rclcpp::shutdown();
