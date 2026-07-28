@@ -1,10 +1,14 @@
-corridor_planner:
+upper_corridor_follower:
   ros__parameters:
     use_sim_time: true
 
     # ROS interfaces
     scan_topic: "/scan"
     odom_topic: "/ego_racecar/odom"
+    # All paths, control geometry, validation and markers use this frame.
+    # LaserScan endpoints are transformed here through the existing static TF.
+    base_frame: "ego_racecar/base_link"
+    transform_timeout_sec: 0.05
     enable_topic: "/reactive_control_v2/enable"
     command_topic: "/reactive_control_v2/nominal_cmd"
     path_topic: "/reactive_control_v2/local_path"
@@ -16,20 +20,20 @@ corridor_planner:
     scan_timeout_sec: 0.30
     odom_timeout_sec: 0.50
     require_fresh_odom: false
-    planning_angle_min_deg: -90.0
-    planning_angle_max_deg: 90.0
+    planning_angle_min_deg: -75.0
+    planning_angle_max_deg: 75.0
     scan_range_cap_m: 6.0
     median_filter_window: 3
     min_valid_beam_ratio: 0.35
 
     # Vehicle envelope
     vehicle_width_m: 0.28
-    lateral_safety_margin_m: 0.08
-    obstacle_endpoint_margin_m: 0.01
+    lateral_safety_margin_m: 0.10
+    obstacle_endpoint_margin_m: 0.02
 
     # Corridor construction
-    forward_start_m: 0.25
-    forward_max_m: 5.0
+    forward_start_m: 0.30
+    forward_max_m: 6.0
     forward_slice_step_m: 0.20
     lateral_limit_m: 2.0
     lateral_sample_step_m: 0.05
@@ -47,14 +51,14 @@ corridor_planner:
     # Local-path smoothing
     spatial_smoothing_passes: 3
     spatial_smoothing_weight: 0.45
-    temporal_smoothing_alpha: 0.40
-    path_start_anchor_points: 4
+    temporal_smoothing_alpha: 0.30
+    path_start_anchor_points: 3
 
     # Pure pursuit (kept close to the existing path-following controller)
-    lookahead_distance_m: 0.50
+    lookahead_distance_m: 0.60
     wheelbase_m: 0.33
     steering_max_deg: 20.6
-    steering_filter_alpha: 0.55
+    steering_filter_alpha: 0.40
 
     # Simple nominal speed profile
     velocity_max_mps: 2.50
@@ -65,5 +69,10 @@ corridor_planner:
     # Debug
     publish_visualization: true
     marker_lifetime_sec: 0.25
-    # Print immediately on state/reason changes, otherwise at this wall-time period.
+    # Limit RViz MarkerArray work to 10 Hz. Set 0.0 to publish every scan.
+    visualization_period_sec: 0.10
+    # Default: print one concise warning only when entering/changing a stop state.
+    # True: also print full driving/path diagnostics immediately on change and
+    # periodically according to terminal_status_period_sec.
+    full_terminal_debug: false
     terminal_status_period_sec: 2.0

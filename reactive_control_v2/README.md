@@ -1,11 +1,12 @@
 # reactive_control_v2
 
-Package version: `0.1.3`
+Package version: `0.1.5`
 
 `reactive_control_v2` is a compact, forward-only ROS 2 Foxy controller for
 driving without a global map, localization result, or raceline reference.
 
-One node converts the current LiDAR scan into connected free-space corridor
+The `upper_corridor_follower` node transforms the current LiDAR scan into the
+configured `base_frame`, converts it into connected free-space corridor
 branches, selects a stable branch, generates a smooth local center path, and
 uses pure pursuit to publish a nominal Ackermann command.
 
@@ -31,15 +32,14 @@ gap mode, PF switching, or independent emergency-braking layer.
 | `/reactive_control_v2/markers` | `visualization_msgs/msg/MarkerArray` | Corridor fill/edges, lookahead point, and steering arrow |
 | `/reactive_control_v2/status` | `diagnostic_msgs/msg/DiagnosticArray` | State, stop reason, corridor reach/width, and current command |
 
-Status names are `DRIVING`, `BLOCKED`, `WAITING_FOR_SCAN`, `INPUT_INVALID`,
-`ODOM_STALE`, and `DISABLED`. Every non-driving state publishes zero speed.
+Status names are `DRIVING`, `BLOCKED`, `WAITING_FOR_SCAN`, `TF_UNAVAILABLE`,
+`INPUT_INVALID`, `ODOM_STALE`, and `DISABLED`. Every non-driving state
+publishes zero speed.
 
-The terminal prints immediately when the state or reason changes and then once
-per `terminal_status_period_sec` (default `2.0 s`). A normal line reports
-corridor reach/width, selected side, scan validity, commanded speed/steering,
-and odometry speed. A stop line reports the exact rejection reason and relevant
-thresholds. If a forward command is present while odometry remains nearly
-stationary, the line explicitly notes that the vehicle may be physically stuck.
+By default, the terminal prints one concise warning only when the planner
+enters a stop state or its stop reason changes. Set `full_terminal_debug: true`
+to restore the complete transition and periodic diagnostics. In that mode,
+`terminal_status_period_sec` (default `2.0 s`) controls the periodic interval.
 
 For `PATH_INVALID`, version `0.1.3` reports the first failed segment for both
 the smoothed path and the raw midpoint fallback. Each failure includes the
@@ -52,7 +52,8 @@ code:
 - `BEYOND_OBSERVED_RANGE`
 - `OBSTACLE_ENVELOPE_COLLISION`
 
-For an envelope collision, the line prints `clearance=<actual><<required> m`.
+For an envelope collision, the line prints `clearance=<actual><<required> m`
+and the nearest obstacle point in `base_frame`.
 For a range rejection, it prints the candidate point range, observed beam range,
 and configured endpoint margin. The same fields are published on the status
 topic. A red RViz sphere marks the smoothed-path failure; a magenta sphere marks
@@ -60,7 +61,8 @@ the raw-path failure.
 
 ## Algorithm
 
-1. Crop and lightly median-filter the forward LiDAR scan.
+1. Resolve the existing static TF from the LaserScan frame to `base_frame`,
+   transform scan endpoints, then crop and lightly median-filter the scan.
 2. At regular forward slices, test laterally sampled vehicle-center positions.
 3. A position is usable only when it is observed by LiDAR and remains at least
    `vehicle_width / 2 + lateral_safety_margin` from every measured obstacle.
@@ -114,12 +116,11 @@ source install/setup.bash
 The correct executable starts with:
 
 ```text
-reactive_control_v2 v0.1.3 ready: ...
-Terminal diagnostics enabled: the first planning result prints immediately.
+reactive_control_v2 v0.1.5 upper_corridor_follower ready: ... full_terminal_debug=false
 ```
 
-It then confirms receipt of the first LaserScan and prints the first planning
-result. If the startup line does not contain `v0.1.3`, the shell is still
+With `full_terminal_debug: true`, it also confirms receipt of the first
+LaserScan and prints the first planning result. If the startup line does not contain `v0.1.5`, the shell is still
 resolving an older installed copy. Check it with:
 
 ```bash
@@ -170,7 +171,35 @@ Version `0.1.3` adds point-level swept-path failure diagnostics and RViz
 failure-point markers. It does not weaken the safety envelope or otherwise
 change corridor/path selection.
 
-If the simulator's scan uses a different frame, confirm it with:
+Version `0.1.4` makes full terminal diagnostics optional, avoids constructing
+path/status/marker messages when they have no subscribers, limits RViz marker
+publication to 10 Hz by default, reuses the median-filter scratch buffer, and
+uses an optimized `RelWithDebInfo` build when no build type is supplied.
+Planning, obstacle clearance, path selection, steering, and speed logic are
+unchanged.
+
+Version `0.1.5` renames the source, executable, and ROS node to
+`upper_corridor_follower`. It uses the existing TF to transform scan geometry
+into `base_frame`, so path origin `(0,0)`, control, validation, and RViz output
+are all referenced to `base_link`. If TF is unavailable, it commands STOP.
+
+The supplied simulator YAML uses:
+
+```yaml
+base_frame: "ego_racecar/base_link"
+transform_timeout_sec: 0.05
+```
+
+For the onboard frame tree, use:
+
+```yaml
+base_frame: "base_link"
+```
+
+Do not publish another static transform; the node consumes the transform already
+provided by the simulator or onboard launch.
+
+If the scan frame is unexpected, confirm it with:
 
 ```bash
 ros2 topic echo /scan --once
@@ -244,3 +273,7 @@ unmistakable startup version signature.
 `0.1.3` explains the first failed validation sample for smoothed and raw paths,
 publishes the same debug fields diagnostically, and marks the failed points in
 RViz.
+
+`0.1.5` corrects the LiDAR/`base_link` reference, adds TF-unavailable stopping
+and nearest-obstacle coordinates, and renames the node to
+`upper_corridor_follower`.

@@ -21,11 +21,15 @@
 #include "diagnostic_msgs/msg/key_value.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "tf2/exceptions.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
@@ -33,7 +37,7 @@ namespace
 {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr char kPackageVersion[] = "0.1.4";
+constexpr char kPackageVersion[] = "0.1.5";
 
 double degToRad(const double degrees)
 {
@@ -43,6 +47,14 @@ double degToRad(const double degrees)
 double clampValue(const double value, const double low, const double high)
 {
   return std::max(low, std::min(value, high));
+}
+
+std::string normalizeFrameId(std::string frame_id)
+{
+  while (!frame_id.empty() && frame_id.front() == '/') {
+    frame_id.erase(frame_id.begin());
+  }
+  return frame_id;
 }
 
 std::string numberString(const double value)
@@ -56,6 +68,30 @@ struct Point2
 {
   double x{0.0};
   double y{0.0};
+};
+
+struct LaserToBaseTransform
+{
+  double x{0.0};
+  double y{0.0};
+  double cos_yaw{1.0};
+  double sin_yaw{0.0};
+
+  Point2 laserToBase(const Point2 & point) const
+  {
+    return Point2{
+      x + cos_yaw * point.x - sin_yaw * point.y,
+      y + sin_yaw * point.x + cos_yaw * point.y};
+  }
+
+  Point2 baseToLaser(const Point2 & point) const
+  {
+    const double dx = point.x - x;
+    const double dy = point.y - y;
+    return Point2{
+      cos_yaw * dx + sin_yaw * dy,
+      -sin_yaw * dx + cos_yaw * dy};
+  }
 };
 
 struct Interval
@@ -87,6 +123,7 @@ struct BeamData
   std::vector<uint8_t> hit;
   std::vector<Point2> obstacle_points;
   double valid_ratio{0.0};
+  LaserToBaseTransform laser_to_base;
 };
 
 struct ValidationFailure
@@ -109,6 +146,8 @@ struct ValidationFailure
   double observed_range_m{0.0};
   double radial_clearance_m{std::numeric_limits<double>::infinity()};
   double nearest_obstacle_distance_m{std::numeric_limits<double>::infinity()};
+  Point2 nearest_obstacle;
+  bool nearest_obstacle_available{false};
   double required_clearance_m{0.0};
 };
 
@@ -133,11 +172,11 @@ struct PlanResult
 
 }  // namespace
 
-class CorridorPlannerNode : public rclcpp::Node
+class UpperCorridorFollower : public rclcpp::Node
 {
 public:
-  CorridorPlannerNode()
-  : Node("corridor_planner")
+  UpperCorridorFollower()
+  : Node("upper_corridor_follower")
   {
     declareParameters();
     readParameters();
@@ -151,28 +190,33 @@ public:
     status_pub_ =
       create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
 
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
     using std::placeholders::_1;
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&CorridorPlannerNode::scanCallback, this, _1));
+      std::bind(&UpperCorridorFollower::scanCallback, this, _1));
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      odom_topic_, 10, std::bind(&CorridorPlannerNode::odomCallback, this, _1));
+      odom_topic_, 10, std::bind(&UpperCorridorFollower::odomCallback, this, _1));
     enable_sub_ = create_subscription<std_msgs::msg::Bool>(
-      enable_topic_, 10, std::bind(&CorridorPlannerNode::enableCallback, this, _1));
+      enable_topic_, 10, std::bind(&UpperCorridorFollower::enableCallback, this, _1));
 
     watchdog_timer_ = create_wall_timer(
       std::chrono::milliseconds(50),
-      std::bind(&CorridorPlannerNode::watchdogCallback, this));
+      std::bind(&UpperCorridorFollower::watchdogCallback, this));
 
     enabled_ = !require_enable_message_;
     last_scan_receive_time_ = now();
     last_odom_receive_time_ = now();
+    last_frame_id_ = base_frame_;
 
     RCLCPP_INFO(
       get_logger(),
-      "reactive_control_v2 v%s ready: scan=%s, command=%s, "
+      "reactive_control_v2 v%s upper_corridor_follower ready: "
+      "scan=%s, base_frame=%s, command=%s, "
       "envelope=%.2f m/side, full_terminal_debug=%s",
-      kPackageVersion, scan_topic_.c_str(), command_topic_.c_str(),
+      kPackageVersion, scan_topic_.c_str(), base_frame_.c_str(), command_topic_.c_str(),
       envelope_radius_, full_terminal_debug_ ? "true" : "false");
     if (full_terminal_debug_) {
       RCLCPP_INFO(
@@ -192,6 +236,8 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   // Topic and input parameters
   std::string scan_topic_;
@@ -201,6 +247,8 @@ private:
   std::string path_topic_;
   std::string marker_topic_;
   std::string status_topic_;
+  std::string base_frame_;
+  double transform_timeout_sec_{0.05};
   bool require_enable_message_{false};
   double scan_timeout_sec_{0.3};
   double odom_timeout_sec_{0.5};
@@ -288,6 +336,8 @@ private:
     declare_parameter<std::string>("path_topic", "/reactive_control_v2/local_path");
     declare_parameter<std::string>("marker_topic", "/reactive_control_v2/markers");
     declare_parameter<std::string>("status_topic", "/reactive_control_v2/status");
+    declare_parameter<std::string>("base_frame", "ego_racecar/base_link");
+    declare_parameter<double>("transform_timeout_sec", 0.05);
     declare_parameter<bool>("require_enable_message", false);
 
     declare_parameter<double>("scan_timeout_sec", 0.30);
@@ -346,6 +396,8 @@ private:
     path_topic_ = get_parameter("path_topic").as_string();
     marker_topic_ = get_parameter("marker_topic").as_string();
     status_topic_ = get_parameter("status_topic").as_string();
+    base_frame_ = normalizeFrameId(get_parameter("base_frame").as_string());
+    transform_timeout_sec_ = get_parameter("transform_timeout_sec").as_double();
     require_enable_message_ = get_parameter("require_enable_message").as_bool();
 
     scan_timeout_sec_ = get_parameter("scan_timeout_sec").as_double();
@@ -403,6 +455,11 @@ private:
 
   void validateParameters()
   {
+    if (base_frame_.empty()) {
+      base_frame_ = "base_link";
+      RCLCPP_WARN(get_logger(), "Empty base_frame parameter; using base_link.");
+    }
+    transform_timeout_sec_ = std::max(0.0, transform_timeout_sec_);
     forward_slice_step_m_ = std::max(0.05, forward_slice_step_m_);
     lateral_sample_step_m_ = std::max(0.02, lateral_sample_step_m_);
     forward_start_m_ = std::max(forward_slice_step_m_, forward_start_m_);
@@ -443,9 +500,85 @@ private:
     }
   }
 
-  BeamData preprocessScan(const sensor_msgs::msg::LaserScan & scan) const
+  bool lookupLaserToBaseTransform(
+    const sensor_msgs::msg::LaserScan & scan,
+    LaserToBaseTransform & output,
+    std::string & error) const
+  {
+    const std::string scan_frame = normalizeFrameId(scan.header.frame_id);
+    if (scan_frame.empty()) {
+      error = "LaserScan frame_id is empty";
+      return false;
+    }
+    if (scan_frame == base_frame_) {
+      output = LaserToBaseTransform{};
+      return true;
+    }
+
+    try {
+      const auto transform = tf_buffer_->lookupTransform(
+        base_frame_, scan_frame, rclcpp::Time(scan.header.stamp),
+        rclcpp::Duration::from_seconds(transform_timeout_sec_));
+      const auto & translation = transform.transform.translation;
+      const auto & rotation = transform.transform.rotation;
+      const double sin_yaw =
+        2.0 * (rotation.w * rotation.z + rotation.x * rotation.y);
+      const double cos_yaw =
+        1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z);
+      const double yaw = std::atan2(sin_yaw, cos_yaw);
+      output.x = translation.x;
+      output.y = translation.y;
+      output.cos_yaw = std::cos(yaw);
+      output.sin_yaw = std::sin(yaw);
+      return true;
+    } catch (const tf2::TransformException & exception) {
+      error = exception.what();
+      return false;
+    }
+  }
+
+  bool pointIsInStartRegion(
+    const Point2 & point,
+    const LaserToBaseTransform & laser_to_base) const
+  {
+    const double segment_length_squared =
+      laser_to_base.x * laser_to_base.x + laser_to_base.y * laser_to_base.y;
+    if (segment_length_squared < 1e-9) {
+      return std::hypot(point.x, point.y) <= envelope_radius_;
+    }
+    const double projection = clampValue(
+      (point.x * laser_to_base.x + point.y * laser_to_base.y) /
+      segment_length_squared, 0.0, 1.0);
+    const double nearest_x = projection * laser_to_base.x;
+    const double nearest_y = projection * laser_to_base.y;
+    return std::hypot(point.x - nearest_x, point.y - nearest_y) <= envelope_radius_;
+  }
+
+  bool obstacleClear(
+    const Point2 & point, const BeamData & beam_data) const
+  {
+    const double envelope_squared = envelope_radius_ * envelope_radius_;
+    for (const auto & obstacle : beam_data.obstacle_points) {
+      if (std::abs(obstacle.x - point.x) > envelope_radius_ ||
+        std::abs(obstacle.y - point.y) > envelope_radius_)
+      {
+        continue;
+      }
+      const double dx = obstacle.x - point.x;
+      const double dy = obstacle.y - point.y;
+      if (dx * dx + dy * dy < envelope_squared) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  BeamData preprocessScan(
+    const sensor_msgs::msg::LaserScan & scan,
+    const LaserToBaseTransform & laser_to_base) const
   {
     BeamData output;
+    output.laser_to_base = laser_to_base;
     const size_t count = scan.ranges.size();
     output.ranges.assign(count, scan_range_cap_m_);
     output.observed.assign(count, 0);
@@ -463,10 +596,19 @@ private:
 
     for (size_t i = 0; i < count; ++i) {
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
-      if (angle < planning_angle_min_rad_ || angle > planning_angle_max_rad_) {
-        continue;
+      const double direction_x =
+        laser_to_base.cos_yaw * std::cos(angle) -
+        laser_to_base.sin_yaw * std::sin(angle);
+      const double direction_y =
+        laser_to_base.sin_yaw * std::cos(angle) +
+        laser_to_base.cos_yaw * std::sin(angle);
+      const double base_direction_angle = std::atan2(direction_y, direction_x);
+      const bool in_planning_sector =
+        base_direction_angle >= planning_angle_min_rad_ &&
+        base_direction_angle <= planning_angle_max_rad_;
+      if (in_planning_sector) {
+        ++planning_beams;
       }
-      ++planning_beams;
       const double raw = scan.ranges[i];
       const bool finite_hit =
         std::isfinite(raw) && raw >= scan.range_min && raw <= scan.range_max;
@@ -477,11 +619,15 @@ private:
         output.ranges[i] = std::min(raw, usable_max);
         output.observed[i] = 1;
         output.hit[i] = raw < usable_max ? 1 : 0;
-        ++valid_beams;
+        if (in_planning_sector) {
+          ++valid_beams;
+        }
       } else if (clear_to_max) {
         output.ranges[i] = usable_max;
         output.observed[i] = 1;
-        ++valid_beams;
+        if (in_planning_sector) {
+          ++valid_beams;
+        }
       }
     }
 
@@ -521,13 +667,22 @@ private:
         continue;
       }
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
-      if (angle < planning_angle_min_rad_ || angle > planning_angle_max_rad_) {
+      const double direction_x =
+        laser_to_base.cos_yaw * std::cos(angle) -
+        laser_to_base.sin_yaw * std::sin(angle);
+      const double direction_y =
+        laser_to_base.sin_yaw * std::cos(angle) +
+        laser_to_base.cos_yaw * std::sin(angle);
+      const double base_direction_angle = std::atan2(direction_y, direction_x);
+      if (base_direction_angle < planning_angle_min_rad_ ||
+        base_direction_angle > planning_angle_max_rad_)
+      {
         continue;
       }
       const double range = std::max(
         0.0, output.ranges[i] - obstacle_endpoint_margin_m_);
-      output.obstacle_points.push_back(
-        Point2{range * std::cos(angle), range * std::sin(angle)});
+      output.obstacle_points.push_back(laser_to_base.laserToBase(
+          Point2{range * std::cos(angle), range * std::sin(angle)}));
     }
     return output;
   }
@@ -536,37 +691,30 @@ private:
     const double x, const double y, const sensor_msgs::msg::LaserScan & scan,
     const BeamData & beam_data) const
   {
-    const double angle = std::atan2(y, x);
-    if (angle < planning_angle_min_rad_ || angle > planning_angle_max_rad_) {
+    const Point2 point{x, y};
+    const double base_angle = std::atan2(y, x);
+    if (base_angle < planning_angle_min_rad_ || base_angle > planning_angle_max_rad_) {
       return false;
     }
-    const double index_f = (angle - scan.angle_min) / scan.angle_increment;
+    if (!obstacleClear(point, beam_data)) {
+      return false;
+    }
+
+    const Point2 laser_point = beam_data.laser_to_base.baseToLaser(point);
+    const double laser_angle = std::atan2(laser_point.y, laser_point.x);
+    const double index_f = (laser_angle - scan.angle_min) / scan.angle_increment;
     const int index = static_cast<int>(std::lround(index_f));
     if (index < 0 || index >= static_cast<int>(beam_data.ranges.size()) ||
       !beam_data.observed[static_cast<size_t>(index)])
     {
-      return false;
+      return pointIsInStartRegion(point, beam_data.laser_to_base);
     }
 
-    const double radial_distance = std::hypot(x, y);
+    const double radial_distance = std::hypot(laser_point.x, laser_point.y);
     if (radial_distance + obstacle_endpoint_margin_m_ >
       beam_data.ranges[static_cast<size_t>(index)])
     {
       return false;
-    }
-
-    const double envelope_squared = envelope_radius_ * envelope_radius_;
-    for (const auto & obstacle : beam_data.obstacle_points) {
-      if (std::abs(obstacle.x - x) > envelope_radius_ ||
-        std::abs(obstacle.y - y) > envelope_radius_)
-      {
-        continue;
-      }
-      const double dx = obstacle.x - x;
-      const double dy = obstacle.y - y;
-      if (dx * dx + dy * dy < envelope_squared) {
-        return false;
-      }
     }
     return true;
   }
@@ -929,17 +1077,40 @@ private:
     const BeamData & beam_data,
     ValidationFailure & failure) const
   {
-    const double angle = std::atan2(y, x);
-    failure.beam_angle_deg = angle * 180.0 / kPi;
-    failure.point_range_m = std::hypot(x, y);
+    const Point2 point{x, y};
     failure.required_clearance_m = envelope_radius_;
 
-    if (angle < planning_angle_min_rad_ || angle > planning_angle_max_rad_) {
+    double nearest_distance = std::numeric_limits<double>::infinity();
+    Point2 nearest_obstacle;
+    for (const auto & obstacle : beam_data.obstacle_points) {
+      const double distance = std::hypot(obstacle.x - x, obstacle.y - y);
+      if (distance < nearest_distance) {
+        nearest_distance = distance;
+        nearest_obstacle = obstacle;
+      }
+    }
+    failure.nearest_obstacle_distance_m = nearest_distance;
+    if (std::isfinite(nearest_distance)) {
+      failure.nearest_obstacle = nearest_obstacle;
+      failure.nearest_obstacle_available = true;
+    }
+    if (nearest_distance < envelope_radius_) {
+      failure.check_code = "OBSTACLE_ENVELOPE_COLLISION";
+      return;
+    }
+
+    const double base_angle = std::atan2(y, x);
+    if (base_angle < planning_angle_min_rad_ || base_angle > planning_angle_max_rad_) {
+      failure.beam_angle_deg = base_angle * 180.0 / kPi;
       failure.check_code = "OUTSIDE_PLANNING_ANGLE";
       return;
     }
 
-    const double index_f = (angle - scan.angle_min) / scan.angle_increment;
+    const Point2 laser_point = beam_data.laser_to_base.baseToLaser(point);
+    const double laser_angle = std::atan2(laser_point.y, laser_point.x);
+    failure.beam_angle_deg = laser_angle * 180.0 / kPi;
+    failure.point_range_m = std::hypot(laser_point.x, laser_point.y);
+    const double index_f = (laser_angle - scan.angle_min) / scan.angle_increment;
     const int index = static_cast<int>(std::lround(index_f));
     failure.beam_index = index;
     if (index < 0 || index >= static_cast<int>(beam_data.ranges.size())) {
@@ -959,17 +1130,6 @@ private:
       failure.observed_range_m)
     {
       failure.check_code = "BEYOND_OBSERVED_RANGE";
-      return;
-    }
-
-    double nearest_distance = std::numeric_limits<double>::infinity();
-    for (const auto & obstacle : beam_data.obstacle_points) {
-      nearest_distance = std::min(
-        nearest_distance, std::hypot(obstacle.x - x, obstacle.y - y));
-    }
-    failure.nearest_obstacle_distance_m = nearest_distance;
-    if (nearest_distance < envelope_radius_) {
-      failure.check_code = "OBSTACLE_ENVELOPE_COLLISION";
       return;
     }
 
@@ -1100,6 +1260,10 @@ private:
     if (failure.check_code == "OBSTACLE_ENVELOPE_COLLISION") {
       stream << ", clearance=" << failure.nearest_obstacle_distance_m
              << "<" << failure.required_clearance_m << " m";
+      if (failure.nearest_obstacle_available) {
+        stream << ", nearest_obstacle=(" << failure.nearest_obstacle.x
+               << "," << failure.nearest_obstacle.y << ")";
+      }
     } else if (failure.check_code == "BEYOND_OBSERVED_RANGE") {
       stream << ", point_range=" << failure.point_range_m
              << " m, observed_range=" << failure.observed_range_m
@@ -1240,34 +1404,53 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     scan_received_ = true;
     last_scan_receive_time_ = now();
-    last_frame_id_ = scan->header.frame_id;
-
-    if (full_terminal_debug_ && !first_scan_logged_) {
-      RCLCPP_INFO(
-        get_logger(),
-        "First LaserScan received: frame=%s, beams=%zu, angle_increment=%.6f rad",
-        scan->header.frame_id.c_str(), scan->ranges.size(), scan->angle_increment);
-      first_scan_logged_ = true;
-    }
+    last_frame_id_ = base_frame_;
 
     if (!enabled_) {
-      publishStop("DISABLED", "enable input is false", scan->header.frame_id);
+      publishStop("DISABLED", "enable input is false", base_frame_);
       return;
     }
     if (require_fresh_odom_ &&
       (!odom_received_ || (now() - last_odom_receive_time_).seconds() > odom_timeout_sec_))
     {
-      publishStop("ODOM_STALE", "fresh odometry is required", scan->header.frame_id);
+      publishStop("ODOM_STALE", "fresh odometry is required", base_frame_);
       return;
     }
     if (scan->ranges.empty() || scan->angle_increment <= 0.0) {
-      publishStop("INPUT_INVALID", "empty or malformed LaserScan", scan->header.frame_id);
+      publishStop("INPUT_INVALID", "empty or malformed LaserScan", base_frame_);
       return;
     }
 
-    const BeamData beam_data = preprocessScan(*scan);
+    LaserToBaseTransform laser_to_base;
+    std::string transform_error;
+    if (!lookupLaserToBaseTransform(*scan, laser_to_base, transform_error)) {
+      publishStop(
+        "TF_UNAVAILABLE",
+        "cannot transform LaserScan into configured base_frame", base_frame_);
+      if (full_terminal_debug_) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "TF lookup %s <- %s failed: %s",
+          base_frame_.c_str(), scan->header.frame_id.c_str(), transform_error.c_str());
+      }
+      return;
+    }
+
+    if (full_terminal_debug_ && !first_scan_logged_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "First LaserScan: frame=%s -> %s, beams=%zu, "
+        "laser_origin_in_base=(%.3f, %.3f), angle_increment=%.6f rad",
+        scan->header.frame_id.c_str(), base_frame_.c_str(), scan->ranges.size(),
+        laser_to_base.x, laser_to_base.y, scan->angle_increment);
+      first_scan_logged_ = true;
+    }
+
+    const BeamData beam_data = preprocessScan(*scan, laser_to_base);
     PlanResult result = makePlan(*scan, beam_data);
-    publishResult(result, scan->header);
+    std_msgs::msg::Header output_header = scan->header;
+    output_header.frame_id = base_frame_;
+    publishResult(result, output_header);
   }
 
   void watchdogCallback()
@@ -1375,7 +1558,7 @@ private:
     diagnostic_msgs::msg::DiagnosticArray array;
     array.header.stamp = stamp;
     diagnostic_msgs::msg::DiagnosticStatus status;
-    status.name = "reactive_control_v2/corridor_planner";
+    status.name = "reactive_control_v2/upper_corridor_follower";
     status.hardware_id = "lidar_corridor";
     status.message = result.state + ": " + result.reason;
     status.level = result.valid ?
@@ -1421,6 +1604,14 @@ private:
       std::isfinite(result.smoothed_failure.nearest_obstacle_distance_m) ?
       numberString(result.smoothed_failure.nearest_obstacle_distance_m) : "nan");
     add(
+      "smoothed_nearest_obstacle_x_m",
+      result.smoothed_failure.nearest_obstacle_available ?
+      numberString(result.smoothed_failure.nearest_obstacle.x) : "nan");
+    add(
+      "smoothed_nearest_obstacle_y_m",
+      result.smoothed_failure.nearest_obstacle_available ?
+      numberString(result.smoothed_failure.nearest_obstacle.y) : "nan");
+    add(
       "smoothed_required_clearance_m",
       numberString(result.smoothed_failure.required_clearance_m));
     add(
@@ -1437,6 +1628,14 @@ private:
       "raw_failure_clearance_m",
       std::isfinite(result.raw_failure.nearest_obstacle_distance_m) ?
       numberString(result.raw_failure.nearest_obstacle_distance_m) : "nan");
+    add(
+      "raw_nearest_obstacle_x_m",
+      result.raw_failure.nearest_obstacle_available ?
+      numberString(result.raw_failure.nearest_obstacle.x) : "nan");
+    add(
+      "raw_nearest_obstacle_y_m",
+      result.raw_failure.nearest_obstacle_available ?
+      numberString(result.raw_failure.nearest_obstacle.y) : "nan");
     add(
       "raw_required_clearance_m",
       numberString(result.raw_failure.required_clearance_m));
@@ -1585,7 +1784,7 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<CorridorPlannerNode>());
+  rclcpp::spin(std::make_shared<UpperCorridorFollower>());
   rclcpp::shutdown();
   return 0;
 }

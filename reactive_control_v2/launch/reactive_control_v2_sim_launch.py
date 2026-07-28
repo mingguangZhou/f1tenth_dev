@@ -27,8 +27,8 @@ def generate_launch_description():
         ),
         Node(
             package="reactive_control_v2",
-            executable="corridor_planner_node",
-            name="corridor_planner",
+            executable="upper_corridor_follower",
+            name="upper_corridor_follower",
             output="screen",
             parameters=[config],
             remappings=[
