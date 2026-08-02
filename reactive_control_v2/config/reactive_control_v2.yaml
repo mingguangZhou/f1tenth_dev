@@ -72,8 +72,8 @@ upper_corridor_follower:
     steering_filter_alpha: 0.40
 
     # Simple nominal speed profile
-    velocity_max_mps: 2.50
-    velocity_min_mps: 1.00
+    velocity_max_mps: 1.35
+    velocity_min_mps: 0.95
     slow_reach_distance_m: 1.50
     stop_reach_distance_m: 0.60
 
@@ -135,8 +135,8 @@ lower_safety_controller:
     fallback_min_gap_width_deg: 8.0
     fallback_steering_gain: 1.0
     fallback_steering_limit_deg: 25.0
-    fallback_speed_max_mps: 1.0
-    fallback_speed_min_mps: 0.4
+    fallback_speed_max_mps: 0.95
+    fallback_speed_min_mps: 0.75
     # Target the centre of beams at least this fraction of the selected gap's
     # maximum depth. This avoids the old near-zero-angle deepest-beam tie-break.
     fallback_deepest_region_ratio: 0.90
