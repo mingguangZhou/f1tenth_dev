@@ -1,17 +1,25 @@
 # reactive_control_v2
 
-Package version: `0.1.5`
+Package version: `0.2.5`
 
-`reactive_control_v2` is a compact, forward-only ROS 2 Foxy controller for
-driving without a global map, localization result, or raceline reference.
+`reactive_control_v2` is a compact ROS 2 Foxy fallback stack for driving
+without a global map, localization result, or raceline reference.
 
 The `upper_corridor_follower` node transforms the current LiDAR scan into the
 configured `base_frame`, converts it into connected free-space corridor
 branches, selects a stable branch, generates a smooth local center path, and
 uses pure pursuit to publish a nominal Ackermann command.
 
-This first version deliberately contains no reverse recovery, special 0.5 m
-gap mode, PF switching, or independent emergency-braking layer.
+The `lower_safety_controller` is the final command gateway. It normally passes
+the selected upper command through, applies only very loose absolute sanity
+limits, provides a slow Follow-the-Gap (FTG) fallback when the selected command
+fails or, when enabled, the upper reports `PATH_INVALID`/`BLOCKED`, and otherwise stops. It
+also contains a deliberately simple narrow-forward emergency distance/TTC
+brake.
+
+This V0 lower controller deliberately does **not** compare the commanded
+Ackermann trajectory against the scan. Reverse-and-resume recovery, dead-end
+confirmation, PF switching, and rear-safety logic remain future work.
 
 ## I/O
 
@@ -22,21 +30,124 @@ gap mode, PF switching, or independent emergency-braking layer.
 | `/scan` | `sensor_msgs/msg/LaserScan` | Yes | Local free-space geometry |
 | `/ego_racecar/odom` | `nav_msgs/msg/Odometry` | No by default | Speed reporting and optional freshness gate |
 | `/reactive_control_v2/enable` | `std_msgs/msg/Bool` | No by default | Reserved external mode-enable input |
+| `/reactive_control_v2/selected_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Yes for nominal mode | Command selected by the upper stack or drive arbitrator |
+| `/reactive_control_v2/status` | `diagnostic_msgs/msg/DiagnosticArray` | No | Lets the lower layer recognize upper `PATH_INVALID`/`BLOCKED` explicitly |
 
 ### Outputs
 
 | Topic | Type | Purpose |
 |---|---|---|
-| `/reactive_control_v2/nominal_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Nominal forward command; remapped to `/drive` by the simulator launch |
+| `/reactive_control_v2/nominal_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Upper corridor follower's nominal command |
 | `/reactive_control_v2/local_path` | `nav_msgs/msg/Path` | Smoothed selected corridor center path |
 | `/reactive_control_v2/markers` | `visualization_msgs/msg/MarkerArray` | Corridor fill/edges, lookahead point, and steering arrow |
 | `/reactive_control_v2/status` | `diagnostic_msgs/msg/DiagnosticArray` | State, stop reason, corridor reach/width, and current command |
+| `/reactive_control_v2/safe_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Lower controller's final safe command; remapped to `/drive` by the simulator launch |
+| `/reactive_control_v2/lower_safety_status` | `diagnostic_msgs/msg/DiagnosticArray` | Lower mode/reason plus recovery-relevant evidence |
 
-Status names are `DRIVING`, `BLOCKED`, `WAITING_FOR_SCAN`, `TF_UNAVAILABLE`,
-`INPUT_INVALID`, `ODOM_STALE`, and `DISABLED`. Every non-driving state
-publishes zero speed.
+The standalone simulator launch wires the nodes as follows:
 
-By default, the terminal prints one concise warning only when the planner
+```text
+upper_corridor_follower /nominal_cmd
+              -> lower_safety_controller /selected_cmd
+              -> /drive
+```
+
+When `drive_arbitration` is used, configure its output as
+`/reactive_control_v2/selected_cmd` and keep the lower output as the only source
+connected to `/drive`. Also set `enable_fallback_on_upper_failure_status: false` until the
+arbitrator publishes status for its actually selected source; otherwise an
+unselected upper-corridor `BLOCKED` status could override a healthy raceline
+command.
+
+Upper status names include `DRIVING`, `PATH_VALIDATION_PENDING`, `PATH_INVALID`, `BLOCKED`,
+`WAITING_FOR_SCAN`, `TF_UNAVAILABLE`, `INPUT_INVALID`, `ODOM_STALE`, and
+`DISABLED`. Every non-driving upper state publishes zero speed.
+
+Lower modes are `NOMINAL`, `FALLBACK_FTG`, and `EMERGENCY_STOP`.
+
+## Lower safety controller V0
+
+The lower decision order is intentionally short and deterministic:
+
+1. Require a fresh, sufficiently valid scan. Otherwise publish STOP.
+2. Apply the narrow-forward emergency distance/TTC brake. This check is
+   independent of commanded steering and does not predict a swept path.
+3. If the selected command is fresh and finite, pass it through after the two
+   loose absolute clamps.
+4. If the command is stale/non-finite, generate a conservative FTG command. A
+   fresh upper `PATH_INVALID` or `BLOCKED` also requests FTG only when
+   `enable_fallback_on_upper_failure_status: true`.
+5. FTG bubbles the nearest obstacle, scores complete gaps using width and
+   depth, and targets the centre of the deepest region inside the best gap.
+6. If FTG cannot find a sufficiently wide, clear gap, publish STOP.
+
+A valid zero-speed command is not automatically treated as a controller
+failure. This preserves intentional upper stops. Only an explicit eligible
+upper status or a stale/non-finite command requests FTG.
+
+`enable_fallback_on_upper_failure_status` is the clearer replacement for the
+old `use_upper_status_fallback` name:
+
+- `true`: a fresh upper `PATH_INVALID` or `BLOCKED` makes the lower controller
+  use FTG if a usable gap exists, otherwise STOP;
+- `false`: the lower ignores those upper states and passes a fresh finite upper
+  STOP command through. Its own scan, TTC, timeout, and malformed-command safety
+  checks remain active.
+
+The supplied YAML keeps the previous effective value, `false`.
+
+The supplied final command limits are:
+
+```yaml
+absolute_speed_limit_mps: 20.0
+absolute_steering_limit_deg: 25.0
+```
+
+The speed value is a loose sanity bound. Steering is the approximate physical
+limit. Finite excesses are clamped; `NaN`, infinity and timeouts request FTG.
+Negative finite nominal speed is allowed by this gateway so the interface is
+ready for a future bounded reverse-recovery state. V0 FTG itself is
+forward-only.
+
+The physical and fallback steering clamps are both set to approximately
+`+/-25 degrees`. The upper follower retains its existing, smaller tuned limit.
+
+The corrected conservative FTG keeps the existing v0.2.3 scan classification,
+minimum-clearance rule, nearest-obstacle bubble, emergency brake, and low-speed
+range. Its selection is now:
+
+1. Divide the remaining free beams into continuous gaps.
+2. Reject gaps narrower than `fallback_min_gap_width_deg`.
+3. Score each remaining gap mainly by width, then by mean and maximum depth;
+   use only a small penalty for turning away from straight ahead.
+4. Select beams at least `fallback_deepest_region_ratio` times the maximum
+   depth in the winning gap.
+5. Aim at the weighted centre of that deepest region and clamp steering to
+   `fallback_steering_limit_deg`.
+
+This removes the old tie-break that chose the deepest beam nearest zero angle,
+which could make the car continue almost straight along the inside edge of a
+large gap.
+
+The lower status includes `stop_duration_sec`, `current_speed_mps`,
+`front_min_distance_m`, `fallback_available`, and the fallback target. These
+are diagnostic outputs now and provide the inputs needed for later persistent
+stuck/dead-end confirmation. V0 never commands reverse.
+
+FTG terminal tuning information is independent of the upper follower's
+`full_terminal_debug`. It is disabled by default:
+
+```yaml
+fallback_terminal_debug: false
+fallback_terminal_debug_period_sec: 0.50
+```
+
+When enabled, it periodically prints scan validity, nearest obstacle and bubble
+angle, selected gap width/depth/score, target angle/range, and final FTG speed
+and steering. Keep it off for normal running to avoid unnecessary terminal and
+ROS log output.
+
+By default, the upper terminal prints one concise warning only when the planner
 enters a stop state or its stop reason changes. Set `full_terminal_debug: true`
 to restore the complete transition and periodic diagnostics. In that mode,
 `terminal_status_period_sec` (default `2.0 s`) controls the periodic interval.
@@ -59,6 +170,39 @@ and configured endpoint margin. The same fields are published on the status
 topic. A red RViz sphere marks the smoothed-path failure; a magenta sphere marks
 the raw-path failure.
 
+## Swept-path validation and hysteresis
+
+The upper follower validates densely sampled points along the smoothed path. If
+that fails, it validates the raw corridor-midpoint path. The feature is
+controlled explicitly in the upper YAML:
+
+```yaml
+enable_swept_path_validation: true
+swept_path_failure_confirmation_cycles: 2
+swept_path_recovery_confirmation_cycles: 3
+```
+
+With the supplied values, the first cycle in which both paths fail publishes
+zero speed and `PATH_VALIDATION_PENDING`. This immediate STOP is passed through
+by the lower controller; it does not request FTG. A second consecutive failure
+latches `PATH_INVALID`, after which the lower may use FTG if
+`enable_fallback_on_upper_failure_status` is true. Once latched, three
+consecutive valid path cycles are required before returning to `DRIVING`.
+Unrelated states such as `BLOCKED`, invalid input, TF failure, and the lower
+controller's independent emergency brake do not use these counters.
+
+For controlled low-speed debugging only:
+
+```yaml
+enable_swept_path_validation: false
+```
+
+This skips validation of both smoothed and raw paths, clears its hysteresis
+state, and prevents the upper from generating swept-path `PATH_INVALID` or
+`PATH_VALIDATION_PENDING`. Consequently, there is no swept-path status for the
+lower controller to turn into FTG. Other upper planning checks and all lower
+safety checks are unchanged.
+
 ## Algorithm
 
 1. Resolve the existing static TF from the LaserScan frame to `base_frame`,
@@ -72,7 +216,9 @@ the raw-path failure.
    otherwise select by forward reach, then minimum width, then heading change.
 6. Smooth the interval midpoints spatially and temporally, clamping every point
    back inside the current corridor after each smoothing operation.
-7. Select the first path point beyond `lookahead_distance_m` and apply the same
+7. When enabled, validate the smoothed path and then the raw fallback path;
+   apply entry/recovery hysteresis only to this swept-path result.
+8. Select the first path point beyond `lookahead_distance_m` and apply the same
    pure-pursuit relationship as the previous path-following controller:
 
    ```text
@@ -80,7 +226,7 @@ the raw-path failure.
    steering  = atan(wheelbase * curvature)
    ```
 
-8. Interpolate speed from `velocity_max_mps` at zero steering to
+9. Interpolate speed from `velocity_max_mps` at zero steering to
    `velocity_min_mps` at maximum steering. A short visible corridor applies an
    additional linear slowdown and ultimately commands zero.
 
@@ -113,14 +259,20 @@ colcon build --packages-select reactive_control_v2
 source install/setup.bash
 ```
 
-The correct executable starts with:
+The correct upper executable starts with:
 
 ```text
-reactive_control_v2 v0.1.5 upper_corridor_follower ready: ... full_terminal_debug=false
+reactive_control_v2 v0.2.5 upper_corridor_follower ready: ... swept_path_validation=true (2 fail/3 recover), full_terminal_debug=false
 ```
 
-With `full_terminal_debug: true`, it also confirms receipt of the first
-LaserScan and prints the first planning result. If the startup line does not contain `v0.1.5`, the shell is still
+The lower executable also prints:
+
+```text
+reactive_control_v2 v0.2.5 lower_safety_controller ready: ... upper_failure_status_fallback=false, command_limits=|speed|<=20.0 m/s and |steering|<=25.0 deg, ftg_debug=false
+```
+
+With upper `full_terminal_debug: true`, it also confirms receipt of the first
+LaserScan and prints the first planning result. If the startup line does not contain `v0.2.5`, the shell is still
 resolving an older installed copy. Check it with:
 
 ```bash
@@ -146,13 +298,66 @@ source install/setup.bash
 ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py
 ```
 
-The launch remaps the nominal command to `/drive`. To inspect the nominal
-command without controlling the car:
+The default `drive_command_source:=stack` starts both nodes. The upper command
+enters the lower safety gateway, and only the lower `safe_cmd` is remapped to
+`/drive`:
+
+```bash
+ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
+  drive_command_source:=stack
+```
+
+To bypass the lower controller and let only the upper follower publish `/drive`
+for debugging:
+
+```bash
+ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
+  drive_command_source:=upper
+```
+
+In this mode, the lower controller is not started. Use it only for controlled
+tests because lower scan validation, FTG, emergency braking, and final sanity
+limits are all bypassed.
+
+To run only the lower controller's built-in FTG fallback:
+
+```bash
+ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
+  drive_command_source:=lower
+```
+
+In lower-only mode, the upper follower is not started. The lower selected-command
+input is intentionally isolated, so `selected command unavailable or stale`
+selects `FALLBACK_FTG`. This is the expected lower-only behavior, not an error.
+Lower emergency scan checks remain active.
+
+The three modes are therefore:
+
+| `drive_command_source` | Nodes started | Command sent to `/drive` |
+|---|---|---|
+| `stack` (default) | Upper + lower | Lower gateway output; normally passes the upper command |
+| `upper` | Upper only | Upper corridor-following command |
+| `lower` | Lower only | Lower built-in FTG fallback command |
+
+To inspect the complete upper-plus-lower stack without controlling the car:
 
 ```bash
 ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
   drive_topic:=/reactive_control_v2/test_drive
 ```
+
+To supervise an external drive-arbitrator output instead of the included upper
+command, use `stack` and pass its topic:
+
+```bash
+ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
+  drive_command_source:=stack \
+  nominal_cmd_topic:=/drive_arbitration/selected_cmd
+```
+
+Make sure that arbitrator output is not simultaneously connected directly to
+`/drive`, and set `enable_fallback_on_upper_failure_status: false` in the lower-controller
+YAML for this arrangement.
 
 The simulator launch intentionally does not start another RViz process. In the
 RViz window already opened by the simulator, add:
@@ -238,6 +443,7 @@ ROS 2 launch still prints the standard log-directory line, but it now points to
 ```bash
 ros2 topic hz /scan
 ros2 topic echo /reactive_control_v2/status
+ros2 topic echo /reactive_control_v2/lower_safety_status
 ros2 topic echo /reactive_control_v2/local_path --once
 ros2 topic echo /drive
 ```
@@ -262,6 +468,29 @@ The supplied values are conservative simulator starting values, not final
 onboard racing values.
 
 ## Version
+
+`0.2.5` returns to the `0.2.3` architecture and replaces only its conservative
+FTG gap/target selection. Gaps are scored using width and depth, and the target
+is the centre of the deepest part of the selected gap so the fallback turns
+clearly into an opening. It also uses the physical `+/-25 degree` steering
+limit and adds optional FTG terminal diagnostics, disabled by default.
+
+`0.2.3` corrects the launch selector semantics: `upper` now starts only the
+upper follower, `lower` starts only the lower FTG controller, and `stack`
+(the default) starts the complete upper-to-lower safety path. No controller
+tuning values or C++ control logic changed.
+
+`0.2.2` adds an explicit swept-path validation switch, validation-only entry
+and recovery hysteresis, the clearer
+`enable_fallback_on_upper_failure_status` lower parameter, and the
+`drive_command_source` launch selector for upper-only or lower-gateway testing.
+Existing tuning values are unchanged.
+
+`0.2.0` adds the minimal lower safety controller, conservative built-in FTG,
+simple forward emergency braking, recovery-ready diagnostics, and simulator
+launch wiring in which only the lower controller publishes the final command.
+The lower layer does not perform scan-versus-command trajectory validation and
+does not reverse.
 
 `0.1.1` adds state-change/periodic terminal diagnostics, dark-orange corridor
 boundaries, temporary ROS log-directory instructions, and a simulator launch

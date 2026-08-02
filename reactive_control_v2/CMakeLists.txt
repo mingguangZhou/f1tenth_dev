@@ -41,7 +41,16 @@ ament_target_dependencies(upper_corridor_follower
   visualization_msgs
 )
 
-install(TARGETS upper_corridor_follower
+add_executable(lower_safety_controller src/lower_safety_controller.cpp)
+ament_target_dependencies(lower_safety_controller
+  ackermann_msgs
+  diagnostic_msgs
+  nav_msgs
+  rclcpp
+  sensor_msgs
+)
+
+install(TARGETS upper_corridor_follower lower_safety_controller
   DESTINATION lib/${PROJECT_NAME}
 )
 

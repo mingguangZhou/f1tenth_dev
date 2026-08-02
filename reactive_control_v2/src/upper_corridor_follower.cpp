@@ -39,7 +39,7 @@ namespace
 // Small mathematical and formatting helpers are kept outside the ROS node because
 // they do not depend on node state.
 constexpr double kPi = 3.14159265358979323846;
-constexpr char kPackageVersion[] = "0.1.5";
+constexpr char kPackageVersion[] = "0.2.5";
 
 double degToRad(const double degrees)
 {
@@ -235,9 +235,12 @@ public:
       get_logger(),
       "reactive_control_v2 v%s upper_corridor_follower ready: "
       "scan=%s, base_frame=%s, command=%s, "
-      "envelope=%.2f m/side, full_terminal_debug=%s",
+      "envelope=%.2f m/side, swept_path_validation=%s (%d fail/%d recover), "
+      "full_terminal_debug=%s",
       kPackageVersion, scan_topic_.c_str(), base_frame_.c_str(), command_topic_.c_str(),
-      envelope_radius_, full_terminal_debug_ ? "true" : "false");
+      envelope_radius_, enable_swept_path_validation_ ? "true" : "false",
+      swept_path_failure_confirmation_cycles_, swept_path_recovery_confirmation_cycles_,
+      full_terminal_debug_ ? "true" : "false");
     if (full_terminal_debug_) {
       RCLCPP_INFO(
         get_logger(),
@@ -314,6 +317,13 @@ private:
   double slow_reach_distance_m_{1.50};
   double stop_reach_distance_m_{0.60};
 
+  // Swept-path validation can be disabled for controlled debugging. Its
+  // hysteresis applies only to the transition into/out of PATH_INVALID; other
+  // planner failures and the lower controller's own safety checks are immediate.
+  bool enable_swept_path_validation_{true};
+  int swept_path_failure_confirmation_cycles_{2};
+  int swept_path_recovery_confirmation_cycles_{3};
+
   // Debug parameters
   bool publish_visualization_{true};
   double marker_lifetime_sec_{0.25};
@@ -334,6 +344,9 @@ private:
   int current_side_{0};
   int pending_side_{0};
   int pending_side_cycles_{0};
+  int swept_path_failure_cycles_{0};
+  int swept_path_recovery_cycles_{0};
+  bool swept_path_failure_latched_{false};
   double previous_steering_{0.0};
   std::string last_frame_id_;
   std::string last_terminal_state_;
@@ -403,6 +416,10 @@ private:
     declare_parameter<double>("slow_reach_distance_m", 1.50);
     declare_parameter<double>("stop_reach_distance_m", 0.60);
 
+    declare_parameter<bool>("enable_swept_path_validation", true);
+    declare_parameter<int>("swept_path_failure_confirmation_cycles", 2);
+    declare_parameter<int>("swept_path_recovery_confirmation_cycles", 3);
+
     declare_parameter<bool>("publish_visualization", true);
     declare_parameter<double>("marker_lifetime_sec", 0.25);
     declare_parameter<double>("visualization_period_sec", 0.10);
@@ -469,6 +486,13 @@ private:
     slow_reach_distance_m_ = get_parameter("slow_reach_distance_m").as_double();
     stop_reach_distance_m_ = get_parameter("stop_reach_distance_m").as_double();
 
+    enable_swept_path_validation_ =
+      get_parameter("enable_swept_path_validation").as_bool();
+    swept_path_failure_confirmation_cycles_ =
+      get_parameter("swept_path_failure_confirmation_cycles").as_int();
+    swept_path_recovery_confirmation_cycles_ =
+      get_parameter("swept_path_recovery_confirmation_cycles").as_int();
+
     publish_visualization_ = get_parameter("publish_visualization").as_bool();
     marker_lifetime_sec_ = get_parameter("marker_lifetime_sec").as_double();
     visualization_period_sec_ =
@@ -501,6 +525,10 @@ private:
     temporal_smoothing_alpha_ = clampValue(temporal_smoothing_alpha_, 0.0, 1.0);
     steering_filter_alpha_ = clampValue(steering_filter_alpha_, 0.0, 1.0);
     switch_confirmation_cycles_ = std::max(1, switch_confirmation_cycles_);
+    swept_path_failure_confirmation_cycles_ =
+      std::max(1, swept_path_failure_confirmation_cycles_);
+    swept_path_recovery_confirmation_cycles_ =
+      std::max(1, swept_path_recovery_confirmation_cycles_);
     velocity_min_mps_ = std::max(0.0, velocity_min_mps_);
     velocity_max_mps_ = std::max(velocity_min_mps_, velocity_max_mps_);
     slow_reach_distance_m_ =
@@ -1308,24 +1336,27 @@ private:
     std::vector<Point2> raw_path;
     result.path = generatePath(result.branch, raw_path);
     ValidationFailure smoothed_failure;
-    // Prefer the smoother candidate. If smoothing created a collision or moved
-    // outside observed space, retry the unsmoothed midpoint path for this same
-    // selected branch; these are not alternative left/right branches.
-    if (!pathIsValid(
-        result.path, scan, beam_data, "smoothed", smoothed_failure))
-    {
-      result.smoothed_failure = smoothed_failure;
-      ValidationFailure raw_failure;
-      if (pathIsValid(raw_path, scan, beam_data, "raw", raw_failure)) {
-        result.path = std::move(raw_path);
-        result.used_raw_fallback = true;
-      } else {
-        // Both geometric candidates are invalid, so no nominal command is safe.
-        result.raw_failure = raw_failure;
-        result.state = "PATH_INVALID";
-        result.reason =
-          "both smoothed and raw corridor midlines fail swept-path validation";
-        return result;
+    if (enable_swept_path_validation_) {
+      // Prefer the smoother candidate. If smoothing created a collision or moved
+      // outside observed space, retry the unsmoothed midpoint path for this same
+      // selected branch; these are not alternative left/right branches.
+      if (!pathIsValid(
+          result.path, scan, beam_data, "smoothed", smoothed_failure))
+      {
+        result.smoothed_failure = smoothed_failure;
+        ValidationFailure raw_failure;
+        if (pathIsValid(raw_path, scan, beam_data, "raw", raw_failure)) {
+          result.path = std::move(raw_path);
+          result.used_raw_fallback = true;
+        } else {
+          // Both geometric candidates are invalid. Hysteresis is applied after
+          // makePlan(), before this result is published or consumed downstream.
+          result.raw_failure = raw_failure;
+          result.state = "PATH_INVALID";
+          result.reason =
+            "both smoothed and raw corridor midlines fail swept-path validation";
+          return result;
+        }
       }
     }
     // Only a path that passed complete validation may influence the next scan's
@@ -1376,6 +1407,68 @@ private:
       "valid connected corridor") :
       "insufficient corridor reach";
     return result;
+  }
+
+  void applySweptPathValidationHysteresis(PlanResult & result)
+  {
+    if (!enable_swept_path_validation_) {
+      swept_path_failure_cycles_ = 0;
+      swept_path_recovery_cycles_ = 0;
+      swept_path_failure_latched_ = false;
+      return;
+    }
+
+    if (result.state == "PATH_INVALID") {
+      swept_path_recovery_cycles_ = 0;
+      if (!swept_path_failure_latched_) {
+        swept_path_failure_cycles_ = std::min(
+          swept_path_failure_cycles_ + 1,
+          swept_path_failure_confirmation_cycles_);
+        if (swept_path_failure_cycles_ >= swept_path_failure_confirmation_cycles_) {
+          swept_path_failure_latched_ = true;
+        } else {
+          // Stop immediately, but do not request lower-layer FTG until the
+          // geometric failure has persisted for the configured number of scans.
+          result.state = "PATH_VALIDATION_PENDING";
+          result.reason =
+            "swept-path failure awaiting confirmation (" +
+            std::to_string(swept_path_failure_cycles_) + "/" +
+            std::to_string(swept_path_failure_confirmation_cycles_) + ")";
+        }
+      }
+      return;
+    }
+
+    if (!swept_path_failure_latched_) {
+      // Only consecutive PATH_INVALID results count toward entry.
+      swept_path_failure_cycles_ = 0;
+      swept_path_recovery_cycles_ = 0;
+      return;
+    }
+
+    if (result.valid) {
+      swept_path_recovery_cycles_ = std::min(
+        swept_path_recovery_cycles_ + 1,
+        swept_path_recovery_confirmation_cycles_);
+      if (swept_path_recovery_cycles_ >= swept_path_recovery_confirmation_cycles_) {
+        swept_path_failure_latched_ = false;
+        swept_path_failure_cycles_ = 0;
+        swept_path_recovery_cycles_ = 0;
+      } else {
+        // Keep PATH_INVALID latched so the lower controller remains in FTG (if
+        // enabled) until free-path recovery is stable for consecutive scans.
+        result.valid = false;
+        result.state = "PATH_INVALID";
+        result.reason =
+          "swept-path recovery awaiting confirmation (" +
+          std::to_string(swept_path_recovery_cycles_) + "/" +
+          std::to_string(swept_path_recovery_confirmation_cycles_) + ")";
+      }
+    } else {
+      // Unrelated planner failures keep their own immediate state and do not
+      // count as proof that swept-path validation has recovered.
+      swept_path_recovery_cycles_ = 0;
+    }
   }
 
   std::string validationFailureText(const ValidationFailure & failure) const
@@ -1600,6 +1693,7 @@ private:
 
     const BeamData beam_data = preprocessScan(*scan, laser_to_base);
     PlanResult result = makePlan(*scan, beam_data);
+    applySweptPathValidationHysteresis(result);
     // Every published geometry item is now expressed in base_frame.
     std_msgs::msg::Header output_header = scan->header;
     output_header.frame_id = base_frame_;
@@ -1627,6 +1721,9 @@ private:
     current_side_ = 0;
     pending_side_ = 0;
     pending_side_cycles_ = 0;
+    swept_path_failure_cycles_ = 0;
+    swept_path_recovery_cycles_ = 0;
+    swept_path_failure_latched_ = false;
     previous_steering_ = 0.0;
   }
 
@@ -1750,8 +1847,17 @@ private:
     add("current_odom_speed_mps", numberString(current_speed_mps_));
     add("selected_side", std::to_string(current_side_));
     add(
+      "swept_path_validation_enabled",
+      enable_swept_path_validation_ ? "true" : "false");
+    add("swept_path_failure_cycles", std::to_string(swept_path_failure_cycles_));
+    add("swept_path_recovery_cycles", std::to_string(swept_path_recovery_cycles_));
+    add(
+      "swept_path_failure_latched",
+      swept_path_failure_latched_ ? "true" : "false");
+    add(
       "path_source",
-      result.state == "PATH_INVALID" ? "invalid" :
+      (result.state == "PATH_INVALID" || result.state == "PATH_VALIDATION_PENDING") ?
+      "invalid" :
       (result.used_raw_fallback ? "raw_fallback" : "smoothed"));
     add(
       "smoothed_validation_failed",

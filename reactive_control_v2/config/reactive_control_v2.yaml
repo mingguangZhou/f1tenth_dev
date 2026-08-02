@@ -1,13 +1,13 @@
 upper_corridor_follower:
   ros__parameters:
-    use_sim_time: true
+    use_sim_time: false
 
     # ROS interfaces
     scan_topic: "/scan"
-    odom_topic: "/ego_racecar/odom"
+    odom_topic: "/odom"
     # All paths, control geometry, validation and markers use this frame.
     # LaserScan endpoints are transformed here through the existing static TF.
-    base_frame: "ego_racecar/base_link"
+    base_frame: "base_link"
     transform_timeout_sec: 0.05
     enable_topic: "/reactive_control_v2/enable"
     command_topic: "/reactive_control_v2/nominal_cmd"
@@ -91,7 +91,7 @@ upper_corridor_follower:
 
 lower_safety_controller:
   ros__parameters:
-    use_sim_time: true
+    use_sim_time: false
 
     # ROS interfaces. In the standalone simulator launch, selected_cmd is
     # remapped to the upper follower's nominal_cmd and safe_cmd to /drive.

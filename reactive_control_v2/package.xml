@@ -2,8 +2,8 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>reactive_control_v2</name>
-  <version>0.1.5</version>
-  <description>Forward-only LiDAR corridor planning and nominal control for F1TENTH.</description>
+  <version>0.2.5</version>
+  <description>Upper LiDAR corridor following and lower safety/fallback control for F1TENTH.</description>
 
   <maintainer email="mingguang_zhou@berkeley.edu">Mingguang Zhou</maintainer>
   <license>MIT</license>

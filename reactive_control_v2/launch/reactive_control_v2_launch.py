@@ -86,7 +86,7 @@ def launch_nodes(context):
 def generate_launch_description():
     package_share = get_package_share_directory("reactive_control_v2")
     default_config = os.path.join(
-        package_share, "config", "reactive_control_v2_sim.yaml"
+        package_share, "config", "reactive_control_v2.yaml"
     )
     return LaunchDescription([
         DeclareLaunchArgument(
