@@ -1,6 +1,6 @@
 # reactive_control_v2
 
-Package version: `0.2.9`
+Package version: `0.3.0`
 
 `reactive_control_v2` is a compact ROS 2 Foxy fallback stack for driving
 without a global map, localization result, or raceline reference.
@@ -82,9 +82,11 @@ The lower decision order is intentionally short and deterministic:
 5. FTG bubbles the nearest obstacle, scores complete gaps using width and
    depth, and targets the centre of the deepest region inside the best gap.
 6. If FTG cannot find a sufficiently wide, clear gap, publish STOP.
-7. If a forward dead end or command-versus-VESC-speed mismatch persists, and
+7. Apply bounded, hysteretic low-speed assistance to eligible nonzero forward
+   or reverse demands when VESC odometry remains in the configured stall zone.
+8. If a forward dead end or command-versus-VESC-speed mismatch persists, and
    scan/odometry/reverse-side evidence are healthy, enter bounded reverse.
-8. Stop reversing after stable forward FTG recovery or the configured reverse
+9. Stop reversing after stable forward FTG recovery or the configured reverse
    limit, then publish zero command until the vehicle is fully stationary.
 
 A valid zero-speed command is not automatically treated as a controller
@@ -135,8 +137,9 @@ This removes the old tie-break that chose the deepest beam nearest zero angle,
 which could make the car continue almost straight along the inside edge of a
 large gap.
 
-The lower status includes the mode/reason, VESC speed health, front emergency
-state, raw and stable FTG availability, reverse attempt/distance/duration,
+The lower status includes the mode/reason, VESC speed health, low-speed-assist
+request/output/shortfall, front emergency state, raw and stable FTG availability,
+reverse attempt/distance/duration,
 reverse-side evidence, and the fallback target.
 
 FTG terminal tuning information is independent of the upper follower's
@@ -151,6 +154,36 @@ When enabled, it periodically prints scan validity, nearest obstacle and bubble
 angle, selected gap width/depth/score, target angle/range, and final FTG speed
 and steering. Keep it off for normal running to avoid unnecessary terminal and
 ROS log output.
+
+## Low-speed assistance
+
+The lower controller can temporarily raise a nonzero forward or reverse demand
+when VESC odometry shows that the vehicle remains in the low-speed stall zone:
+
+```yaml
+enable_low_speed_assist: true
+low_speed_assist_demand_max_mps: 1.00
+low_speed_assist_output_mps: 1.00
+low_speed_assist_entry_shortfall_mps: 0.50
+low_speed_assist_stall_speed_mps: 0.30
+low_speed_assist_confirmation_sec: 0.30
+low_speed_assist_exit_shortfall_mps: 0.20
+```
+
+`low_speed_assist_demand_max_mps` is only the eligibility ceiling.
+`low_speed_assist_output_mps` independently defines the forced absolute command,
+so the supplied output is `+1.00 m/s` for a forward request and `-1.00 m/s` for
+a reverse request. Shortfall is always nonnegative and magnitude based:
+
+```text
+max(0, |requested speed| - |measured speed|)
+```
+
+Assistance never turns a zero demand into motion and is disabled during
+`EMERGENCY_STOP` and `RECOVERY_SETTLE`. It requires fresh scan and odometry,
+preserves steering during ordinary forward control, and repeats the emergency
+distance/TTC check using the assisted forward speed. It exits when shortfall is
+at or below `low_speed_assist_exit_shortfall_mps`.
 
 ## Reverse recovery
 
@@ -177,9 +210,10 @@ Both require a fresh valid scan, fresh finite odometry, remaining recovery
 attempts, and acceptable available rear-side scan evidence. Stale scan or
 odometry always produces STOP and never initiates reverse.
 
-Reverse uses `-reverse_speed_mps` and retains the sign of the last meaningful
-forward steering command, clamped by `reverse_steering_limit_deg`. This
-approximately retraces the previous Ackermann path. It is bounded by both
+Reverse uses `-reverse_speed_mps` with zero steering. Low-speed assistance may
+temporarily replace its magnitude with `low_speed_assist_output_mps` while
+preserving the negative direction.
+The reverse remains bounded by both
 `reverse_max_distance_m` and `reverse_max_duration_sec`.
 
 During reverse, FTG continues to be evaluated every control cycle. Reversing
@@ -191,7 +225,8 @@ until VESC feedback stays within the stationary threshold for
 corridor follower regains control later through its existing recovery
 hysteresis.
 
-The attempt counter resets only after measured forward movement persists for
+The attempt counter resets only after measured forward speed reaches
+`reverse_attempt_reset_speed_mps` and persists for
 `reverse_attempt_reset_forward_time_sec`. This prevents rapid repeated reverse
 oscillation in an unresolved dead end.
 
@@ -333,17 +368,17 @@ source install/setup.bash
 The correct upper executable starts with:
 
 ```text
-reactive_control_v2 v0.2.9 upper_corridor_follower ready: ... swept_path_validation=true (1 fail/2 recover), full_terminal_debug=false
+reactive_control_v2 v0.3.0 upper_corridor_follower ready: ... swept_path_validation=true (1 fail/2 recover), full_terminal_debug=false
 ```
 
 The lower executable also prints:
 
 ```text
-reactive_control_v2 v0.2.9 lower_safety_controller ready: ... reverse_recovery=true, ftg_debug=false
+reactive_control_v2 v0.3.0 lower_safety_controller ready: ... reverse_recovery=true, low_speed_assist=true, ftg_debug=false
 ```
 
 With upper `full_terminal_debug: true`, it also confirms receipt of the first
-LaserScan and prints the first planning result. If the startup line does not contain `v0.2.9`, the shell is still
+LaserScan and prints the first planning result. If the startup line does not contain `v0.3.0`, the shell is still
 resolving an older installed copy. Check it with:
 
 ```bash
@@ -539,6 +574,13 @@ The supplied values are conservative simulator starting values, not final
 onboard racing values.
 
 ## Version
+
+`0.3.0` adds hysteretic bidirectional VESC low-speed assistance, using separate
+parameters for the eligible demand ceiling and forced output magnitude. Its
+shortfall is `max(0, |requested speed| - |measured speed|)`. It also raises the
+configured reverse attempt limit to ten, resets that budget after measured
+forward progress above the configured threshold for 0.30 s, and commands every
+reverse with zero steering.
 
 `0.2.9` moves every lower-controller elapsed-time and input-freshness check to
 a monotonic steady clock. ROS time remains in outgoing message headers only.

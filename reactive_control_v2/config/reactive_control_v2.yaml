@@ -68,12 +68,12 @@ upper_corridor_follower:
     # Pure pursuit (kept close to the existing path-following controller)
     lookahead_distance_m: 0.60
     wheelbase_m: 0.33
-    steering_max_deg:  25.0 # 20.6
+    steering_max_deg: 25.0 # 20.6
     steering_filter_alpha: 0.40
 
     # Simple nominal speed profile
     velocity_max_mps: 1.65
-    velocity_min_mps: 1.05
+    velocity_min_mps: 0.95
     slow_reach_distance_m: 1.50
     stop_reach_distance_m: 0.60
 
@@ -117,7 +117,7 @@ lower_safety_controller:
     # clamped to the approximate physical limit.
     absolute_speed_limit_mps: 20.0
     # Physical steering is approximately +/-25 degrees.
-    absolute_steering_limit_deg: 30.0
+    absolute_steering_limit_deg: 25.0
 
     # Simple forward emergency brake only. No commanded-trajectory prediction
     # or scan-versus-steering validation is performed in this lower controller.
@@ -147,6 +147,17 @@ lower_safety_controller:
     fallback_terminal_debug: false
     fallback_terminal_debug_period_sec: 0.50
 
+    # Bidirectional VESC low-speed stall assistance. The demand ceiling only
+    # selects eligible commands; output_mps is the independent forced magnitude.
+    # Shortfall is max(0, |requested speed| - |measured speed|).
+    enable_low_speed_assist: true
+    low_speed_assist_demand_max_mps: 1.00
+    low_speed_assist_output_mps: 1.00
+    low_speed_assist_entry_shortfall_mps: 0.50
+    low_speed_assist_stall_speed_mps: 0.30
+    low_speed_assist_confirmation_sec: 0.30
+    low_speed_assist_exit_shortfall_mps: 0.20
+
     # Bounded reverse recovery
     # VESC-derived odometry is required for reverse entry, distance estimation,
     # and the complete-stop handoff. Scan motion is not required in this version.
@@ -159,16 +170,15 @@ lower_safety_controller:
     stuck_speed_threshold_mps: 0.05
     stuck_confirmation_sec: 1.0
 
-    # Reverse command and bounds. The last meaningful forward steering sign is
-    # retained so negative speed approximately retraces the previous path.
-    reverse_speed_mps: 1.20
-    reverse_steering_limit_deg: 15.0
+    # Reverse command and bounds. Recovery always commands zero steering.
+    reverse_speed_mps: 0.95
     reverse_min_distance_m: 0.10
     reverse_min_duration_sec: 0.30
     reverse_max_distance_m: 0.50
     reverse_max_duration_sec: 2.0
-    reverse_max_attempts: 2
-    reverse_attempt_reset_forward_time_sec: 1.0
+    reverse_max_attempts: 10
+    reverse_attempt_reset_forward_time_sec: 0.30
+    reverse_attempt_reset_speed_mps: 0.20
 
     # Reverse exit and forward handoff. This hysteresis is used for reverse
     # recovery only; ordinary upper-to-FTG takeover remains immediate.

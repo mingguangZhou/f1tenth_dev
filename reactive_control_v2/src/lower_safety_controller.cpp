@@ -66,16 +66,17 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "reactive_control_v2 v0.2.9 lower_safety_controller ready: "
+      "reactive_control_v2 v0.3.0 lower_safety_controller ready: "
       "selected=%s, scan=%s, odom=%s, safe=%s, "
       "upper_failure_status_fallback=%s, "
       "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, "
-      "reverse_recovery=%s, ftg_debug=%s",
+      "reverse_recovery=%s, low_speed_assist=%s, ftg_debug=%s",
       selected_command_topic_.c_str(), scan_topic_.c_str(), odom_topic_.c_str(),
       safe_command_topic_.c_str(),
       enable_fallback_on_upper_failure_status_ ? "true" : "false",
       absolute_speed_limit_mps_, absolute_steering_limit_deg_,
       enable_reverse_recovery_ ? "true" : "false",
+      enable_low_speed_assist_ ? "true" : "false",
       fallback_terminal_debug_ ? "true" : "false");
   }
 
@@ -203,6 +204,16 @@ private:
   double fallback_terminal_debug_period_sec_{0.50};
   rclcpp::Time last_fallback_debug_time_{0, 0, RCL_STEADY_TIME};
 
+  // Temporary bidirectional assistance for the VESC low-speed stall zone.
+  // The demand ceiling and forced output are deliberately separate values.
+  bool enable_low_speed_assist_{true};
+  double low_speed_assist_demand_max_mps_{1.00};
+  double low_speed_assist_output_mps_{1.00};
+  double low_speed_assist_entry_shortfall_mps_{0.50};
+  double low_speed_assist_stall_speed_mps_{0.30};
+  double low_speed_assist_confirmation_sec_{0.30};
+  double low_speed_assist_exit_shortfall_mps_{0.20};
+
   // Bounded reverse recovery. VESC-derived odometry is the primary motion
   // feedback. The structure intentionally leaves room for a later independent
   // scan-motion confidence source without making it mandatory now.
@@ -213,16 +224,15 @@ private:
   double stuck_speed_threshold_mps_{0.05};
   double stuck_confirmation_sec_{1.0};
   double reverse_speed_mps_{0.25};
-  double reverse_steering_limit_deg_{15.0};
-  double reverse_steering_limit_rad_{degreesToRadians(15.0)};
   double reverse_min_distance_m_{0.10};
   double reverse_min_duration_sec_{0.30};
   double reverse_max_distance_m_{0.50};
   double reverse_max_duration_sec_{2.0};
   int ftg_recovery_valid_cycles_{5};
   double recovery_settle_time_sec_{0.20};
-  int reverse_max_attempts_{2};
-  double reverse_attempt_reset_forward_time_sec_{1.0};
+  int reverse_max_attempts_{10};
+  double reverse_attempt_reset_forward_time_sec_{0.30};
+  double reverse_attempt_reset_speed_mps_{0.20};
   bool reverse_require_side_clearance_{true};
   double reverse_side_sector_min_angle_deg_{100.0};
   double reverse_side_sector_max_angle_deg_{135.0};
@@ -241,13 +251,19 @@ private:
   rclcpp::Time stuck_started_at_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time forward_motion_started_at_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_reverse_debug_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time low_speed_assist_candidate_since_{0, 0, RCL_STEADY_TIME};
   bool dead_end_timer_active_{false};
   bool stuck_timer_active_{false};
   bool settle_stationary_timer_active_{false};
   bool forward_motion_timer_active_{false};
+  bool low_speed_assist_candidate_active_{false};
+  bool low_speed_assist_active_{false};
+  int low_speed_assist_direction_{0};
+  double low_speed_assist_requested_mps_{0.0};
+  double low_speed_assist_output_command_mps_{0.0};
+  double low_speed_assist_actual_magnitude_mps_{0.0};
+  double low_speed_assist_shortfall_mps_{0.0};
   double reverse_distance_m_{0.0};
-  double reverse_steering_rad_{0.0};
-  double last_meaningful_forward_steering_rad_{0.0};
   int ftg_recovery_valid_count_{0};
   int reverse_attempt_count_{0};
   std::string reverse_trigger_reason_;
@@ -298,6 +314,14 @@ private:
     declare_parameter<bool>("fallback_terminal_debug", false);
     declare_parameter<double>("fallback_terminal_debug_period_sec", 0.50);
 
+    declare_parameter<bool>("enable_low_speed_assist", true);
+    declare_parameter<double>("low_speed_assist_demand_max_mps", 1.00);
+    declare_parameter<double>("low_speed_assist_output_mps", 1.00);
+    declare_parameter<double>("low_speed_assist_entry_shortfall_mps", 0.50);
+    declare_parameter<double>("low_speed_assist_stall_speed_mps", 0.30);
+    declare_parameter<double>("low_speed_assist_confirmation_sec", 0.30);
+    declare_parameter<double>("low_speed_assist_exit_shortfall_mps", 0.20);
+
     declare_parameter<bool>("enable_reverse_recovery", true);
     declare_parameter<double>("stationary_speed_threshold_mps", 0.05);
     declare_parameter<double>("dead_end_confirmation_sec", 1.0);
@@ -305,15 +329,15 @@ private:
     declare_parameter<double>("stuck_speed_threshold_mps", 0.05);
     declare_parameter<double>("stuck_confirmation_sec", 1.0);
     declare_parameter<double>("reverse_speed_mps", 0.25);
-    declare_parameter<double>("reverse_steering_limit_deg", 15.0);
     declare_parameter<double>("reverse_min_distance_m", 0.10);
     declare_parameter<double>("reverse_min_duration_sec", 0.30);
     declare_parameter<double>("reverse_max_distance_m", 0.50);
     declare_parameter<double>("reverse_max_duration_sec", 2.0);
     declare_parameter<int>("ftg_recovery_valid_cycles", 5);
     declare_parameter<double>("recovery_settle_time_sec", 0.20);
-    declare_parameter<int>("reverse_max_attempts", 2);
-    declare_parameter<double>("reverse_attempt_reset_forward_time_sec", 1.0);
+    declare_parameter<int>("reverse_max_attempts", 10);
+    declare_parameter<double>("reverse_attempt_reset_forward_time_sec", 0.30);
+    declare_parameter<double>("reverse_attempt_reset_speed_mps", 0.20);
     declare_parameter<bool>("reverse_require_side_clearance", true);
     declare_parameter<double>("reverse_side_sector_min_angle_deg", 100.0);
     declare_parameter<double>("reverse_side_sector_max_angle_deg", 135.0);
@@ -381,6 +405,20 @@ private:
     fallback_terminal_debug_period_sec_ = std::max(
       0.05, get_parameter("fallback_terminal_debug_period_sec").as_double());
 
+    enable_low_speed_assist_ = get_parameter("enable_low_speed_assist").as_bool();
+    low_speed_assist_demand_max_mps_ =
+      std::max(0.0, get_parameter("low_speed_assist_demand_max_mps").as_double());
+    low_speed_assist_output_mps_ =
+      std::max(0.0, get_parameter("low_speed_assist_output_mps").as_double());
+    low_speed_assist_entry_shortfall_mps_ =
+      std::max(0.0, get_parameter("low_speed_assist_entry_shortfall_mps").as_double());
+    low_speed_assist_stall_speed_mps_ =
+      std::max(0.0, get_parameter("low_speed_assist_stall_speed_mps").as_double());
+    low_speed_assist_confirmation_sec_ =
+      std::max(0.0, get_parameter("low_speed_assist_confirmation_sec").as_double());
+    low_speed_assist_exit_shortfall_mps_ =
+      std::max(0.0, get_parameter("low_speed_assist_exit_shortfall_mps").as_double());
+
     enable_reverse_recovery_ = get_parameter("enable_reverse_recovery").as_bool();
     stationary_speed_threshold_mps_ =
       std::max(0.0, get_parameter("stationary_speed_threshold_mps").as_double());
@@ -393,9 +431,6 @@ private:
     stuck_confirmation_sec_ =
       std::max(0.0, get_parameter("stuck_confirmation_sec").as_double());
     reverse_speed_mps_ = std::max(0.0, get_parameter("reverse_speed_mps").as_double());
-    reverse_steering_limit_deg_ =
-      std::max(0.0, get_parameter("reverse_steering_limit_deg").as_double());
-    reverse_steering_limit_rad_ = degreesToRadians(reverse_steering_limit_deg_);
     reverse_min_distance_m_ =
       std::max(0.0, get_parameter("reverse_min_distance_m").as_double());
     reverse_min_duration_sec_ =
@@ -412,6 +447,8 @@ private:
       1, static_cast<int>(get_parameter("reverse_max_attempts").as_int()));
     reverse_attempt_reset_forward_time_sec_ = std::max(
       0.0, get_parameter("reverse_attempt_reset_forward_time_sec").as_double());
+    reverse_attempt_reset_speed_mps_ = std::max(
+      0.0, get_parameter("reverse_attempt_reset_speed_mps").as_double());
     reverse_require_side_clearance_ =
       get_parameter("reverse_require_side_clearance").as_bool();
     reverse_side_sector_min_angle_deg_ = clampValue(
@@ -779,6 +816,80 @@ private:
     return false;
   }
 
+  void resetLowSpeedAssist()
+  {
+    low_speed_assist_candidate_active_ = false;
+    low_speed_assist_active_ = false;
+    low_speed_assist_direction_ = 0;
+  }
+
+  void applyLowSpeedAssist(
+    ackermann_msgs::msg::AckermannDriveStamped & command,
+    const double measured_speed, const bool allowed,
+    const rclcpp::Time & current_time)
+  {
+    const double requested_speed = static_cast<double>(command.drive.speed);
+    const double requested_magnitude = std::abs(requested_speed);
+    const double actual_magnitude = std::abs(measured_speed);
+    const double shortfall = std::max(0.0, requested_magnitude - actual_magnitude);
+    const int requested_direction = requested_speed > 0.0 ? 1 :
+      (requested_speed < 0.0 ? -1 : 0);
+
+    low_speed_assist_requested_mps_ = requested_speed;
+    low_speed_assist_actual_magnitude_mps_ = actual_magnitude;
+    low_speed_assist_shortfall_mps_ = shortfall;
+    low_speed_assist_output_command_mps_ = requested_speed;
+
+    const bool eligible = enable_low_speed_assist_ && allowed &&
+      std::isfinite(requested_speed) && std::isfinite(measured_speed) &&
+      requested_direction != 0 && requested_magnitude <= low_speed_assist_demand_max_mps_;
+    if (!eligible) {
+      resetLowSpeedAssist();
+      return;
+    }
+
+    if (low_speed_assist_direction_ != 0 &&
+      low_speed_assist_direction_ != requested_direction)
+    {
+      resetLowSpeedAssist();
+    }
+    low_speed_assist_direction_ = requested_direction;
+
+    if (low_speed_assist_active_ &&
+      shortfall <= low_speed_assist_exit_shortfall_mps_)
+    {
+      resetLowSpeedAssist();
+      low_speed_assist_direction_ = requested_direction;
+    }
+
+    const bool actual_is_lower = actual_magnitude < requested_magnitude;
+    const bool entry_evidence = actual_is_lower &&
+      (shortfall >= low_speed_assist_entry_shortfall_mps_ ||
+      actual_magnitude <= low_speed_assist_stall_speed_mps_);
+    if (!low_speed_assist_active_) {
+      if (entry_evidence) {
+        if (!low_speed_assist_candidate_active_) {
+          low_speed_assist_candidate_since_ = current_time;
+          low_speed_assist_candidate_active_ = true;
+        }
+        if ((current_time - low_speed_assist_candidate_since_).seconds() >=
+          low_speed_assist_confirmation_sec_)
+        {
+          low_speed_assist_active_ = true;
+          low_speed_assist_candidate_active_ = false;
+        }
+      } else {
+        low_speed_assist_candidate_active_ = false;
+      }
+    }
+
+    if (low_speed_assist_active_) {
+      command.drive.speed = static_cast<double>(requested_direction) *
+        std::min(low_speed_assist_output_mps_, absolute_speed_limit_mps_);
+      low_speed_assist_output_command_mps_ = command.drive.speed;
+    }
+  }
+
   void clearTriggerTimers()
   {
     dead_end_timer_active_ = false;
@@ -792,9 +903,7 @@ private:
     reverse_started_at_ = current_time;
     reverse_last_update_at_ = current_time;
     reverse_distance_m_ = 0.0;
-    reverse_steering_rad_ = clampValue(
-      last_meaningful_forward_steering_rad_,
-      -reverse_steering_limit_rad_, reverse_steering_limit_rad_);
+    resetLowSpeedAssist();
     ftg_recovery_valid_count_ = 0;
     ++reverse_attempt_count_;
     reverse_trigger_reason_ = trigger;
@@ -808,6 +917,7 @@ private:
     settle_stationary_since_ = current_time;
     settle_stationary_timer_active_ = false;
     settle_reason_ = reason;
+    resetLowSpeedAssist();
     clearTriggerTimers();
   }
 
@@ -817,8 +927,7 @@ private:
     output.header.stamp = now();
     output.header.frame_id = "base_link";
     output.drive.speed = -std::min(reverse_speed_mps_, absolute_speed_limit_mps_);
-    output.drive.steering_angle = clampValue(
-      reverse_steering_rad_, -absolute_steering_limit_rad_, absolute_steering_limit_rad_);
+    output.drive.steering_angle = 0.0;
     return output;
   }
 
@@ -888,12 +997,15 @@ private:
       get_logger(),
       "reverse debug | mode=%s attempt=%d/%d trigger=%s | "
       "speed=%+.3f m/s odom_ok=%s age=%.3f s distance=%.3f m duration=%.2f s "
-      "steer=%+.1f deg | dead_end_timer=%s %.2f/%.2f s | "
+      "steer=+0.0 deg | assist=%s requested=%+.2f output=%+.2f shortfall=%.2f m/s | "
+      "dead_end_timer=%s %.2f/%.2f s | "
       "front_emergency=%s ftg_valid=%d/%d stable=%s | side_safe=%s ratio=%.2f min=%.2f m",
       modeName(mode), reverse_attempt_count_, reverse_max_attempts_,
       reverse_trigger_reason_.c_str(), current_speed, odom_healthy ? "true" : "false",
       odom_age, reverse_distance_m_, reverse_duration,
-      reverse_steering_rad_ * 180.0 / kPi,
+      low_speed_assist_active_ ? "true" : "false",
+      low_speed_assist_requested_mps_, low_speed_assist_output_command_mps_,
+      low_speed_assist_shortfall_mps_,
       dead_end_timer_active_ ? "active" : "inactive",
       dead_end_timer_active_ ? std::max(0.0, (current_time - dead_end_started_at_).seconds()) :
       0.0, dead_end_confirmation_sec_,
@@ -1030,6 +1142,16 @@ private:
     add("fallback_gap_mean_depth_m", std::to_string(fallback.gap_mean_depth_m));
     add("fallback_gap_score", std::to_string(fallback.gap_score));
     add("fallback_terminal_debug_enabled", fallback_terminal_debug_ ? "true" : "false");
+    add("low_speed_assist_enabled", enable_low_speed_assist_ ? "true" : "false");
+    add("low_speed_assist_active", low_speed_assist_active_ ? "true" : "false");
+    add("low_speed_assist_requested_mps", std::to_string(low_speed_assist_requested_mps_));
+    add(
+      "low_speed_assist_output_command_mps",
+      std::to_string(low_speed_assist_output_command_mps_));
+    add(
+      "low_speed_assist_actual_magnitude_mps",
+      std::to_string(low_speed_assist_actual_magnitude_mps_));
+    add("low_speed_assist_shortfall_mps", std::to_string(low_speed_assist_shortfall_mps_));
     add("reverse_recovery_enabled", enable_reverse_recovery_ ? "true" : "false");
     add("dead_end_timer_active", dead_end_timer_active_ ? "true" : "false");
     add(
@@ -1145,7 +1267,7 @@ private:
     const double normal_forward_reference = std::max(
       std::max(0.0, current_speed), nominal_forward_speed);
     std::string front_emergency_reason;
-    const bool front_emergency = scan_data.valid && frontEmergencyActive(
+    bool front_emergency = scan_data.valid && frontEmergencyActive(
       scan_data, normal_forward_reference, &front_emergency_reason);
     const double fallback_forward_reference = fallback.valid ?
       std::max(std::max(0.0, current_speed), fallback.speed) : 0.0;
@@ -1159,7 +1281,7 @@ private:
     } else {
       ftg_recovery_valid_count_ = 0;
     }
-    const bool ftg_stably_available =
+    bool ftg_stably_available =
       ftg_recovery_valid_count_ >= ftg_recovery_valid_cycles_;
 
     // First compute the unchanged forward-only decision. Recovery may replace
@@ -1194,10 +1316,28 @@ private:
       base_output = stopCommand();
     }
 
-    if (base_output.drive.speed >= stuck_forward_command_threshold_mps_ &&
-      std::isfinite(base_output.drive.steering_angle))
-    {
-      last_meaningful_forward_steering_rad_ = base_output.drive.steering_angle;
+    if (!reverse_active_ && !settle_active_) {
+      const bool assist_allowed = odom_healthy && scan_data.valid &&
+        (base_mode == Mode::NOMINAL || base_mode == Mode::FALLBACK_FTG);
+      applyLowSpeedAssist(base_output, current_speed, assist_allowed, current_time);
+
+      // Assistance may raise a forward command, so repeat the independent
+      // emergency/TTC check using the speed that would actually be published.
+      if (low_speed_assist_active_ && base_output.drive.speed > 0.0 &&
+        frontEmergencyActive(
+          scan_data, std::max(std::max(0.0, current_speed), static_cast<double>(base_output.drive.speed)),
+          &front_emergency_reason))
+      {
+        front_emergency = true;
+        ftg_recovery_valid_count_ = 0;
+        ftg_stably_available = false;
+        base_mode = Mode::EMERGENCY_STOP;
+        base_reason = front_emergency_reason;
+        base_output = stopCommand();
+        resetLowSpeedAssist();
+      }
+    } else if (settle_active_) {
+      resetLowSpeedAssist();
     }
 
     Mode mode = base_mode;
@@ -1238,6 +1378,7 @@ private:
         mode = Mode::REVERSE_RECOVERY;
         reason = reverse_trigger_reason_;
         output = reverseCommand();
+        applyLowSpeedAssist(output, current_speed, reverse_safety.valid, current_time);
       }
     } else if (settle_active_) {
       mode = Mode::RECOVERY_SETTLE;
@@ -1260,6 +1401,7 @@ private:
           mode = Mode::FALLBACK_FTG;
           reason = "reverse complete and stationary; resuming through stable FTG";
           output = fallbackCommand(fallback);
+          applyLowSpeedAssist(output, current_speed, odom_healthy, current_time);
         } else {
           mode = Mode::EMERGENCY_STOP;
           reason = "reverse complete but no stable forward FTG route";
@@ -1317,6 +1459,7 @@ private:
         mode = Mode::REVERSE_RECOVERY;
         reason = trigger;
         output = reverseCommand();
+        applyLowSpeedAssist(output, current_speed, reverse_safety.valid, current_time);
       } else if ((stuck_confirmed || dead_end_confirmed) && !attempts_available) {
         mode = Mode::EMERGENCY_STOP;
         reason = "reverse recovery attempt limit reached";
@@ -1332,7 +1475,7 @@ private:
     // This remains VESC telemetry based; a future scan-motion confidence source
     // can be combined here without changing the recovery state machine.
     if (!reverse_active_ && !settle_active_ && output.drive.speed > 0.0 && odom_healthy &&
-      current_speed > stationary_speed_threshold_mps_)
+      current_speed >= reverse_attempt_reset_speed_mps_)
     {
       if (!forward_motion_timer_active_) {
         forward_motion_started_at_ = current_time;
@@ -1355,6 +1498,10 @@ private:
     } else {
       stopped_timer_active_ = false;
     }
+
+    // Keep diagnostics aligned with the actual final speed after all safety
+    // state transitions, emergency checks, and assistance decisions.
+    low_speed_assist_output_command_mps_ = output.drive.speed;
 
     safe_command_pub_->publish(output);
     logFallbackDebug(mode, scan_data, fallback, output);
