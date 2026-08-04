@@ -66,13 +66,16 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "reactive_control_v2 v0.2.5 lower_safety_controller ready: "
-      "selected=%s, scan=%s, safe=%s, "
+      "reactive_control_v2 v0.2.9 lower_safety_controller ready: "
+      "selected=%s, scan=%s, odom=%s, safe=%s, "
       "upper_failure_status_fallback=%s, "
-      "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, ftg_debug=%s",
-      selected_command_topic_.c_str(), scan_topic_.c_str(), safe_command_topic_.c_str(),
+      "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, "
+      "reverse_recovery=%s, ftg_debug=%s",
+      selected_command_topic_.c_str(), scan_topic_.c_str(), odom_topic_.c_str(),
+      safe_command_topic_.c_str(),
       enable_fallback_on_upper_failure_status_ ? "true" : "false",
       absolute_speed_limit_mps_, absolute_steering_limit_deg_,
+      enable_reverse_recovery_ ? "true" : "false",
       fallback_terminal_debug_ ? "true" : "false");
   }
 
@@ -81,7 +84,9 @@ private:
   {
     NOMINAL,
     FALLBACK_FTG,
-    EMERGENCY_STOP
+    EMERGENCY_STOP,
+    REVERSE_RECOVERY,
+    RECOVERY_SETTLE
   };
 
   struct ScanData
@@ -116,6 +121,14 @@ private:
     double bubble_half_angle{0.0};
   };
 
+  struct ReverseSafety
+  {
+    bool valid{false};
+    std::string reason;
+    double valid_ratio{0.0};
+    double minimum_clearance_m{std::numeric_limits<double>::infinity()};
+  };
+
   // ROS interfaces
   rclcpp::Subscription<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr command_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
@@ -125,15 +138,20 @@ private:
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
+  // A monotonic clock owns all internal elapsed-time and freshness logic.
+  // ROS time remains reserved for published message headers, so simulation
+  // pause/reset or a missing /clock cannot freeze safety watchdogs/recovery.
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
+
   // Shared callback data. The current launch uses a single-threaded executor,
   // but the mutex keeps the ownership clear and remains correct if that changes.
   std::mutex mutex_;
   ackermann_msgs::msg::AckermannDriveStamped::SharedPtr latest_command_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
-  rclcpp::Time last_command_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_scan_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_odom_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_upper_status_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_command_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_scan_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_odom_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_upper_status_time_{0, 0, RCL_STEADY_TIME};
   bool command_received_{false};
   bool scan_received_{false};
   bool odom_received_{false};
@@ -183,12 +201,62 @@ private:
   double fallback_deepest_region_ratio_{0.90};
   bool fallback_terminal_debug_{false};
   double fallback_terminal_debug_period_sec_{0.50};
-  rclcpp::Time last_fallback_debug_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_fallback_debug_time_{0, 0, RCL_STEADY_TIME};
 
-  // State retained for concise transition logs and future reverse/resume work.
+  // Bounded reverse recovery. VESC-derived odometry is the primary motion
+  // feedback. The structure intentionally leaves room for a later independent
+  // scan-motion confidence source without making it mandatory now.
+  bool enable_reverse_recovery_{true};
+  double stationary_speed_threshold_mps_{0.05};
+  double dead_end_confirmation_sec_{1.0};
+  double stuck_forward_command_threshold_mps_{0.20};
+  double stuck_speed_threshold_mps_{0.05};
+  double stuck_confirmation_sec_{1.0};
+  double reverse_speed_mps_{0.25};
+  double reverse_steering_limit_deg_{15.0};
+  double reverse_steering_limit_rad_{degreesToRadians(15.0)};
+  double reverse_min_distance_m_{0.10};
+  double reverse_min_duration_sec_{0.30};
+  double reverse_max_distance_m_{0.50};
+  double reverse_max_duration_sec_{2.0};
+  int ftg_recovery_valid_cycles_{5};
+  double recovery_settle_time_sec_{0.20};
+  int reverse_max_attempts_{2};
+  double reverse_attempt_reset_forward_time_sec_{1.0};
+  bool reverse_require_side_clearance_{true};
+  double reverse_side_sector_min_angle_deg_{100.0};
+  double reverse_side_sector_max_angle_deg_{135.0};
+  double reverse_min_side_clearance_m_{0.20};
+  double reverse_side_min_valid_ratio_{0.25};
+  bool reverse_terminal_debug_{false};
+  double reverse_terminal_debug_period_sec_{0.50};
+
+  // Recovery state and timers.
+  bool reverse_active_{false};
+  bool settle_active_{false};
+  rclcpp::Time reverse_started_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time reverse_last_update_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time settle_stationary_since_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time dead_end_started_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time stuck_started_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time forward_motion_started_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_reverse_debug_time_{0, 0, RCL_STEADY_TIME};
+  bool dead_end_timer_active_{false};
+  bool stuck_timer_active_{false};
+  bool settle_stationary_timer_active_{false};
+  bool forward_motion_timer_active_{false};
+  double reverse_distance_m_{0.0};
+  double reverse_steering_rad_{0.0};
+  double last_meaningful_forward_steering_rad_{0.0};
+  int ftg_recovery_valid_count_{0};
+  int reverse_attempt_count_{0};
+  std::string reverse_trigger_reason_;
+  std::string settle_reason_;
+
+  // State retained for concise transition logs and diagnostics.
   Mode last_mode_{Mode::EMERGENCY_STOP};
   std::string last_reason_;
-  rclcpp::Time stopped_since_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time stopped_since_{0, 0, RCL_STEADY_TIME};
   bool stopped_timer_active_{false};
 
   void declareParameters()
@@ -229,6 +297,30 @@ private:
     declare_parameter<double>("fallback_deepest_region_ratio", 0.90);
     declare_parameter<bool>("fallback_terminal_debug", false);
     declare_parameter<double>("fallback_terminal_debug_period_sec", 0.50);
+
+    declare_parameter<bool>("enable_reverse_recovery", true);
+    declare_parameter<double>("stationary_speed_threshold_mps", 0.05);
+    declare_parameter<double>("dead_end_confirmation_sec", 1.0);
+    declare_parameter<double>("stuck_forward_command_threshold_mps", 0.20);
+    declare_parameter<double>("stuck_speed_threshold_mps", 0.05);
+    declare_parameter<double>("stuck_confirmation_sec", 1.0);
+    declare_parameter<double>("reverse_speed_mps", 0.25);
+    declare_parameter<double>("reverse_steering_limit_deg", 15.0);
+    declare_parameter<double>("reverse_min_distance_m", 0.10);
+    declare_parameter<double>("reverse_min_duration_sec", 0.30);
+    declare_parameter<double>("reverse_max_distance_m", 0.50);
+    declare_parameter<double>("reverse_max_duration_sec", 2.0);
+    declare_parameter<int>("ftg_recovery_valid_cycles", 5);
+    declare_parameter<double>("recovery_settle_time_sec", 0.20);
+    declare_parameter<int>("reverse_max_attempts", 2);
+    declare_parameter<double>("reverse_attempt_reset_forward_time_sec", 1.0);
+    declare_parameter<bool>("reverse_require_side_clearance", true);
+    declare_parameter<double>("reverse_side_sector_min_angle_deg", 100.0);
+    declare_parameter<double>("reverse_side_sector_max_angle_deg", 135.0);
+    declare_parameter<double>("reverse_min_side_clearance_m", 0.20);
+    declare_parameter<double>("reverse_side_min_valid_ratio", 0.25);
+    declare_parameter<bool>("reverse_terminal_debug", false);
+    declare_parameter<double>("reverse_terminal_debug_period_sec", 0.50);
   }
 
   void loadParameters()
@@ -288,6 +380,52 @@ private:
     fallback_terminal_debug_ = get_parameter("fallback_terminal_debug").as_bool();
     fallback_terminal_debug_period_sec_ = std::max(
       0.05, get_parameter("fallback_terminal_debug_period_sec").as_double());
+
+    enable_reverse_recovery_ = get_parameter("enable_reverse_recovery").as_bool();
+    stationary_speed_threshold_mps_ =
+      std::max(0.0, get_parameter("stationary_speed_threshold_mps").as_double());
+    dead_end_confirmation_sec_ =
+      std::max(0.0, get_parameter("dead_end_confirmation_sec").as_double());
+    stuck_forward_command_threshold_mps_ =
+      std::max(0.0, get_parameter("stuck_forward_command_threshold_mps").as_double());
+    stuck_speed_threshold_mps_ =
+      std::max(0.0, get_parameter("stuck_speed_threshold_mps").as_double());
+    stuck_confirmation_sec_ =
+      std::max(0.0, get_parameter("stuck_confirmation_sec").as_double());
+    reverse_speed_mps_ = std::max(0.0, get_parameter("reverse_speed_mps").as_double());
+    reverse_steering_limit_deg_ =
+      std::max(0.0, get_parameter("reverse_steering_limit_deg").as_double());
+    reverse_steering_limit_rad_ = degreesToRadians(reverse_steering_limit_deg_);
+    reverse_min_distance_m_ =
+      std::max(0.0, get_parameter("reverse_min_distance_m").as_double());
+    reverse_min_duration_sec_ =
+      std::max(0.0, get_parameter("reverse_min_duration_sec").as_double());
+    reverse_max_distance_m_ = std::max(
+      reverse_min_distance_m_, get_parameter("reverse_max_distance_m").as_double());
+    reverse_max_duration_sec_ = std::max(
+      reverse_min_duration_sec_, get_parameter("reverse_max_duration_sec").as_double());
+    ftg_recovery_valid_cycles_ = std::max(
+      1, static_cast<int>(get_parameter("ftg_recovery_valid_cycles").as_int()));
+    recovery_settle_time_sec_ =
+      std::max(0.0, get_parameter("recovery_settle_time_sec").as_double());
+    reverse_max_attempts_ = std::max(
+      1, static_cast<int>(get_parameter("reverse_max_attempts").as_int()));
+    reverse_attempt_reset_forward_time_sec_ = std::max(
+      0.0, get_parameter("reverse_attempt_reset_forward_time_sec").as_double());
+    reverse_require_side_clearance_ =
+      get_parameter("reverse_require_side_clearance").as_bool();
+    reverse_side_sector_min_angle_deg_ = clampValue(
+      get_parameter("reverse_side_sector_min_angle_deg").as_double(), 0.0, 180.0);
+    reverse_side_sector_max_angle_deg_ = clampValue(
+      get_parameter("reverse_side_sector_max_angle_deg").as_double(),
+      reverse_side_sector_min_angle_deg_, 180.0);
+    reverse_min_side_clearance_m_ =
+      std::max(0.0, get_parameter("reverse_min_side_clearance_m").as_double());
+    reverse_side_min_valid_ratio_ = clampValue(
+      get_parameter("reverse_side_min_valid_ratio").as_double(), 0.0, 1.0);
+    reverse_terminal_debug_ = get_parameter("reverse_terminal_debug").as_bool();
+    reverse_terminal_debug_period_sec_ = std::max(
+      0.05, get_parameter("reverse_terminal_debug_period_sec").as_double());
   }
 
   void commandCallback(
@@ -295,7 +433,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     latest_command_ = command;
-    last_command_time_ = now();
+    last_command_time_ = steady_clock_.now();
     command_received_ = true;
   }
 
@@ -303,7 +441,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     latest_scan_ = scan;
-    last_scan_time_ = now();
+    last_scan_time_ = steady_clock_.now();
     scan_received_ = true;
   }
 
@@ -311,7 +449,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     current_speed_mps_ = odom->twist.twist.linear.x;
-    last_odom_time_ = now();
+    last_odom_time_ = steady_clock_.now();
     odom_received_ = true;
   }
 
@@ -335,7 +473,7 @@ private:
         state = status.message.substr(0, separator);
       }
       upper_state_ = state;
-      last_upper_status_time_ = now();
+      last_upper_status_time_ = steady_clock_.now();
       upper_status_received_ = true;
       break;
     }
@@ -557,6 +695,133 @@ private:
     return result;
   }
 
+  ReverseSafety evaluateReverseSafety(const sensor_msgs::msg::LaserScan & scan) const
+  {
+    ReverseSafety result;
+    if (!reverse_require_side_clearance_) {
+      result.valid = true;
+      result.reason = "rear-side clearance check disabled";
+      return result;
+    }
+    if (scan.ranges.empty() || !std::isfinite(scan.angle_increment) ||
+      scan.angle_increment <= 0.0)
+    {
+      result.reason = "empty or malformed LaserScan for reverse-side check";
+      return result;
+    }
+
+    const double minimum_angle = degreesToRadians(reverse_side_sector_min_angle_deg_);
+    const double maximum_angle = degreesToRadians(reverse_side_sector_max_angle_deg_);
+    const bool range_max_valid = std::isfinite(scan.range_max) && scan.range_max > 0.0;
+    const double range_min = std::isfinite(scan.range_min) ?
+      std::max(0.0, static_cast<double>(scan.range_min)) : 0.0;
+    size_t sector_beams = 0;
+    size_t valid_beams = 0;
+    for (size_t i = 0; i < scan.ranges.size(); ++i) {
+      const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
+      const double absolute_angle = std::abs(angle);
+      if (absolute_angle < minimum_angle || absolute_angle > maximum_angle) {
+        continue;
+      }
+      ++sector_beams;
+      const double raw = scan.ranges[i];
+      const bool finite_hit = std::isfinite(raw) && raw >= range_min &&
+        (!range_max_valid || raw <= scan.range_max);
+      const bool clear_to_max = std::isinf(raw) ||
+        (std::isfinite(raw) && range_max_valid && raw > scan.range_max);
+      if (finite_hit) {
+        ++valid_beams;
+        result.minimum_clearance_m = std::min(result.minimum_clearance_m, raw);
+      } else if (clear_to_max) {
+        ++valid_beams;
+      }
+    }
+
+    if (sector_beams == 0) {
+      result.reason = "no LaserScan beams in reverse-side sectors";
+      return result;
+    }
+    result.valid_ratio = static_cast<double>(valid_beams) /
+      static_cast<double>(sector_beams);
+    if (result.valid_ratio < reverse_side_min_valid_ratio_) {
+      result.reason = "too few valid reverse-side LaserScan beams";
+      return result;
+    }
+    if (result.minimum_clearance_m < reverse_min_side_clearance_m_) {
+      result.reason = "reverse-side obstacle inside clearance threshold";
+      return result;
+    }
+    result.valid = true;
+    result.reason = "available rear-side scan evidence is clear";
+    return result;
+  }
+
+  bool frontEmergencyActive(
+    const ScanData & scan, const double forward_speed, std::string * reason = nullptr) const
+  {
+    if (scan.front_min_distance_m < emergency_distance_m_) {
+      if (reason) {
+        *reason = "obstacle inside hard forward emergency distance";
+      }
+      return true;
+    }
+    const double available_distance = std::isfinite(scan.front_min_distance_m) ?
+      std::max(0.0, scan.front_min_distance_m - emergency_ttc_clearance_m_) :
+      std::numeric_limits<double>::infinity();
+    const double ttc = forward_speed > 0.05 ?
+      available_distance / forward_speed : std::numeric_limits<double>::infinity();
+    if (ttc < emergency_ttc_sec_) {
+      if (reason) {
+        *reason = "forward time-to-collision below emergency threshold";
+      }
+      return true;
+    }
+    return false;
+  }
+
+  void clearTriggerTimers()
+  {
+    dead_end_timer_active_ = false;
+    stuck_timer_active_ = false;
+  }
+
+  void startReverse(const rclcpp::Time & current_time, const std::string & trigger)
+  {
+    reverse_active_ = true;
+    settle_active_ = false;
+    reverse_started_at_ = current_time;
+    reverse_last_update_at_ = current_time;
+    reverse_distance_m_ = 0.0;
+    reverse_steering_rad_ = clampValue(
+      last_meaningful_forward_steering_rad_,
+      -reverse_steering_limit_rad_, reverse_steering_limit_rad_);
+    ftg_recovery_valid_count_ = 0;
+    ++reverse_attempt_count_;
+    reverse_trigger_reason_ = trigger;
+    clearTriggerTimers();
+  }
+
+  void startRecoverySettle(const rclcpp::Time & current_time, const std::string & reason)
+  {
+    reverse_active_ = false;
+    settle_active_ = true;
+    settle_stationary_since_ = current_time;
+    settle_stationary_timer_active_ = false;
+    settle_reason_ = reason;
+    clearTriggerTimers();
+  }
+
+  ackermann_msgs::msg::AckermannDriveStamped reverseCommand() const
+  {
+    ackermann_msgs::msg::AckermannDriveStamped output;
+    output.header.stamp = now();
+    output.header.frame_id = "base_link";
+    output.drive.speed = -std::min(reverse_speed_mps_, absolute_speed_limit_mps_);
+    output.drive.steering_angle = clampValue(
+      reverse_steering_rad_, -absolute_steering_limit_rad_, absolute_steering_limit_rad_);
+    return output;
+  }
+
   void logFallbackDebug(
     const Mode mode, const ScanData & scan, const FallbackResult & fallback,
     const ackermann_msgs::msg::AckermannDriveStamped & output)
@@ -564,7 +829,7 @@ private:
     if (!fallback_terminal_debug_) {
       return;
     }
-    const rclcpp::Time current_time = now();
+    const rclcpp::Time current_time = steady_clock_.now();
     if (last_fallback_debug_time_.nanoseconds() != 0 &&
       (current_time - last_fallback_debug_time_).seconds() <
       fallback_terminal_debug_period_sec_)
@@ -596,6 +861,46 @@ private:
         modeName(mode), scan.valid ? "true" : "false", scan.valid_ratio,
         scan.front_min_distance_m, fallback.reason.c_str());
     }
+  }
+
+  void logReverseDebug(
+    const Mode mode, const double current_speed, const bool odom_healthy,
+    const double odom_age,
+    const bool front_emergency, const bool ftg_stably_available,
+    const ReverseSafety & reverse_safety)
+  {
+    if (!reverse_terminal_debug_ ||
+      (mode != Mode::EMERGENCY_STOP && mode != Mode::REVERSE_RECOVERY &&
+      mode != Mode::RECOVERY_SETTLE))
+    {
+      return;
+    }
+    const rclcpp::Time current_time = steady_clock_.now();
+    if (last_reverse_debug_time_.nanoseconds() != 0 &&
+      (current_time - last_reverse_debug_time_).seconds() < reverse_terminal_debug_period_sec_)
+    {
+      return;
+    }
+    last_reverse_debug_time_ = current_time;
+    const double reverse_duration = reverse_active_ ?
+      std::max(0.0, (current_time - reverse_started_at_).seconds()) : 0.0;
+    RCLCPP_INFO(
+      get_logger(),
+      "reverse debug | mode=%s attempt=%d/%d trigger=%s | "
+      "speed=%+.3f m/s odom_ok=%s age=%.3f s distance=%.3f m duration=%.2f s "
+      "steer=%+.1f deg | dead_end_timer=%s %.2f/%.2f s | "
+      "front_emergency=%s ftg_valid=%d/%d stable=%s | side_safe=%s ratio=%.2f min=%.2f m",
+      modeName(mode), reverse_attempt_count_, reverse_max_attempts_,
+      reverse_trigger_reason_.c_str(), current_speed, odom_healthy ? "true" : "false",
+      odom_age, reverse_distance_m_, reverse_duration,
+      reverse_steering_rad_ * 180.0 / kPi,
+      dead_end_timer_active_ ? "active" : "inactive",
+      dead_end_timer_active_ ? std::max(0.0, (current_time - dead_end_started_at_).seconds()) :
+      0.0, dead_end_confirmation_sec_,
+      front_emergency ? "true" : "false", ftg_recovery_valid_count_,
+      ftg_recovery_valid_cycles_, ftg_stably_available ? "true" : "false",
+      reverse_safety.valid ? "true" : "false", reverse_safety.valid_ratio,
+      reverse_safety.minimum_clearance_m);
   }
 
   bool upperRequestsFallback(
@@ -661,6 +966,8 @@ private:
       case Mode::NOMINAL: return "NOMINAL";
       case Mode::FALLBACK_FTG: return "FALLBACK_FTG";
       case Mode::EMERGENCY_STOP: return "EMERGENCY_STOP";
+      case Mode::REVERSE_RECOVERY: return "REVERSE_RECOVERY";
+      case Mode::RECOVERY_SETTLE: return "RECOVERY_SETTLE";
     }
     return "UNKNOWN";
   }
@@ -668,14 +975,18 @@ private:
   void publishStatus(
     const Mode mode, const std::string & reason, const ScanData & scan,
     const FallbackResult & fallback, const double command_age,
-    const double scan_age, const double current_speed, const std::string & upper_state)
+    const double scan_age, const double current_speed, const std::string & upper_state,
+    const bool odom_healthy, const double odom_age, const bool front_emergency,
+    const bool ftg_stably_available, const ReverseSafety & reverse_safety,
+    const rclcpp::Time & steady_now)
   {
     diagnostic_msgs::msg::DiagnosticArray array;
     array.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus status;
     status.name = "reactive_control_v2/lower_safety_controller";
     status.hardware_id = "final_command_gateway";
-    status.level = mode == Mode::EMERGENCY_STOP ?
+    status.level = (mode == Mode::EMERGENCY_STOP || mode == Mode::REVERSE_RECOVERY ||
+      mode == Mode::RECOVERY_SETTLE) ?
       diagnostic_msgs::msg::DiagnosticStatus::WARN :
       diagnostic_msgs::msg::DiagnosticStatus::OK;
     status.message = std::string(modeName(mode)) + ": " + reason;
@@ -700,7 +1011,17 @@ private:
       std::isfinite(scan.front_min_distance_m) ?
       std::to_string(scan.front_min_distance_m) : "inf");
     add("current_speed_mps", std::to_string(current_speed));
+    add("odom_topic", odom_topic_);
+    add("odom_age_sec", std::to_string(odom_age));
+    add("odom_healthy", odom_healthy ? "true" : "false");
+    add(
+      "stationary_for_reverse",
+      (odom_healthy && std::abs(current_speed) <= stationary_speed_threshold_mps_) ?
+      "true" : "false");
+    add("front_emergency_active", front_emergency ? "true" : "false");
     add("fallback_available", fallback.valid ? "true" : "false");
+    add("fallback_recovery_valid_count", std::to_string(ftg_recovery_valid_count_));
+    add("fallback_stably_available", ftg_stably_available ? "true" : "false");
     add("fallback_target_angle_rad", std::to_string(fallback.target_angle));
     add("fallback_target_range_m", std::to_string(fallback.target_range));
     add("fallback_gap_width_deg", std::to_string(fallback.gap_width_deg));
@@ -709,11 +1030,31 @@ private:
     add("fallback_gap_mean_depth_m", std::to_string(fallback.gap_mean_depth_m));
     add("fallback_gap_score", std::to_string(fallback.gap_score));
     add("fallback_terminal_debug_enabled", fallback_terminal_debug_ ? "true" : "false");
+    add("reverse_recovery_enabled", enable_reverse_recovery_ ? "true" : "false");
+    add("dead_end_timer_active", dead_end_timer_active_ ? "true" : "false");
+    add(
+      "dead_end_timer_sec",
+      dead_end_timer_active_ ?
+      std::to_string(std::max(0.0, (steady_now - dead_end_started_at_).seconds())) :
+      "0.000000");
+    add("reverse_attempt_count", std::to_string(reverse_attempt_count_));
+    add("reverse_distance_m", std::to_string(reverse_distance_m_));
+    add(
+      "reverse_duration_sec",
+      reverse_active_ ?
+      std::to_string(std::max(0.0, (steady_now - reverse_started_at_).seconds())) :
+      "0.000000");
+    add("reverse_trigger", reverse_trigger_reason_);
+    add("reverse_side_safe", reverse_safety.valid ? "true" : "false");
+    add("reverse_side_reason", reverse_safety.reason);
+    add("reverse_side_valid_ratio", std::to_string(reverse_safety.valid_ratio));
+    add(
+      "reverse_side_min_clearance_m",
+      std::isfinite(reverse_safety.minimum_clearance_m) ?
+      std::to_string(reverse_safety.minimum_clearance_m) : "inf");
     const double stop_duration = stopped_timer_active_ ?
-      std::max(0.0, (now() - stopped_since_).seconds()) : 0.0;
+      std::max(0.0, (steady_now - stopped_since_).seconds()) : 0.0;
     add("stop_duration_sec", std::to_string(stop_duration));
-    // stop_duration, current speed, front distance and fallback availability
-    // are intentionally exposed for the later dead-end/reverse state machine.
     array.status.push_back(status);
     status_pub_->publish(array);
   }
@@ -723,8 +1064,10 @@ private:
     if (mode == last_mode_ && reason == last_reason_) {
       return;
     }
-    if (mode == Mode::EMERGENCY_STOP) {
+    if (mode == Mode::EMERGENCY_STOP || mode == Mode::RECOVERY_SETTLE) {
       RCLCPP_WARN(get_logger(), "mode=%s -> STOP | reason=%s", modeName(mode), reason.c_str());
+    } else if (mode == Mode::REVERSE_RECOVERY) {
+      RCLCPP_WARN(get_logger(), "mode=%s | reason=%s", modeName(mode), reason.c_str());
     } else if (mode == Mode::FALLBACK_FTG) {
       RCLCPP_WARN(get_logger(), "mode=%s | reason=%s", modeName(mode), reason.c_str());
     } else {
@@ -738,10 +1081,10 @@ private:
   {
     ackermann_msgs::msg::AckermannDriveStamped::SharedPtr command;
     sensor_msgs::msg::LaserScan::SharedPtr scan;
-    rclcpp::Time command_time(0, 0, RCL_ROS_TIME);
-    rclcpp::Time scan_time(0, 0, RCL_ROS_TIME);
-    rclcpp::Time status_time(0, 0, RCL_ROS_TIME);
-    rclcpp::Time odom_time(0, 0, RCL_ROS_TIME);
+    rclcpp::Time command_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time scan_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time status_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time odom_time(0, 0, RCL_STEADY_TIME);
     bool command_received = false;
     bool scan_received = false;
     bool status_received = false;
@@ -764,7 +1107,7 @@ private:
       upper_state = upper_state_;
     }
 
-    const rclcpp::Time current_time = now();
+    const rclcpp::Time current_time = steady_clock_.now();
     const double command_age = command_received ?
       (current_time - command_time).seconds() : std::numeric_limits<double>::infinity();
     const double scan_age = scan_received ?
@@ -773,70 +1116,238 @@ private:
       (current_time - status_time).seconds() : std::numeric_limits<double>::infinity();
     const double odom_age = odom_received ?
       (current_time - odom_time).seconds() : std::numeric_limits<double>::infinity();
-    if (!odom_received || odom_age > odom_timeout_sec_ || !std::isfinite(current_speed)) {
-      // Odometry improves TTC estimation but is never required for nominal or
-      // fallback operation. A stale value must not create a false emergency.
+    const bool odom_healthy = odom_received && odom_age <= odom_timeout_sec_ &&
+      std::isfinite(current_speed);
+    if (!odom_healthy) {
+      // Nominal and ordinary FTG operation retain the previous behavior: stale
+      // odometry only disables TTC speed feedback. Reverse entry and motion,
+      // however, require fresh finite VESC-derived odometry.
       current_speed = 0.0;
     }
 
     ScanData scan_data;
+    ReverseSafety reverse_safety;
     if (scan_received && scan_age <= scan_timeout_sec_ && scan) {
       scan_data = preprocessScan(*scan);
+      reverse_safety = evaluateReverseSafety(*scan);
     } else {
       scan_data.invalid_reason = scan_received ? "LaserScan timeout" : "no LaserScan received";
+      reverse_safety.reason = scan_data.invalid_reason;
     }
     const FallbackResult fallback = makeFallback(scan_data);
 
-    Mode mode = Mode::EMERGENCY_STOP;
-    std::string reason;
-    ackermann_msgs::msg::AckermannDriveStamped output;
-
-    if (!scan_data.valid) {
-      reason = scan_data.invalid_reason;
-      output = stopCommand();
+    const bool command_fresh = command_received && command_age <= command_timeout_sec_;
+    const bool command_valid = commandNumericallyValid(command);
+    const bool explicit_fallback = upperRequestsFallback(
+      status_received, status_age, upper_state);
+    const double nominal_forward_speed = command_valid ?
+      std::max(0.0, static_cast<double>(command->drive.speed)) : 0.0;
+    const double normal_forward_reference = std::max(
+      std::max(0.0, current_speed), nominal_forward_speed);
+    std::string front_emergency_reason;
+    const bool front_emergency = scan_data.valid && frontEmergencyActive(
+      scan_data, normal_forward_reference, &front_emergency_reason);
+    const double fallback_forward_reference = fallback.valid ?
+      std::max(std::max(0.0, current_speed), fallback.speed) : 0.0;
+    const bool fallback_front_emergency = scan_data.valid && fallback.valid &&
+      frontEmergencyActive(scan_data, fallback_forward_reference);
+    const bool ftg_recovery_candidate = scan_data.valid && fallback.valid &&
+      !fallback_front_emergency;
+    if (ftg_recovery_candidate) {
+      ftg_recovery_valid_count_ = std::min(
+        ftg_recovery_valid_count_ + 1, ftg_recovery_valid_cycles_);
     } else {
-      const double nominal_forward_speed = commandNumericallyValid(command) ?
-        std::max(0.0, static_cast<double>(command->drive.speed)) : 0.0;
-      const double forward_speed = std::max(std::max(0.0, current_speed), nominal_forward_speed);
-      const double available_distance = std::isfinite(scan_data.front_min_distance_m) ?
-        std::max(0.0, scan_data.front_min_distance_m - emergency_ttc_clearance_m_) :
-        std::numeric_limits<double>::infinity();
-      const double ttc = forward_speed > 0.05 ?
-        available_distance / forward_speed : std::numeric_limits<double>::infinity();
+      ftg_recovery_valid_count_ = 0;
+    }
+    const bool ftg_stably_available =
+      ftg_recovery_valid_count_ >= ftg_recovery_valid_cycles_;
 
-      if (scan_data.front_min_distance_m < emergency_distance_m_) {
-        reason = "obstacle inside hard forward emergency distance";
-        output = stopCommand();
-      } else if (ttc < emergency_ttc_sec_) {
-        reason = "forward time-to-collision below emergency threshold";
+    // First compute the unchanged forward-only decision. Recovery may replace
+    // it below, but stuck detection deliberately compares this meaningful
+    // forward request against VESC-reported speed rather than against /drive.
+    Mode base_mode = Mode::EMERGENCY_STOP;
+    std::string base_reason;
+    ackermann_msgs::msg::AckermannDriveStamped base_output;
+    if (!scan_data.valid) {
+      base_reason = scan_data.invalid_reason;
+      base_output = stopCommand();
+    } else if (front_emergency) {
+      base_reason = front_emergency_reason;
+      base_output = stopCommand();
+    } else if (command_fresh && command_valid && !explicit_fallback) {
+      base_mode = Mode::NOMINAL;
+      base_reason = "fresh finite selected command passed through";
+      base_output = boundedNominal(*command);
+    } else if (fallback.valid) {
+      base_mode = Mode::FALLBACK_FTG;
+      if (explicit_fallback) {
+        base_reason = "upper state " + upper_state + "; using conservative FTG";
+      } else if (!command_received || !command_fresh) {
+        base_reason = "selected command unavailable or stale; using conservative FTG";
+      } else {
+        base_reason = "selected command contains non-finite value; using conservative FTG";
+      }
+      base_output = fallbackCommand(fallback);
+    } else {
+      base_reason = fallback.reason.empty() ?
+        "no valid nominal or fallback command" : fallback.reason;
+      base_output = stopCommand();
+    }
+
+    if (base_output.drive.speed >= stuck_forward_command_threshold_mps_ &&
+      std::isfinite(base_output.drive.steering_angle))
+    {
+      last_meaningful_forward_steering_rad_ = base_output.drive.steering_angle;
+    }
+
+    Mode mode = base_mode;
+    std::string reason = base_reason;
+    ackermann_msgs::msg::AckermannDriveStamped output = base_output;
+
+    if (reverse_active_) {
+      const double update_dt = std::max(
+        0.0, std::min(0.20, (current_time - reverse_last_update_at_).seconds()));
+      reverse_last_update_at_ = current_time;
+      if (odom_healthy) {
+        reverse_distance_m_ += std::abs(current_speed) * update_dt;
+      }
+      const double reverse_duration = std::max(
+        0.0, (current_time - reverse_started_at_).seconds());
+      const bool minimum_reverse_satisfied =
+        reverse_distance_m_ >= reverse_min_distance_m_ ||
+        reverse_duration >= reverse_min_duration_sec_;
+      const bool reverse_limit_reached =
+        reverse_distance_m_ >= reverse_max_distance_m_ ||
+        reverse_duration >= reverse_max_duration_sec_;
+
+      if (!scan_data.valid || !odom_healthy) {
+        startRecoverySettle(current_time, "reverse aborted because scan or odometry became invalid");
+      } else if (!reverse_safety.valid) {
+        startRecoverySettle(current_time, "reverse aborted: " + reverse_safety.reason);
+      } else if (minimum_reverse_satisfied && ftg_stably_available) {
+        startRecoverySettle(current_time, "forward FTG route recovered stably");
+      } else if (reverse_limit_reached) {
+        startRecoverySettle(current_time, "reverse distance or duration limit reached");
+      }
+
+      if (settle_active_) {
+        mode = Mode::RECOVERY_SETTLE;
+        reason = settle_reason_;
         output = stopCommand();
       } else {
-        const bool command_fresh = command_received && command_age <= command_timeout_sec_;
-        const bool command_valid = commandNumericallyValid(command);
-        const bool explicit_fallback = upperRequestsFallback(
-          status_received, status_age, upper_state);
-        if (command_fresh && command_valid && !explicit_fallback) {
-          mode = Mode::NOMINAL;
-          reason = "fresh finite selected command passed through";
-          output = boundedNominal(*command);
-        } else if (fallback.valid) {
+        mode = Mode::REVERSE_RECOVERY;
+        reason = reverse_trigger_reason_;
+        output = reverseCommand();
+      }
+    } else if (settle_active_) {
+      mode = Mode::RECOVERY_SETTLE;
+      reason = settle_reason_;
+      output = stopCommand();
+      if (odom_healthy && std::abs(current_speed) <= stationary_speed_threshold_mps_) {
+        if (!settle_stationary_timer_active_) {
+          settle_stationary_since_ = current_time;
+          settle_stationary_timer_active_ = true;
+        }
+      } else {
+        settle_stationary_timer_active_ = false;
+      }
+      const bool fully_settled = settle_stationary_timer_active_ &&
+        (current_time - settle_stationary_since_).seconds() >= recovery_settle_time_sec_;
+      if (fully_settled) {
+        settle_active_ = false;
+        settle_stationary_timer_active_ = false;
+        if (ftg_stably_available) {
           mode = Mode::FALLBACK_FTG;
-          if (explicit_fallback) {
-            reason = "upper state " + upper_state + "; using conservative FTG";
-          } else if (!command_received || !command_fresh) {
-            reason = "selected command unavailable or stale; using conservative FTG";
-          } else {
-            reason = "selected command contains non-finite value; using conservative FTG";
-          }
+          reason = "reverse complete and stationary; resuming through stable FTG";
           output = fallbackCommand(fallback);
         } else {
-          reason = fallback.reason.empty() ? "no valid nominal or fallback command" : fallback.reason;
+          mode = Mode::EMERGENCY_STOP;
+          reason = "reverse complete but no stable forward FTG route";
           output = stopCommand();
         }
       }
+    } else {
+      const bool stationary = odom_healthy &&
+        std::abs(current_speed) <= stationary_speed_threshold_mps_;
+      const bool dead_end_evidence = enable_reverse_recovery_ && scan_data.valid &&
+        stationary && base_mode == Mode::EMERGENCY_STOP &&
+        (front_emergency || !fallback.valid);
+      const bool stuck_evidence = enable_reverse_recovery_ && scan_data.valid &&
+        odom_healthy && base_output.drive.speed >= stuck_forward_command_threshold_mps_ &&
+        std::abs(current_speed) <= stuck_speed_threshold_mps_;
+
+      if (dead_end_evidence) {
+        if (!dead_end_timer_active_) {
+          dead_end_started_at_ = current_time;
+          dead_end_timer_active_ = true;
+        }
+      } else if (!enable_reverse_recovery_ || !scan_data.valid || !odom_healthy ||
+        !stationary ||
+        (base_mode != Mode::EMERGENCY_STOP && ftg_stably_available && !front_emergency))
+      {
+        // Once a stationary emergency starts the dead-end confirmation timer,
+        // do not erase it because one scan briefly changes the instantaneous
+        // FTG/emergency classification. Clear the latch only for unhealthy
+        // inputs, actual motion, disabled recovery, or a stable usable FTG
+        // route. Reverse entry below still requires dead_end_evidence to be
+        // true in the current control cycle.
+        dead_end_timer_active_ = false;
+      }
+      if (stuck_evidence) {
+        if (!stuck_timer_active_) {
+          stuck_started_at_ = current_time;
+          stuck_timer_active_ = true;
+        }
+      } else {
+        stuck_timer_active_ = false;
+      }
+
+      const bool dead_end_confirmed = dead_end_evidence && dead_end_timer_active_ &&
+        (current_time - dead_end_started_at_).seconds() >= dead_end_confirmation_sec_;
+      const bool stuck_confirmed = stuck_timer_active_ &&
+        (current_time - stuck_started_at_).seconds() >= stuck_confirmation_sec_;
+      const bool attempts_available = reverse_attempt_count_ < reverse_max_attempts_;
+      if ((stuck_confirmed || dead_end_confirmed) && attempts_available &&
+        reverse_safety.valid)
+      {
+        const std::string trigger = stuck_confirmed ?
+          "forward command persisted while VESC speed stayed low" :
+          "stationary forward dead end persisted";
+        startReverse(current_time, trigger);
+        mode = Mode::REVERSE_RECOVERY;
+        reason = trigger;
+        output = reverseCommand();
+      } else if ((stuck_confirmed || dead_end_confirmed) && !attempts_available) {
+        mode = Mode::EMERGENCY_STOP;
+        reason = "reverse recovery attempt limit reached";
+        output = stopCommand();
+      } else if ((stuck_confirmed || dead_end_confirmed) && !reverse_safety.valid) {
+        mode = Mode::EMERGENCY_STOP;
+        reason = "reverse recovery blocked: " + reverse_safety.reason;
+        output = stopCommand();
+      }
     }
 
-    if (mode == Mode::EMERGENCY_STOP) {
+    // A successful measured forward movement resets the bounded-attempt budget.
+    // This remains VESC telemetry based; a future scan-motion confidence source
+    // can be combined here without changing the recovery state machine.
+    if (!reverse_active_ && !settle_active_ && output.drive.speed > 0.0 && odom_healthy &&
+      current_speed > stationary_speed_threshold_mps_)
+    {
+      if (!forward_motion_timer_active_) {
+        forward_motion_started_at_ = current_time;
+        forward_motion_timer_active_ = true;
+      } else if ((current_time - forward_motion_started_at_).seconds() >=
+        reverse_attempt_reset_forward_time_sec_)
+      {
+        reverse_attempt_count_ = 0;
+        reverse_trigger_reason_.clear();
+      }
+    } else {
+      forward_motion_timer_active_ = false;
+    }
+
+    if (mode == Mode::EMERGENCY_STOP || mode == Mode::RECOVERY_SETTLE) {
       if (!stopped_timer_active_) {
         stopped_since_ = current_time;
         stopped_timer_active_ = true;
@@ -847,8 +1358,13 @@ private:
 
     safe_command_pub_->publish(output);
     logFallbackDebug(mode, scan_data, fallback, output);
+    logReverseDebug(
+      mode, current_speed, odom_healthy, odom_age, front_emergency,
+      ftg_stably_available, reverse_safety);
     publishStatus(
-      mode, reason, scan_data, fallback, command_age, scan_age, current_speed, upper_state);
+      mode, reason, scan_data, fallback, command_age, scan_age, current_speed, upper_state,
+      odom_healthy, odom_age, front_emergency, ftg_stably_available, reverse_safety,
+      current_time);
     logTransition(mode, reason);
   }
 };

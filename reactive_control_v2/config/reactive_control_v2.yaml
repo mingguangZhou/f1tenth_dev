@@ -97,7 +97,8 @@ lower_safety_controller:
     # remapped to the upper follower's nominal_cmd and safe_cmd to /drive.
     selected_command_topic: "/reactive_control_v2/selected_cmd"
     scan_topic: "/scan"
-    odom_topic: "/ego_racecar/odom"
+    # VESC-derived onboard speed feedback.
+    odom_topic: "/odom"
     upper_status_topic: "/reactive_control_v2/status"
     safe_command_topic: "/reactive_control_v2/safe_cmd"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"
@@ -119,9 +120,9 @@ lower_safety_controller:
     absolute_steering_limit_deg: 25.0
 
     # Simple forward emergency brake only. No commanded-trajectory prediction
-    # or scan-versus-steering validation is performed in this V0 controller.
-    emergency_sector_half_angle_deg: 5.0
-    emergency_distance_m: 0.20
+    # or scan-versus-steering validation is performed in this lower controller.
+    emergency_sector_half_angle_deg: 10.0
+    emergency_distance_m: 0.35
     emergency_ttc_sec: 0.2
     emergency_ttc_clearance_m: 0.12
 
@@ -145,3 +146,43 @@ lower_safety_controller:
     # growth. When enabled, prints gap, bubble, target, steering and speed.
     fallback_terminal_debug: false
     fallback_terminal_debug_period_sec: 0.50
+
+    # Bounded reverse recovery
+    # VESC-derived odometry is required for reverse entry, distance estimation,
+    # and the complete-stop handoff. Scan motion is not required in this version.
+    enable_reverse_recovery: true
+
+    # Entry confirmation
+    stationary_speed_threshold_mps: 0.05
+    dead_end_confirmation_sec: 1.0
+    stuck_forward_command_threshold_mps: 0.20
+    stuck_speed_threshold_mps: 0.05
+    stuck_confirmation_sec: 1.0
+
+    # Reverse command and bounds. The last meaningful forward steering sign is
+    # retained so negative speed approximately retraces the previous path.
+    reverse_speed_mps: 0.25
+    reverse_steering_limit_deg: 15.0
+    reverse_min_distance_m: 0.10
+    reverse_min_duration_sec: 0.30
+    reverse_max_distance_m: 0.50
+    reverse_max_duration_sec: 2.0
+    reverse_max_attempts: 2
+    reverse_attempt_reset_forward_time_sec: 1.0
+
+    # Reverse exit and forward handoff. This hysteresis is used for reverse
+    # recovery only; ordinary upper-to-FTG takeover remains immediate.
+    ftg_recovery_valid_cycles: 5
+    recovery_settle_time_sec: 0.20
+
+    # A front Hokuyo cannot observe directly behind the car. Available rear-side
+    # beams are only an extra abort check; reverse remains a bounded retrace.
+    reverse_require_side_clearance: true
+    reverse_side_sector_min_angle_deg: 100.0
+    reverse_side_sector_max_angle_deg: 135.0
+    reverse_min_side_clearance_m: 0.20
+    reverse_side_min_valid_ratio: 0.25
+
+    # Rate-limited reverse state details. Default off.
+    reverse_terminal_debug: true
+    reverse_terminal_debug_period_sec: 0.50

@@ -39,7 +39,7 @@ namespace
 // Small mathematical and formatting helpers are kept outside the ROS node because
 // they do not depend on node state.
 constexpr double kPi = 3.14159265358979323846;
-constexpr char kPackageVersion[] = "0.2.5";
+constexpr char kPackageVersion[] = "0.2.9";
 
 double degToRad(const double degrees)
 {

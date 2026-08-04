@@ -1,6 +1,6 @@
 # reactive_control_v2
 
-Package version: `0.2.5`
+Package version: `0.2.9`
 
 `reactive_control_v2` is a compact ROS 2 Foxy fallback stack for driving
 without a global map, localization result, or raceline reference.
@@ -15,11 +15,12 @@ the selected upper command through, applies only very loose absolute sanity
 limits, provides a slow Follow-the-Gap (FTG) fallback when the selected command
 fails or, when enabled, the upper reports `PATH_INVALID`/`BLOCKED`, and otherwise stops. It
 also contains a deliberately simple narrow-forward emergency distance/TTC
-brake.
+brake and a bounded reverse-recovery state machine.
 
-This V0 lower controller deliberately does **not** compare the commanded
-Ackermann trajectory against the scan. Reverse-and-resume recovery, dead-end
-confirmation, PF switching, and rear-safety logic remain future work.
+The lower controller deliberately does **not** compare the commanded Ackermann
+trajectory against the scan. Reverse recovery uses VESC-derived odometry as its
+primary motion feedback; scan-derived motion and PF switching remain future
+extensions.
 
 ## I/O
 
@@ -28,7 +29,7 @@ confirmation, PF switching, and rear-safety logic remain future work.
 | Topic | Type | Required | Purpose |
 |---|---|---:|---|
 | `/scan` | `sensor_msgs/msg/LaserScan` | Yes | Local free-space geometry |
-| `/ego_racecar/odom` | `nav_msgs/msg/Odometry` | No by default | Speed reporting and optional freshness gate |
+| `/ego_racecar/odom` (sim) or `/odom` (onboard) | `nav_msgs/msg/Odometry` | Required for reverse | VESC/simulator speed feedback and reverse distance/stop confirmation |
 | `/reactive_control_v2/enable` | `std_msgs/msg/Bool` | No by default | Reserved external mode-enable input |
 | `/reactive_control_v2/selected_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Yes for nominal mode | Command selected by the upper stack or drive arbitrator |
 | `/reactive_control_v2/status` | `diagnostic_msgs/msg/DiagnosticArray` | No | Lets the lower layer recognize upper `PATH_INVALID`/`BLOCKED` explicitly |
@@ -63,9 +64,10 @@ Upper status names include `DRIVING`, `PATH_VALIDATION_PENDING`, `PATH_INVALID`,
 `WAITING_FOR_SCAN`, `TF_UNAVAILABLE`, `INPUT_INVALID`, `ODOM_STALE`, and
 `DISABLED`. Every non-driving upper state publishes zero speed.
 
-Lower modes are `NOMINAL`, `FALLBACK_FTG`, and `EMERGENCY_STOP`.
+Lower modes are `NOMINAL`, `FALLBACK_FTG`, `EMERGENCY_STOP`,
+`REVERSE_RECOVERY`, and `RECOVERY_SETTLE`.
 
-## Lower safety controller V0
+## Lower safety controller
 
 The lower decision order is intentionally short and deterministic:
 
@@ -80,6 +82,10 @@ The lower decision order is intentionally short and deterministic:
 5. FTG bubbles the nearest obstacle, scores complete gaps using width and
    depth, and targets the centre of the deepest region inside the best gap.
 6. If FTG cannot find a sufficiently wide, clear gap, publish STOP.
+7. If a forward dead end or command-versus-VESC-speed mismatch persists, and
+   scan/odometry/reverse-side evidence are healthy, enter bounded reverse.
+8. Stop reversing after stable forward FTG recovery or the configured reverse
+   limit, then publish zero command until the vehicle is fully stationary.
 
 A valid zero-speed command is not automatically treated as a controller
 failure. This preserves intentional upper stops. Only an explicit eligible
@@ -94,7 +100,7 @@ old `use_upper_status_fallback` name:
   STOP command through. Its own scan, TTC, timeout, and malformed-command safety
   checks remain active.
 
-The supplied YAML keeps the previous effective value, `false`.
+The supplied standalone stack YAML sets this to `true`.
 
 The supplied final command limits are:
 
@@ -106,8 +112,8 @@ absolute_steering_limit_deg: 25.0
 The speed value is a loose sanity bound. Steering is the approximate physical
 limit. Finite excesses are clamped; `NaN`, infinity and timeouts request FTG.
 Negative finite nominal speed is allowed by this gateway so the interface is
-ready for a future bounded reverse-recovery state. V0 FTG itself is
-forward-only.
+compatible with reverse commands. Ordinary FTG remains forward-only; only the
+bounded recovery state publishes negative speed.
 
 The physical and fallback steering clamps are both set to approximately
 `+/-25 degrees`. The upper follower retains its existing, smaller tuned limit.
@@ -129,10 +135,9 @@ This removes the old tie-break that chose the deepest beam nearest zero angle,
 which could make the car continue almost straight along the inside edge of a
 large gap.
 
-The lower status includes `stop_duration_sec`, `current_speed_mps`,
-`front_min_distance_m`, `fallback_available`, and the fallback target. These
-are diagnostic outputs now and provide the inputs needed for later persistent
-stuck/dead-end confirmation. V0 never commands reverse.
+The lower status includes the mode/reason, VESC speed health, front emergency
+state, raw and stable FTG availability, reverse attempt/distance/duration,
+reverse-side evidence, and the fallback target.
 
 FTG terminal tuning information is independent of the upper follower's
 `full_terminal_debug`. It is disabled by default:
@@ -146,6 +151,74 @@ When enabled, it periodically prints scan validity, nearest obstacle and bubble
 angle, selected gap width/depth/score, target angle/range, and final FTG speed
 and steering. Keep it off for normal running to avoid unnecessary terminal and
 ROS log output.
+
+## Reverse recovery
+
+Reverse recovery is owned entirely by `lower_safety_controller`, which remains
+the only publisher of the final command in `stack` and `lower` modes.
+
+All lower-controller freshness checks, confirmation durations, recovery
+durations, distance integration intervals, and diagnostic throttles use a
+monotonic steady clock. ROS time is used only for outgoing message headers.
+Consequently, a missing, paused, or reset simulator `/clock` cannot freeze the
+safety state machine, and the controller does not alter `/clock` or the timing
+behavior of any other ROS node.
+
+Two independent conditions may request reverse:
+
+1. **Persistent dead end:** the output is stopped, the VESC speed confirms that
+   the vehicle is stationary, and either the front emergency brake is active or
+   FTG has no valid route for `dead_end_confirmation_sec`.
+2. **Physical stuck inference:** a meaningful forward command is available but
+   VESC-reported speed remains below `stuck_speed_threshold_mps` for
+   `stuck_confirmation_sec`.
+
+Both require a fresh valid scan, fresh finite odometry, remaining recovery
+attempts, and acceptable available rear-side scan evidence. Stale scan or
+odometry always produces STOP and never initiates reverse.
+
+Reverse uses `-reverse_speed_mps` and retains the sign of the last meaningful
+forward steering command, clamped by `reverse_steering_limit_deg`. This
+approximately retraces the previous Ackermann path. It is bounded by both
+`reverse_max_distance_m` and `reverse_max_duration_sec`.
+
+During reverse, FTG continues to be evaluated every control cycle. Reversing
+stops only after the configured minimum movement/time and five consecutive
+cycles of a valid FTG route with the forward emergency condition cleared, or
+when a safety/maximum limit is reached. `RECOVERY_SETTLE` then holds zero speed
+until VESC feedback stays within the stationary threshold for
+`recovery_settle_time_sec`. Forward motion resumes through FTG; the upper
+corridor follower regains control later through its existing recovery
+hysteresis.
+
+The attempt counter resets only after measured forward movement persists for
+`reverse_attempt_reset_forward_time_sec`. This prevents rapid repeated reverse
+oscillation in an unresolved dead end.
+
+The Hokuyo's available rear-side beams do not observe directly behind the car.
+They are therefore an additional abort check, not proof of an obstacle-free
+rear path. Recovery remains deliberately slow, short, distance/time limited,
+and intended to retrace recently occupied space.
+
+Rate-limited reverse diagnostics are disabled by default onboard:
+
+```yaml
+reverse_terminal_debug: false
+reverse_terminal_debug_period_sec: 0.50
+```
+
+The supplied simulator YAML enables this diagnostic temporarily. While stopped,
+it prints the subscribed odometry age and speed, stationary/dead-end timer, FTG
+recovery count, and reverse-side gate. This makes a missing or stale simulator
+odometry topic visible instead of leaving an unexplained emergency STOP.
+
+The simulator YAML also sets `reverse_require_side_clearance: false`: the
+simulated scan is not treated as a reliable rear-safety sensor, and some scan
+models provide no usable side-rear beams. The onboard YAML retains
+`reverse_require_side_clearance: true`.
+
+Set `enable_reverse_recovery: false` to retain the previous forward-only lower
+controller behavior while keeping all other FTG and emergency settings.
 
 By default, the upper terminal prints one concise warning only when the planner
 enters a stop state or its stop reason changes. Set `full_terminal_debug: true`
@@ -178,16 +251,14 @@ controlled explicitly in the upper YAML:
 
 ```yaml
 enable_swept_path_validation: true
-swept_path_failure_confirmation_cycles: 2
-swept_path_recovery_confirmation_cycles: 3
+swept_path_failure_confirmation_cycles: 1
+swept_path_recovery_confirmation_cycles: 2
 ```
 
-With the supplied values, the first cycle in which both paths fail publishes
-zero speed and `PATH_VALIDATION_PENDING`. This immediate STOP is passed through
-by the lower controller; it does not request FTG. A second consecutive failure
-latches `PATH_INVALID`, after which the lower may use FTG if
-`enable_fallback_on_upper_failure_status` is true. Once latched, three
-consecutive valid path cycles are required before returning to `DRIVING`.
+With the supplied values, the first cycle in which both paths fail immediately
+latches `PATH_INVALID`, publishes zero speed, and requests lower FTG when
+`enable_fallback_on_upper_failure_status` is true. Once latched, two consecutive
+valid path cycles are required before returning to `DRIVING`.
 Unrelated states such as `BLOCKED`, invalid input, TF failure, and the lower
 controller's independent emergency brake do not use these counters.
 
@@ -262,17 +333,17 @@ source install/setup.bash
 The correct upper executable starts with:
 
 ```text
-reactive_control_v2 v0.2.5 upper_corridor_follower ready: ... swept_path_validation=true (2 fail/3 recover), full_terminal_debug=false
+reactive_control_v2 v0.2.9 upper_corridor_follower ready: ... swept_path_validation=true (1 fail/2 recover), full_terminal_debug=false
 ```
 
 The lower executable also prints:
 
 ```text
-reactive_control_v2 v0.2.5 lower_safety_controller ready: ... upper_failure_status_fallback=false, command_limits=|speed|<=20.0 m/s and |steering|<=25.0 deg, ftg_debug=false
+reactive_control_v2 v0.2.9 lower_safety_controller ready: ... reverse_recovery=true, ftg_debug=false
 ```
 
 With upper `full_terminal_debug: true`, it also confirms receipt of the first
-LaserScan and prints the first planning result. If the startup line does not contain `v0.2.5`, the shell is still
+LaserScan and prints the first planning result. If the startup line does not contain `v0.2.9`, the shell is still
 resolving an older installed copy. Check it with:
 
 ```bash
@@ -468,6 +539,34 @@ The supplied values are conservative simulator starting values, not final
 onboard racing values.
 
 ## Version
+
+`0.2.9` moves every lower-controller elapsed-time and input-freshness check to
+a monotonic steady clock. ROS time remains in outgoing message headers only.
+This prevents a missing, paused, or reset simulator `/clock` from freezing
+dead-end/stuck confirmation, reverse/settle duration, reverse-distance
+integration, attempt reset, stop duration, or diagnostic throttling. No other
+node's clock or timer is changed.
+
+`0.2.8` fixes dead-end confirmation when instantaneous FTG or emergency scan
+classification flickers near a threshold. Once a healthy, stationary emergency
+starts the timer, it stays latched until the vehicle moves, the sensor inputs
+become unhealthy, reverse recovery is disabled, or a forward FTG route is
+stably usable. Reverse entry still requires current dead-end evidence, so an
+aged timer alone cannot command reverse.
+
+`0.2.7` keeps the `0.2.6` reverse state machine and fixes simulator bring-up:
+the simulator-only rear-side gate no longer prevents all reverse commands, the
+startup line reports the actual odometry topic, and reverse-entry diagnostics
+also run while waiting in `EMERGENCY_STOP`. The stricter onboard rear-side gate
+is unchanged.
+
+`0.2.6` adds bounded reverse recovery to the proven `0.2.5` upper/lower stack.
+It uses fresh VESC-derived odometry for stuck/stationary detection, supports
+persistent dead-end and forward-command/low-speed triggers, retraces the last
+forward steering at low speed, requires stable FTG recovery, and inserts a
+complete-stop state before forward FTG. Reverse scan/odom safety, time/distance
+limits, attempt hysteresis, YAML grouping, diagnostics, and optional terminal
+debugging are included. Scan-derived chassis motion remains a later extension.
 
 `0.2.5` returns to the `0.2.3` architecture and replaces only its conservative
 FTG gap/target selection. Gaps are scored using width and depth, and the target
