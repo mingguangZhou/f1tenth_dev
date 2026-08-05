@@ -120,9 +120,9 @@ lower_safety_controller:
 
     # Simple forward emergency brake only. No commanded-trajectory prediction
     # or scan-versus-steering validation is performed in this lower controller.
-    emergency_sector_half_angle_deg: 5.0
-    emergency_distance_m: 0.20
-    emergency_ttc_sec: 0.2
+    emergency_sector_half_angle_deg: 15.0
+    emergency_distance_m: 0.35
+    emergency_ttc_sec: 0.5
     emergency_ttc_clearance_m: 0.12
 
     # Slow Follow-the-Gap fallback, adapted from the supplied safety_bubble

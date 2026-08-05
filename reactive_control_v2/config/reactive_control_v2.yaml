@@ -66,16 +66,16 @@ upper_corridor_follower:
     swept_path_recovery_confirmation_cycles: 2
 
     # Pure pursuit (kept close to the existing path-following controller)
-    lookahead_distance_m: 0.60
+    lookahead_distance_m: 0.50
     wheelbase_m: 0.33
-    steering_max_deg: 25.0 # 20.6
+    steering_max_deg: 20.6
     steering_filter_alpha: 0.40
 
     # Simple nominal speed profile
     velocity_max_mps: 1.65
-    velocity_min_mps: 0.95
-    slow_reach_distance_m: 1.50
-    stop_reach_distance_m: 0.60
+    velocity_min_mps: 0.75
+    slow_reach_distance_m: 1.00
+    stop_reach_distance_m: 0.50
 
     # Debug
     publish_visualization: true
@@ -121,7 +121,7 @@ lower_safety_controller:
 
     # Simple forward emergency brake only. No commanded-trajectory prediction
     # or scan-versus-steering validation is performed in this lower controller.
-    emergency_sector_half_angle_deg: 10.0
+    emergency_sector_half_angle_deg: 15.0
     emergency_distance_m: 0.35
     emergency_ttc_sec: 0.2
     emergency_ttc_clearance_m: 0.12
@@ -136,8 +136,8 @@ lower_safety_controller:
     fallback_min_gap_width_deg: 8.0
     fallback_steering_gain: 1.0
     fallback_steering_limit_deg: 25.0
-    fallback_speed_max_mps: 1.10
-    fallback_speed_min_mps: 0.95
+    fallback_speed_max_mps: 1.00
+    fallback_speed_min_mps: 0.75
     # Target the centre of beams at least this fraction of the selected gap's
     # maximum depth. This avoids the old near-zero-angle deepest-beam tie-break.
     fallback_deepest_region_ratio: 0.90
@@ -151,8 +151,8 @@ lower_safety_controller:
     # selects eligible commands; output_mps is the independent forced magnitude.
     # Shortfall is max(0, |requested speed| - |measured speed|).
     enable_low_speed_assist: true
-    low_speed_assist_demand_max_mps: 1.00
-    low_speed_assist_output_mps: 1.00
+    low_speed_assist_demand_max_mps: 0.80
+    low_speed_assist_output_mps: 0.90
     low_speed_assist_entry_shortfall_mps: 0.50
     low_speed_assist_stall_speed_mps: 0.30
     low_speed_assist_confirmation_sec: 0.30
@@ -168,10 +168,10 @@ lower_safety_controller:
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20
     stuck_speed_threshold_mps: 0.05
-    stuck_confirmation_sec: 1.0
+    stuck_confirmation_sec: 0.5
 
     # Reverse command and bounds. Recovery always commands zero steering.
-    reverse_speed_mps: 0.95
+    reverse_speed_mps: 0.85
     reverse_min_distance_m: 0.10
     reverse_min_duration_sec: 0.30
     reverse_max_distance_m: 0.50
