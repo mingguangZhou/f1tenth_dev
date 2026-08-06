@@ -11,6 +11,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -25,6 +26,7 @@ add_executable(path_generator_node src/path_generator_node.cpp)
 
 ament_target_dependencies(path_following_v2_node
   rclcpp
+  diagnostic_msgs
   nav_msgs
   geometry_msgs
   visualization_msgs
@@ -37,6 +39,7 @@ ament_target_dependencies(path_following_v2_node
 
 ament_target_dependencies(path_generator_node
   rclcpp
+  diagnostic_msgs
   nav_msgs
   geometry_msgs
   std_msgs

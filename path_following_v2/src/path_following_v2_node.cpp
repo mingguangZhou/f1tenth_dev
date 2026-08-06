@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -30,7 +32,8 @@ public:
     declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
     declare_parameter<std::string>("rule_speed_index_topic", "/path_following_v2/rule_speed_index");
     declare_parameter<std::string>("rl_speed_residual_topic", "/rl_speed_inference/speed_residual_mps");
-    declare_parameter<std::string>("drive_topic", "/drive");
+    declare_parameter<std::string>("drive_topic", "/path_following_v2/nominal_cmd");
+    declare_parameter<std::string>("status_topic", "/path_following_v2/status");
     declare_parameter<std::string>("global_frame", "map");
     declare_parameter<std::string>("robot_frame", "ego_racecar/base_link");
 
@@ -73,6 +76,7 @@ public:
     rule_speed_index_topic_ = get_parameter("rule_speed_index_topic").as_string();
     rl_speed_residual_topic_ = get_parameter("rl_speed_residual_topic").as_string();
     drive_topic_ = get_parameter("drive_topic").as_string();
+    status_topic_ = get_parameter("status_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
     robot_frame_ = get_parameter("robot_frame").as_string();
 
@@ -128,6 +132,7 @@ public:
       std::bind(&PathFollowingV2Node::rlSpeedResidualCallback, this, std::placeholders::_1));
 
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
+    status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
 
     if (publish_markers_) {
       lookahead_marker_pub_ =
@@ -145,6 +150,7 @@ public:
     RCLCPP_INFO(get_logger(), "  rule_speed_index_topic: %s", rule_speed_index_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  rl_speed_residual_topic: %s", rl_speed_residual_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  drive_topic: %s", drive_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  speed_mode: %d (%s)", speed_mode_, speed_mode_ == 0 ? "rule_based" : "rule_plus_rl_residual");
     RCLCPP_INFO(get_logger(), "  final speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
     RCLCPP_INFO(get_logger(), "  max_speed_delta_per_step_mps: %.2f", max_speed_delta_per_step_mps_);
@@ -159,6 +165,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rule_speed_index_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rl_speed_residual_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr steering_marker_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -183,6 +190,7 @@ private:
   std::string rule_speed_index_topic_;
   std::string rl_speed_residual_topic_;
   std::string drive_topic_;
+  std::string status_topic_;
   std::string global_frame_;
   std::string robot_frame_;
   std::string marker_frame_;
@@ -225,7 +233,7 @@ private:
     path_valid_ = true;
     last_path_receive_time_ = steady_clock_.now();
 
-    RCLCPP_INFO_THROTTLE(
+    RCLCPP_DEBUG_THROTTLE(
       get_logger(), steady_clock_, 3000,
       "Received local raceline path with %zu poses in frame '%s'.",
       latest_path_.poses.size(), latest_path_.header.frame_id.c_str());
@@ -233,6 +241,10 @@ private:
 
   void ruleSpeedIndexCallback(const std_msgs::msg::Float64::SharedPtr msg)
   {
+    if (!std::isfinite(msg->data)) {
+      rule_speed_index_valid_ = false;
+      return;
+    }
     latest_rule_speed_index_ = std::clamp(msg->data, 0.0, 1.0);
     rule_speed_index_valid_ = true;
     last_rule_speed_index_receive_time_ = steady_clock_.now();
@@ -240,6 +252,10 @@ private:
 
   void rlSpeedResidualCallback(const std_msgs::msg::Float64::SharedPtr msg)
   {
+    if (!std::isfinite(msg->data)) {
+      rl_speed_residual_valid_ = false;
+      return;
+    }
     latest_rl_speed_residual_mps_ = msg->data;
     rl_speed_residual_valid_ = true;
     last_rl_speed_residual_receive_time_ = steady_clock_.now();
@@ -369,6 +385,39 @@ private:
     last_commanded_speed_ = 0.0;
   }
 
+  void publishStatus(
+    const std::string & state, const std::string & reason,
+    const bool command_valid, const double speed = 0.0,
+    const double steering = 0.0)
+  {
+    diagnostic_msgs::msg::DiagnosticArray array;
+    array.header.stamp = now();
+
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = "path_following_v2/path_follower";
+    status.hardware_id = "raceline_pure_pursuit";
+    status.level = command_valid ?
+      diagnostic_msgs::msg::DiagnosticStatus::OK :
+      diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    status.message = state + ": " + reason;
+
+    auto add = [&status](const std::string & key, const std::string & value) {
+        diagnostic_msgs::msg::KeyValue pair;
+        pair.key = key;
+        pair.value = value;
+        status.values.push_back(pair);
+      };
+    add("state", state);
+    add("reason", reason);
+    add("command_valid", command_valid ? "true" : "false");
+    add("path_valid", path_valid_ ? "true" : "false");
+    add("rule_speed_index_valid", rule_speed_index_valid_ ? "true" : "false");
+    add("speed_mps", std::to_string(speed));
+    add("steering_rad", std::to_string(steering));
+    array.status.push_back(status);
+    status_pub_->publish(array);
+  }
+
   void publishMarkers(
     const geometry_msgs::msg::Point & lookahead_point,
     double steering_angle,
@@ -443,6 +492,10 @@ private:
       }
       geometry_msgs::msg::Point p;
       publishMarkers(p, 0.0, false);
+      publishStatus(
+        path_valid_ ? "PATH_STALE" : "PATH_MISSING",
+        path_valid_ ? "local path heartbeat timed out" : "no valid local path received",
+        false);
       return;
     }
 
@@ -453,6 +506,8 @@ private:
       publishStop();
       geometry_msgs::msg::Point p;
       publishMarkers(p, 0.0, false);
+      publishStatus(
+        "SPEED_INPUT_STALE", "rule speed index missing, invalid, or stale", false);
       return;
     }
 
@@ -463,6 +518,7 @@ private:
       }
       geometry_msgs::msg::Point p;
       publishMarkers(p, 0.0, false);
+      publishStatus("TF_UNAVAILABLE", "map-to-robot transform lookup failed", false);
       return;
     }
 
@@ -486,6 +542,14 @@ private:
     const double requested_speed = std::clamp(rule_speed_mps + residual_mps, speed_min_, speed_max_);
     const double commanded_speed = rateLimitSpeed(requested_speed);
 
+    if (!std::isfinite(commanded_speed)) {
+      publishStop();
+      geometry_msgs::msg::Point p;
+      publishMarkers(p, 0.0, false);
+      publishStatus("COMMAND_INVALID", "computed speed is non-finite", false);
+      return;
+    }
+
     const double speed_for_lookahead =
       use_speed_dependent_steering_lookahead_ ? commanded_speed : last_commanded_speed_;
     const double active_lookahead_distance =
@@ -508,6 +572,7 @@ private:
       }
       geometry_msgs::msg::Point p;
       publishMarkers(p, 0.0, false);
+      publishStatus("LOOKAHEAD_INVALID", "no valid forward lookahead point found", false);
       return;
     }
 
@@ -520,6 +585,7 @@ private:
         publishStop();
       }
       publishMarkers(lookahead_point_base, 0.0, false);
+      publishStatus("LOOKAHEAD_INVALID", "lookahead distance is too small", false);
       return;
     }
 
@@ -529,13 +595,23 @@ private:
     const double steering_max_rad = steering_max_deg_ * M_PI / 180.0;
     steering_angle = std::clamp(steering_angle, -steering_max_rad, steering_max_rad);
 
+    if (!std::isfinite(steering_angle)) {
+      publishStop();
+      publishMarkers(lookahead_point_base, 0.0, false);
+      publishStatus("COMMAND_INVALID", "computed steering is non-finite", false);
+      return;
+    }
+
     last_commanded_speed_ = commanded_speed;
     publishDrive(commanded_speed, steering_angle);
     publishMarkers(lookahead_point_base, steering_angle, true);
+    publishStatus(
+      "DRIVING", "fresh raceline path, speed input, transform, and lookahead",
+      true, commanded_speed, steering_angle);
 
-    RCLCPP_INFO_THROTTLE(
+    RCLCPP_DEBUG_THROTTLE(
       get_logger(), steady_clock_, 1000,
-      "cmd: speed=%.2f m/s, rule=%.2f, residual=%.2f (%s), mode=%d, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
+      "candidate_cmd: speed=%.2f m/s, rule=%.2f, residual=%.2f (%s), mode=%d, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
       commanded_speed,
       rule_speed_mps,
       residual_mps,

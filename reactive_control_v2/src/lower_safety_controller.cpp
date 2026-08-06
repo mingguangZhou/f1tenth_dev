@@ -15,6 +15,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_msgs/msg/u_int8.hpp"
 
 using std::placeholders::_1;
 
@@ -53,6 +54,9 @@ public:
     upper_status_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
       upper_status_topic_, 10,
       std::bind(&LowerSafetyController::upperStatusCallback, this, _1));
+    arbitration_mode_sub_ = create_subscription<std_msgs::msg::UInt8>(
+      arbitration_mode_topic_, 10,
+      std::bind(&LowerSafetyController::arbitrationModeCallback, this, _1));
 
     safe_command_pub_ =
       create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(safe_command_topic_, 10);
@@ -68,12 +72,13 @@ public:
       get_logger(),
       "reactive_control_v2 v0.3.0 lower_safety_controller ready: "
       "selected=%s, scan=%s, odom=%s, safe=%s, "
-      "upper_failure_status_fallback=%s, "
+      "upper_failure_status_fallback=%s, arbitration_mode_required=%s, "
       "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, "
       "reverse_recovery=%s, low_speed_assist=%s, ftg_debug=%s",
       selected_command_topic_.c_str(), scan_topic_.c_str(), odom_topic_.c_str(),
       safe_command_topic_.c_str(),
       enable_fallback_on_upper_failure_status_ ? "true" : "false",
+      require_arbitration_mode_ ? "true" : "false",
       absolute_speed_limit_mps_, absolute_steering_limit_deg_,
       enable_reverse_recovery_ ? "true" : "false",
       enable_low_speed_assist_ ? "true" : "false",
@@ -135,6 +140,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr upper_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr arbitration_mode_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr safe_command_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
@@ -153,18 +159,22 @@ private:
   rclcpp::Time last_scan_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_odom_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_upper_status_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_arbitration_mode_time_{0, 0, RCL_STEADY_TIME};
   bool command_received_{false};
   bool scan_received_{false};
   bool odom_received_{false};
   bool upper_status_received_{false};
+  bool arbitration_mode_received_{false};
   double current_speed_mps_{0.0};
   std::string upper_state_;
+  uint8_t arbitration_mode_{0};
 
   // Topic and timing parameters
   std::string selected_command_topic_;
   std::string scan_topic_;
   std::string odom_topic_;
   std::string upper_status_topic_;
+  std::string arbitration_mode_topic_;
   std::string safe_command_topic_;
   std::string lower_status_topic_;
   double control_frequency_hz_{20.0};
@@ -173,6 +183,8 @@ private:
   double odom_timeout_sec_{0.50};
   double upper_status_timeout_sec_{0.50};
   bool enable_fallback_on_upper_failure_status_{true};
+  bool require_arbitration_mode_{false};
+  double arbitration_mode_timeout_sec_{0.50};
 
   // Final command bounds. Speed remains a loose sanity bound; steering is
   // clamped to the approximately +/-25 degree physical steering limit.
@@ -282,6 +294,8 @@ private:
     declare_parameter<std::string>("scan_topic", "/scan");
     declare_parameter<std::string>("odom_topic", "/ego_racecar/odom");
     declare_parameter<std::string>("upper_status_topic", "/reactive_control_v2/status");
+    declare_parameter<std::string>(
+      "arbitration_mode_topic", "/drive_arbitration_v2/selected_mode");
     declare_parameter<std::string>("safe_command_topic", "/reactive_control_v2/safe_cmd");
     declare_parameter<std::string>(
       "lower_status_topic", "/reactive_control_v2/lower_safety_status");
@@ -291,6 +305,11 @@ private:
     declare_parameter<double>("odom_timeout_sec", 0.50);
     declare_parameter<double>("upper_status_timeout_sec", 0.50);
     declare_parameter<bool>("enable_fallback_on_upper_failure_status", true);
+    // Standalone Reactive V2 remains backward compatible when false. The
+    // integrated master launch overrides this to true so FTG/reverse can only
+    // run while drive_arbitration_v2 explicitly selects REACTIVE mode.
+    declare_parameter<bool>("require_arbitration_mode", false);
+    declare_parameter<double>("arbitration_mode_timeout_sec", 0.50);
 
     declare_parameter<double>("absolute_speed_limit_mps", 20.0);
     declare_parameter<double>("absolute_steering_limit_deg", 25.0);
@@ -353,6 +372,7 @@ private:
     scan_topic_ = get_parameter("scan_topic").as_string();
     odom_topic_ = get_parameter("odom_topic").as_string();
     upper_status_topic_ = get_parameter("upper_status_topic").as_string();
+    arbitration_mode_topic_ = get_parameter("arbitration_mode_topic").as_string();
     safe_command_topic_ = get_parameter("safe_command_topic").as_string();
     lower_status_topic_ = get_parameter("lower_status_topic").as_string();
     control_frequency_hz_ = std::max(1.0, get_parameter("control_frequency_hz").as_double());
@@ -363,6 +383,9 @@ private:
       std::max(0.01, get_parameter("upper_status_timeout_sec").as_double());
     enable_fallback_on_upper_failure_status_ =
       get_parameter("enable_fallback_on_upper_failure_status").as_bool();
+    require_arbitration_mode_ = get_parameter("require_arbitration_mode").as_bool();
+    arbitration_mode_timeout_sec_ = std::max(
+      0.01, get_parameter("arbitration_mode_timeout_sec").as_double());
 
     absolute_speed_limit_mps_ =
       std::max(0.1, get_parameter("absolute_speed_limit_mps").as_double());
@@ -514,6 +537,14 @@ private:
       upper_status_received_ = true;
       break;
     }
+  }
+
+  void arbitrationModeCallback(const std_msgs::msg::UInt8::SharedPtr mode)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    arbitration_mode_ = mode->data;
+    last_arbitration_mode_time_ = steady_clock_.now();
+    arbitration_mode_received_ = true;
   }
 
   ScanData preprocessScan(const sensor_msgs::msg::LaserScan & scan) const
@@ -896,6 +927,18 @@ private:
     stuck_timer_active_ = false;
   }
 
+  void cancelReactiveRecovery()
+  {
+    reverse_active_ = false;
+    settle_active_ = false;
+    settle_stationary_timer_active_ = false;
+    forward_motion_timer_active_ = false;
+    ftg_recovery_valid_count_ = 0;
+    reverse_distance_m_ = 0.0;
+    resetLowSpeedAssist();
+    clearTriggerTimers();
+  }
+
   void startReverse(const rclcpp::Time & current_time, const std::string & trigger)
   {
     reverse_active_ = true;
@@ -1090,6 +1133,8 @@ private:
     const double scan_age, const double current_speed, const std::string & upper_state,
     const bool odom_healthy, const double odom_age, const bool front_emergency,
     const bool ftg_stably_available, const ReverseSafety & reverse_safety,
+    const uint8_t arbitration_mode, const bool arbitration_mode_healthy,
+    const double arbitration_mode_age,
     const rclcpp::Time & steady_now)
   {
     diagnostic_msgs::msg::DiagnosticArray array;
@@ -1114,6 +1159,10 @@ private:
     add(
       "upper_failure_status_fallback_enabled",
       enable_fallback_on_upper_failure_status_ ? "true" : "false");
+    add("arbitration_mode_required", require_arbitration_mode_ ? "true" : "false");
+    add("arbitration_mode", std::to_string(arbitration_mode));
+    add("arbitration_mode_healthy", arbitration_mode_healthy ? "true" : "false");
+    add("arbitration_mode_age_sec", std::to_string(arbitration_mode_age));
     add("upper_state", upper_state.empty() ? "unavailable" : upper_state);
     add("command_age_sec", std::to_string(command_age));
     add("scan_age_sec", std::to_string(scan_age));
@@ -1206,13 +1255,16 @@ private:
     rclcpp::Time command_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time scan_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time status_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time arbitration_mode_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time odom_time(0, 0, RCL_STEADY_TIME);
     bool command_received = false;
     bool scan_received = false;
     bool status_received = false;
+    bool arbitration_mode_received = false;
     bool odom_received = false;
     double current_speed = 0.0;
     std::string upper_state;
+    uint8_t arbitration_mode = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       command = latest_command_;
@@ -1220,13 +1272,16 @@ private:
       command_time = last_command_time_;
       scan_time = last_scan_time_;
       status_time = last_upper_status_time_;
+      arbitration_mode_time = last_arbitration_mode_time_;
       odom_time = last_odom_time_;
       command_received = command_received_;
       scan_received = scan_received_;
       status_received = upper_status_received_;
+      arbitration_mode_received = arbitration_mode_received_;
       odom_received = odom_received_;
       current_speed = current_speed_mps_;
       upper_state = upper_state_;
+      arbitration_mode = arbitration_mode_;
     }
 
     const rclcpp::Time current_time = steady_clock_.now();
@@ -1236,6 +1291,20 @@ private:
       (current_time - scan_time).seconds() : std::numeric_limits<double>::infinity();
     const double status_age = status_received ?
       (current_time - status_time).seconds() : std::numeric_limits<double>::infinity();
+    const double arbitration_mode_age = arbitration_mode_received ?
+      (current_time - arbitration_mode_time).seconds() :
+      std::numeric_limits<double>::infinity();
+    const bool arbitration_mode_healthy = !require_arbitration_mode_ ||
+      (arbitration_mode_received &&
+      arbitration_mode_age <= arbitration_mode_timeout_sec_ && arbitration_mode <= 3);
+    const bool reactive_mode_authorized = !require_arbitration_mode_ ||
+      (arbitration_mode_healthy && arbitration_mode == 2);
+    const bool selected_command_authorized = !require_arbitration_mode_ ||
+      (arbitration_mode_healthy && (arbitration_mode == 1 || arbitration_mode == 2));
+
+    if (!reactive_mode_authorized && (reverse_active_ || settle_active_)) {
+      cancelReactiveRecovery();
+    }
     const double odom_age = odom_received ?
       (current_time - odom_time).seconds() : std::numeric_limits<double>::infinity();
     const bool odom_healthy = odom_received && odom_age <= odom_timeout_sec_ &&
@@ -1260,7 +1329,7 @@ private:
 
     const bool command_fresh = command_received && command_age <= command_timeout_sec_;
     const bool command_valid = commandNumericallyValid(command);
-    const bool explicit_fallback = upperRequestsFallback(
+    const bool explicit_fallback = reactive_mode_authorized && upperRequestsFallback(
       status_received, status_age, upper_state);
     const double nominal_forward_speed = command_valid ?
       std::max(0.0, static_cast<double>(command->drive.speed)) : 0.0;
@@ -1290,7 +1359,13 @@ private:
     Mode base_mode = Mode::EMERGENCY_STOP;
     std::string base_reason;
     ackermann_msgs::msg::AckermannDriveStamped base_output;
-    if (!scan_data.valid) {
+    if (!arbitration_mode_healthy) {
+      base_reason = "arbitration selected-mode heartbeat unavailable or stale";
+      base_output = stopCommand();
+    } else if (!selected_command_authorized) {
+      base_reason = "arbitration selected WAITING or STOP mode";
+      base_output = stopCommand();
+    } else if (!scan_data.valid) {
       base_reason = scan_data.invalid_reason;
       base_output = stopCommand();
     } else if (front_emergency) {
@@ -1300,7 +1375,7 @@ private:
       base_mode = Mode::NOMINAL;
       base_reason = "fresh finite selected command passed through";
       base_output = boundedNominal(*command);
-    } else if (fallback.valid) {
+    } else if (reactive_mode_authorized && fallback.valid) {
       base_mode = Mode::FALLBACK_FTG;
       if (explicit_fallback) {
         base_reason = "upper state " + upper_state + "; using conservative FTG";
@@ -1311,8 +1386,12 @@ private:
       }
       base_output = fallbackCommand(fallback);
     } else {
-      base_reason = fallback.reason.empty() ?
-        "no valid nominal or fallback command" : fallback.reason;
+      if (!reactive_mode_authorized) {
+        base_reason = "selected raceline command unavailable; reactive fallback not authorized";
+      } else {
+        base_reason = fallback.reason.empty() ?
+          "no valid nominal or fallback command" : fallback.reason;
+      }
       base_output = stopCommand();
     }
 
@@ -1411,10 +1490,12 @@ private:
     } else {
       const bool stationary = odom_healthy &&
         std::abs(current_speed) <= stationary_speed_threshold_mps_;
-      const bool dead_end_evidence = enable_reverse_recovery_ && scan_data.valid &&
+      const bool dead_end_evidence = reactive_mode_authorized &&
+        enable_reverse_recovery_ && scan_data.valid &&
         stationary && base_mode == Mode::EMERGENCY_STOP &&
         (front_emergency || !fallback.valid);
-      const bool stuck_evidence = enable_reverse_recovery_ && scan_data.valid &&
+      const bool stuck_evidence = reactive_mode_authorized &&
+        enable_reverse_recovery_ && scan_data.valid &&
         odom_healthy && base_output.drive.speed >= stuck_forward_command_threshold_mps_ &&
         std::abs(current_speed) <= stuck_speed_threshold_mps_;
 
@@ -1511,6 +1592,7 @@ private:
     publishStatus(
       mode, reason, scan_data, fallback, command_age, scan_age, current_speed, upper_state,
       odom_healthy, odom_age, front_emergency, ftg_stably_available, reverse_safety,
+      arbitration_mode, arbitration_mode_healthy, arbitration_mode_age,
       current_time);
     logTransition(mode, reason);
   }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(reactive_control_v2)
+project(drive_arbitration_v2)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -15,7 +15,6 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ackermann_msgs REQUIRED)
-find_package(builtin_interfaces REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -23,43 +22,38 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(visualization_msgs REQUIRED)
 
-add_executable(upper_corridor_follower src/upper_corridor_follower.cpp)
-ament_target_dependencies(upper_corridor_follower
-  ackermann_msgs
-  builtin_interfaces
+add_executable(raceline_guard_node src/raceline_guard_node.cpp)
+ament_target_dependencies(raceline_guard_node
   diagnostic_msgs
   geometry_msgs
   nav_msgs
   rclcpp
   sensor_msgs
-  std_msgs
   tf2
+  tf2_geometry_msgs
   tf2_ros
-  visualization_msgs
 )
 
-add_executable(lower_safety_controller src/lower_safety_controller.cpp)
-ament_target_dependencies(lower_safety_controller
+add_executable(drive_arbitrator_node src/drive_arbitrator_node.cpp)
+ament_target_dependencies(drive_arbitrator_node
   ackermann_msgs
   diagnostic_msgs
-  nav_msgs
   rclcpp
-  sensor_msgs
   std_msgs
 )
 
-install(TARGETS upper_corridor_follower lower_safety_controller
+install(TARGETS raceline_guard_node drive_arbitrator_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY config launch rviz
+install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(FILES README.md LICENSE
+install(FILES README.md DESIGN.md
   DESTINATION share/${PROJECT_NAME}
 )
 

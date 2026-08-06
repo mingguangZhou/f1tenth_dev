@@ -32,6 +32,8 @@ services:
       - ../centerline_tools:/sim_ws/src/centerline_tools
       - ../path_following_v2:/sim_ws/src/path_following_v2
       - ../reactive_control_v2:/sim_ws/src/reactive_control_v2
+      - ../drive_arbitration_v2:/sim_ws/src/drive_arbitration_v2
+      - ../oudtra_driver_bringup:/sim_ws/src/oudtra_driver_bringup
       - ../rl_training:/sim_ws/src/rl_training
       - ../rl_speed_inference:/sim_ws/src/rl_speed_inference
       - ./install_localization_env.sh:/sim_ws/install_localization_env.sh

@@ -9,15 +9,16 @@ This package intentionally keeps the controller side simple:
         ↓
 path_generator
         ├── /path_following_v2/local_path
-        └── /path_following_v2/rule_speed_index
+        ├── /path_following_v2/rule_speed_index
+        └── /path_following_v2/path_status
 
 /path_following_v2/local_path
 /path_following_v2/rule_speed_index
 /rl_speed_inference/speed_residual_mps   optional
         ↓
 path_following_v2
-        ↓
-/drive
+        ├── /path_following_v2/nominal_cmd
+        └── /path_following_v2/status
 ```
 
 ## Nodes
@@ -41,6 +42,7 @@ Publishes:
 ```text
 /path_following_v2/local_path
 /path_following_v2/rule_speed_index
+/path_following_v2/path_status
 ```
 
 The local path is a short forward segment of the global raceline. This keeps the controller ready for future obstacle-avoidance insertion.
@@ -79,7 +81,8 @@ Subscribes to:
 Publishes:
 
 ```text
-/drive
+/path_following_v2/nominal_cmd
+/path_following_v2/status
 ```
 
 Speed modes:
@@ -144,5 +147,7 @@ Then launch `rl_speed_inference` separately. Before inference publishes a fresh 
 ros2 topic echo /path_following_v2/local_path --once
 ros2 topic echo /path_following_v2/rule_speed_index --once
 ros2 topic echo /rl_speed_inference/speed_residual_mps --once
-ros2 topic echo /drive --once
+ros2 topic echo /path_following_v2/nominal_cmd --once
+ros2 topic echo /path_following_v2/path_status --once
+ros2 topic echo /path_following_v2/status --once
 ```

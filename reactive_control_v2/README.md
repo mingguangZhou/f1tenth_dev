@@ -458,12 +458,14 @@ command, use `stack` and pass its topic:
 ```bash
 ros2 launch reactive_control_v2 reactive_control_v2_sim_launch.py \
   drive_command_source:=stack \
-  nominal_cmd_topic:=/drive_arbitration/selected_cmd
+  nominal_cmd_topic:=/drive_arbitration_v2/selected_cmd
 ```
 
 Make sure that arbitrator output is not simultaneously connected directly to
-`/drive`, and set `enable_fallback_on_upper_failure_status: false` in the lower-controller
-YAML for this arrangement.
+`/drive`. In the integrated master launch, keep
+`enable_fallback_on_upper_failure_status: true` and set
+`require_arbitration_mode: true`; the lower FTG/reverse chain is then authorized
+only while `/drive_arbitration_v2/selected_mode` is `2 = REACTIVE`.
 
 The simulator launch intentionally does not start another RViz process. In the
 RViz window already opened by the simulator, add:

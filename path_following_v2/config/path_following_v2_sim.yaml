@@ -15,6 +15,7 @@ path_generator:
     # Outputs consumed by path_following_v2.
     local_path_topic: "/path_following_v2/local_path"
     rule_speed_index_topic: "/path_following_v2/rule_speed_index"
+    status_topic: "/path_following_v2/path_status"
 
     publish_rate_hz: 20.0
 
@@ -29,7 +30,7 @@ path_generator:
     # rule_speed = clip(rule_max / (1 + gain * max_curvature_abs), rule_min, rule_max)
     # max_curvature_abs is max curvature_abs from nearest_idx to nearest_idx + N.
     rule_min_speed_mps: 1.0
-    rule_max_speed_mps: 6.0
+    rule_max_speed_mps: 2.5
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_lookahead_points: 3
 
@@ -48,7 +49,8 @@ path_following_v2:
     rl_speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
 
     # Output control command.
-    drive_topic: "/drive"
+    drive_topic: "/path_following_v2/nominal_cmd"
+    status_topic: "/path_following_v2/status"
 
     control_rate_hz: 20.0
     path_timeout_sec: 1.0

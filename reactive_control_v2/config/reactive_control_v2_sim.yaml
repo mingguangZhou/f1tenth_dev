@@ -99,6 +99,7 @@ lower_safety_controller:
     scan_topic: "/scan"
     odom_topic: "/ego_racecar/odom"
     upper_status_topic: "/reactive_control_v2/status"
+    arbitration_mode_topic: "/drive_arbitration_v2/selected_mode"
     safe_command_topic: "/reactive_control_v2/safe_cmd"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"
 
@@ -111,6 +112,10 @@ lower_safety_controller:
     # Set false when selected_cmd may come from a different controller. The
     # previous use_upper_status_fallback name has been replaced by this one.
     enable_fallback_on_upper_failure_status: true
+    # Standalone compatibility. The integrated master launch overrides this to
+    # true, authorizing FTG/reverse only when arbitration selects REACTIVE.
+    require_arbitration_mode: false
+    arbitration_mode_timeout_sec: 0.50
 
     # Final command bounds. Speed remains a loose sanity limit; steering is
     # clamped to the approximate physical limit.
@@ -195,5 +200,5 @@ lower_safety_controller:
     reverse_side_min_valid_ratio: 0.25
 
     # Rate-limited reverse state details. Default off.
-    reverse_terminal_debug: true
+    reverse_terminal_debug: false
     reverse_terminal_debug_period_sec: 0.50

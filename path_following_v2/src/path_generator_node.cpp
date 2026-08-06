@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "std_msgs/msg/float64.hpp"
@@ -38,6 +40,7 @@ public:
     declare_parameter<std::string>("raceline_waypoints_topic", "/raceline_waypoints");
     declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
     declare_parameter<std::string>("rule_speed_index_topic", "/path_following_v2/rule_speed_index");
+    declare_parameter<std::string>("status_topic", "/path_following_v2/path_status");
     declare_parameter<std::string>("global_frame", "map");
     declare_parameter<std::string>("robot_frame", "ego_racecar/base_link");
 
@@ -59,6 +62,7 @@ public:
     raceline_waypoints_topic_ = get_parameter("raceline_waypoints_topic").as_string();
     local_path_topic_ = get_parameter("local_path_topic").as_string();
     rule_speed_index_topic_ = get_parameter("rule_speed_index_topic").as_string();
+    status_topic_ = get_parameter("status_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
     robot_frame_ = get_parameter("robot_frame").as_string();
 
@@ -94,6 +98,7 @@ public:
       local_path_topic_, rclcpp::QoS(1).reliable().transient_local());
 
     rule_speed_index_pub_ = create_publisher<std_msgs::msg::Float64>(rule_speed_index_topic_, 10);
+    status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
 
     const auto period_ms = std::chrono::milliseconds(
       static_cast<int>(1000.0 / std::max(1.0, publish_rate_hz_)));
@@ -103,6 +108,7 @@ public:
     RCLCPP_INFO(get_logger(), "  raceline_waypoints_topic: %s", raceline_waypoints_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  local_path_topic: %s", local_path_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  rule_speed_index_topic: %s", rule_speed_index_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  physical speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
     RCLCPP_INFO(get_logger(), "  rule speed range: %.2f to %.2f m/s", rule_min_speed_mps_, rule_max_speed_mps_);
     RCLCPP_INFO(get_logger(), "  local_path_horizon_points: %d", local_path_horizon_points_);
@@ -112,6 +118,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr raceline_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr local_path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr rule_speed_index_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   tf2_ros::Buffer tf_buffer_;
@@ -119,10 +126,12 @@ private:
 
   std::vector<RacelineWaypoint> raceline_;
   bool raceline_valid_{false};
+  bool raceline_received_{false};
 
   std::string raceline_waypoints_topic_;
   std::string local_path_topic_;
   std::string rule_speed_index_topic_;
+  std::string status_topic_;
   std::string global_frame_;
   std::string robot_frame_;
 
@@ -140,6 +149,7 @@ private:
   void racelineCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
   {
     constexpr std::size_t fields = 6;
+    raceline_received_ = true;
 
     if (msg->data.empty() || msg->data.size() % fields != 0) {
       RCLCPP_WARN(
@@ -167,7 +177,7 @@ private:
     raceline_ = std::move(parsed);
     raceline_valid_ = !raceline_.empty();
 
-    RCLCPP_INFO_THROTTLE(
+    RCLCPP_DEBUG_THROTTLE(
       get_logger(), *get_clock(), 3000,
       "Received %zu raceline waypoints.",
       raceline_.size());
@@ -289,27 +299,77 @@ private:
     return std::clamp(speed_index, 0.0, 1.0);
   }
 
+  void publishStatus(
+    const std::string & state, const std::string & reason,
+    const int nearest_idx = -1, const std::size_t local_path_points = 0)
+  {
+    diagnostic_msgs::msg::DiagnosticArray array;
+    array.header.stamp = now();
+
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = "path_following_v2/path_generator";
+    status.hardware_id = "raceline_path_generator";
+    status.level = state == "READY" ?
+      diagnostic_msgs::msg::DiagnosticStatus::OK :
+      diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    status.message = state + ": " + reason;
+
+    auto add = [&status](const std::string & key, const std::string & value) {
+        diagnostic_msgs::msg::KeyValue pair;
+        pair.key = key;
+        pair.value = value;
+        status.values.push_back(pair);
+      };
+    add("state", state);
+    add("reason", reason);
+    add("raceline_received", raceline_received_ ? "true" : "false");
+    add("raceline_valid", raceline_valid_ ? "true" : "false");
+    add("raceline_points", std::to_string(raceline_.size()));
+    add("local_path_points", std::to_string(local_path_points));
+    add("nearest_index", std::to_string(nearest_idx));
+    array.status.push_back(status);
+    status_pub_->publish(array);
+  }
+
   void publishLoop()
   {
     if (!raceline_valid_) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
         "No valid raceline waypoints yet.");
+      publishStatus(
+        raceline_received_ ? "RACELINE_INVALID" : "WAITING_RACELINE",
+        raceline_received_ ? "received raceline data are invalid" :
+        "no raceline waypoints received");
       return;
     }
 
     tf2::Transform tf_map_to_base;
-    const bool pose_ok = lookupRobotPose(tf_map_to_base);
-    const int nearest_idx = pose_ok ? findNearestRacelineIndex(tf_map_to_base) : 0;
+    if (!lookupRobotPose(tf_map_to_base)) {
+      // Never publish a plausible-looking path from index zero when the
+      // localization-dependent map -> base transform is unavailable.
+      publishStatus("TF_UNAVAILABLE", "map-to-robot transform lookup failed");
+      return;
+    }
+    const int nearest_idx = findNearestRacelineIndex(tf_map_to_base);
 
     const auto local_path = buildLocalRacelinePath(nearest_idx);
+    if (local_path.poses.size() < 2) {
+      publishStatus(
+        "LOCAL_PATH_INVALID", "generated local path has fewer than two poses",
+        nearest_idx, local_path.poses.size());
+      return;
+    }
     local_path_pub_->publish(local_path);
 
     std_msgs::msg::Float64 speed_index_msg;
     speed_index_msg.data = computeRuleSpeedIndex(nearest_idx);
     rule_speed_index_pub_->publish(speed_index_msg);
+    publishStatus(
+      "READY", "valid local raceline path and rule speed published",
+      nearest_idx, local_path.poses.size());
 
-    RCLCPP_INFO_THROTTLE(
+    RCLCPP_DEBUG_THROTTLE(
       get_logger(), *get_clock(), 1000,
       "local raceline: nearest=%d, horizon=%d, rule_speed_index=%.3f, current_curv_abs=%.3f",
       nearest_idx,
