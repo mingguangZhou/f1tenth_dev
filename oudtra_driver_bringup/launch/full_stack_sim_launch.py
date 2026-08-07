@@ -3,7 +3,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -11,7 +10,6 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     centerline_share = get_package_share_directory("centerline_tools")
-    pf_share = get_package_share_directory("particle_filter")
     path_share = get_package_share_directory("path_following_v2")
     reactive_share = get_package_share_directory("reactive_control_v2")
     arbitration_share = get_package_share_directory("drive_arbitration_v2")
@@ -32,41 +30,37 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "raceline_csv_path",
-            default_value="centerline_output/raceline_points_smooth.csv",
-            description="Relative or absolute raceline CSV path.",
+            default_value="/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv",
+            description="Relative or absolute simulator raceline CSV path.",
+        ),
+        DeclareLaunchArgument(
+            "raceline_direction",
+            default_value="csv",
+            description="Raceline traversal direction: csv/normal or reverse.",
         ),
         DeclareLaunchArgument(
             "path_config",
             default_value=os.path.join(
-                path_share, "config", "path_following_v2.yaml"
+                path_share, "config", "path_following_v2_sim.yaml"
             ),
         ),
         DeclareLaunchArgument(
             "reactive_config",
             default_value=os.path.join(
-                reactive_share, "config", "reactive_control_v2.yaml"
+                reactive_share, "config", "reactive_control_v2_sim.yaml"
             ),
         ),
         DeclareLaunchArgument(
             "arbitration_config",
             default_value=os.path.join(
-                arbitration_share, "config", "drive_arbitration_v2.yaml"
+                arbitration_share, "config", "drive_arbitration_v2_sim.yaml"
             ),
         ),
         DeclareLaunchArgument(
             "integration_config",
             default_value=os.path.join(
-                bringup_share, "config", "full_stack.yaml"
+                bringup_share, "config", "full_stack_sim.yaml"
             ),
-        ),
-        DeclareLaunchArgument(
-            "localize_config",
-            default_value=os.path.join(pf_share, "config", "localize.yaml"),
-        ),
-        DeclareLaunchArgument(
-            "start_particle_filter",
-            default_value="true",
-            description="Start particle_filter and its map server.",
         ),
         DeclareLaunchArgument(
             "final_drive_topic",
@@ -80,22 +74,18 @@ def generate_launch_description():
         DeclareLaunchArgument("drive_arbitrator_log_level", default_value="info"),
         DeclareLaunchArgument("lower_safety_log_level", default_value="info"),
 
+        # Simulator deliberately does not start particle_filter. The simulator's
+        # ground-truth map -> ego_racecar/base_link transform drives path following.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(centerline_share, "launch", "raceline_publisher.launch.py")
+                os.path.join(
+                    centerline_share, "launch", "raceline_publisher_sim_launch.py"
+                )
             ),
             launch_arguments={
                 "csv_path": LaunchConfiguration("raceline_csv_path"),
-                "use_sim_time": "false",
-            }.items(),
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(pf_share, "launch", "localize_launch.py")
-            ),
-            condition=IfCondition(LaunchConfiguration("start_particle_filter")),
-            launch_arguments={
-                "localize_config": LaunchConfiguration("localize_config"),
+                "direction": LaunchConfiguration("raceline_direction"),
+                "use_sim_time": "true",
             }.items(),
         ),
 

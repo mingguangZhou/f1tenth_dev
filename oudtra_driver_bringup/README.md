@@ -5,13 +5,21 @@ Master launch package for the integrated raceline-to-Reactive V2 stack.
 Onboard:
 
 ```bash
-ros2 launch oudtra_driver_bringup full_stack_onboard.launch.py
+ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
 ```
 
 Simulator (no particle filter and no `/pf/health` requirement):
 
 ```bash
-ros2 launch oudtra_driver_bringup full_stack_sim.launch.py
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
+```
+
+Both launches preserve the direction stored in the CSV by default
+(`raceline_direction:=csv`). To traverse the selected raceline in reverse:
+
+```bash
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
+  raceline_direction:=reverse
 ```
 
 The launches start the raceline publisher, path generator/follower, Reactive V2
@@ -23,7 +31,7 @@ state transitions, while the path generator/follower, Reactive upper, and guard
 show only warnings and errors. Enable focused detail with a launch override:
 
 ```bash
-ros2 launch oudtra_driver_bringup full_stack_sim.launch.py \
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   path_follower_log_level:=debug
 ```
 
