@@ -70,7 +70,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "start_particle_filter",
-            default_value="true",
+            default_value="false",
             description="Start particle_filter and its map server.",
         ),
         DeclareLaunchArgument(
