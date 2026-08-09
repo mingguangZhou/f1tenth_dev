@@ -39,6 +39,16 @@ drive_arbitrator:
     selected_mode_topic: "/drive_arbitration_v2/selected_mode"
     status_topic: "/drive_arbitration_v2/status"
 
+    # Visualization only: show the local path that is actually authorized
+    # through the lower controller. Green=raceline, orange=reactive upper.
+    raceline_local_path_topic: "/path_following_v2/local_path"
+    reactive_local_path_topic: "/reactive_control_v2/local_path"
+    lower_status_topic: "/reactive_control_v2/lower_safety_status"
+    ultimate_trajectory_topic: "/drive_arbitration_v2/ultimate_chosen_local_trajectory"
+    publish_ultimate_chosen_trajectory: true
+    ultimate_trajectory_line_width_m: 0.05
+    ultimate_trajectory_timeout_sec: 0.30
+
     control_rate_hz: 20.0
     primary_startup_timeout_sec: 3.0
     path_status_timeout_sec: 0.30

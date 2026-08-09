@@ -24,6 +24,7 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_executable(raceline_guard_node src/raceline_guard_node.cpp)
 ament_target_dependencies(raceline_guard_node
@@ -41,8 +42,10 @@ add_executable(drive_arbitrator_node src/drive_arbitrator_node.cpp)
 ament_target_dependencies(drive_arbitrator_node
   ackermann_msgs
   diagnostic_msgs
+  nav_msgs
   rclcpp
   std_msgs
+  visualization_msgs
 )
 
 install(TARGETS raceline_guard_node drive_arbitrator_node

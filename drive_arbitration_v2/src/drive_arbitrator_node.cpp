@@ -10,10 +10,12 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
 using std::placeholders::_1;
 
@@ -44,6 +46,15 @@ public:
     reactive_status_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
       reactive_status_topic_, 10,
       std::bind(&DriveArbitratorNode::reactiveStatusCallback, this, _1));
+    lower_status_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      lower_status_topic_, 10,
+      std::bind(&DriveArbitratorNode::lowerStatusCallback, this, _1));
+    raceline_local_path_sub_ = create_subscription<nav_msgs::msg::Path>(
+      raceline_local_path_topic_, 10,
+      std::bind(&DriveArbitratorNode::racelineLocalPathCallback, this, _1));
+    reactive_local_path_sub_ = create_subscription<nav_msgs::msg::Path>(
+      reactive_local_path_topic_, 10,
+      std::bind(&DriveArbitratorNode::reactiveLocalPathCallback, this, _1));
     pf_health_sub_ = create_subscription<std_msgs::msg::Float32MultiArray>(
       pf_health_topic_, 10,
       std::bind(&DriveArbitratorNode::pfHealthCallback, this, _1));
@@ -54,6 +65,8 @@ public:
       create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(selected_command_topic_, 10);
     selected_mode_pub_ = create_publisher<std_msgs::msg::UInt8>(selected_mode_topic_, 10);
     status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
+    ultimate_trajectory_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+      ultimate_trajectory_topic_, 10);
 
     startup_started_at_ = steady_clock_.now();
     const auto period = std::chrono::duration<double>(1.0 / control_rate_hz_);
@@ -64,13 +77,15 @@ public:
     RCLCPP_INFO(
       get_logger(),
       "drive_arbitrator ready: raceline=%s reactive=%s output=%s require_pf=%s "
-      "auto_recovery(blocked=%s,pf=%s,raceline_unavailable=%s,stable=%.2fs)",
+      "auto_recovery(blocked=%s,pf=%s,raceline_unavailable=%s,stable=%.2fs) "
+      "ultimate_trajectory=%s",
       raceline_command_topic_.c_str(), reactive_command_topic_.c_str(),
       selected_command_topic_.c_str(), require_pf_health_ ? "true" : "false",
       allow_auto_recovery_from_blocked_ ? "true" : "false",
       allow_auto_recovery_from_pf_invalid_ ? "true" : "false",
       allow_auto_recovery_from_raceline_unavailable_ ? "true" : "false",
-      raceline_recovery_stable_sec_);
+      raceline_recovery_stable_sec_,
+      publish_ultimate_chosen_trajectory_ ? ultimate_trajectory_topic_.c_str() : "disabled");
   }
 
 private:
@@ -87,6 +102,7 @@ private:
     bool received{false};
     std::string state;
     std::string reason;
+    std::string arbitration_mode;
     rclcpp::Time received_at{0, 0, RCL_STEADY_TIME};
   };
 
@@ -102,6 +118,13 @@ private:
     StatusSample follower;
     StatusSample guard;
     StatusSample reactive;
+    StatusSample lower;
+    nav_msgs::msg::Path::SharedPtr raceline_local_path;
+    nav_msgs::msg::Path::SharedPtr reactive_local_path;
+    bool raceline_local_path_received{false};
+    bool reactive_local_path_received{false};
+    rclcpp::Time raceline_local_path_time{0, 0, RCL_STEADY_TIME};
+    rclcpp::Time reactive_local_path_time{0, 0, RCL_STEADY_TIME};
     bool pf_received{false};
     int pf_state{0};
     rclcpp::Time pf_time{0, 0, RCL_STEADY_TIME};
@@ -116,12 +139,16 @@ private:
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr follower_status_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr guard_status_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr reactive_status_sub_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr lower_status_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raceline_local_path_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr reactive_local_path_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr pf_health_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr reset_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr
     selected_command_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr selected_mode_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ultimate_trajectory_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
 
@@ -136,6 +163,13 @@ private:
   StatusSample follower_status_;
   StatusSample guard_status_;
   StatusSample reactive_status_;
+  StatusSample lower_status_;
+  nav_msgs::msg::Path::SharedPtr latest_raceline_local_path_;
+  nav_msgs::msg::Path::SharedPtr latest_reactive_local_path_;
+  bool raceline_local_path_received_{false};
+  bool reactive_local_path_received_{false};
+  rclcpp::Time raceline_local_path_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time reactive_local_path_time_{0, 0, RCL_STEADY_TIME};
   bool pf_received_{false};
   int pf_state_{0};
   rclcpp::Time pf_time_{0, 0, RCL_STEADY_TIME};
@@ -152,6 +186,10 @@ private:
   std::string selected_command_topic_;
   std::string selected_mode_topic_;
   std::string status_topic_;
+  std::string raceline_local_path_topic_;
+  std::string reactive_local_path_topic_;
+  std::string lower_status_topic_;
+  std::string ultimate_trajectory_topic_;
   double control_rate_hz_{20.0};
   double primary_startup_timeout_sec_{3.0};
   double path_status_timeout_sec_{0.30};
@@ -167,6 +205,11 @@ private:
   bool allow_auto_recovery_from_pf_invalid_{false};
   bool allow_auto_recovery_from_raceline_unavailable_{false};
   double raceline_recovery_stable_sec_{1.0};
+  bool publish_ultimate_chosen_trajectory_{true};
+  double ultimate_trajectory_line_width_m_{0.05};
+  double ultimate_trajectory_timeout_sec_{0.30};
+  bool ultimate_trajectory_visible_{false};
+  std::string last_ultimate_trajectory_frame_{"base_link"};
 
   Mode mode_{Mode::WAITING};
   Mode last_logged_mode_{Mode::WAITING};
@@ -199,6 +242,15 @@ private:
     declare_parameter<std::string>(
       "selected_mode_topic", "/drive_arbitration_v2/selected_mode");
     declare_parameter<std::string>("status_topic", "/drive_arbitration_v2/status");
+    declare_parameter<std::string>(
+      "raceline_local_path_topic", "/path_following_v2/local_path");
+    declare_parameter<std::string>(
+      "reactive_local_path_topic", "/reactive_control_v2/local_path");
+    declare_parameter<std::string>(
+      "lower_status_topic", "/reactive_control_v2/lower_safety_status");
+    declare_parameter<std::string>(
+      "ultimate_trajectory_topic",
+      "/drive_arbitration_v2/ultimate_chosen_local_trajectory");
     declare_parameter<double>("control_rate_hz", 20.0);
     declare_parameter<double>("primary_startup_timeout_sec", 3.0);
     declare_parameter<double>("path_status_timeout_sec", 0.30);
@@ -214,6 +266,9 @@ private:
     declare_parameter<bool>("allow_auto_recovery_from_pf_invalid", false);
     declare_parameter<bool>("allow_auto_recovery_from_raceline_unavailable", false);
     declare_parameter<double>("raceline_recovery_stable_sec", 1.0);
+    declare_parameter<bool>("publish_ultimate_chosen_trajectory", true);
+    declare_parameter<double>("ultimate_trajectory_line_width_m", 0.05);
+    declare_parameter<double>("ultimate_trajectory_timeout_sec", 0.30);
   }
 
   void loadParameters()
@@ -229,6 +284,10 @@ private:
     selected_command_topic_ = get_parameter("selected_command_topic").as_string();
     selected_mode_topic_ = get_parameter("selected_mode_topic").as_string();
     status_topic_ = get_parameter("status_topic").as_string();
+    raceline_local_path_topic_ = get_parameter("raceline_local_path_topic").as_string();
+    reactive_local_path_topic_ = get_parameter("reactive_local_path_topic").as_string();
+    lower_status_topic_ = get_parameter("lower_status_topic").as_string();
+    ultimate_trajectory_topic_ = get_parameter("ultimate_trajectory_topic").as_string();
     control_rate_hz_ = std::max(1.0, get_parameter("control_rate_hz").as_double());
     primary_startup_timeout_sec_ = std::max(
       0.0, get_parameter("primary_startup_timeout_sec").as_double());
@@ -256,6 +315,12 @@ private:
       get_parameter("allow_auto_recovery_from_raceline_unavailable").as_bool();
     raceline_recovery_stable_sec_ = std::max(
       0.0, get_parameter("raceline_recovery_stable_sec").as_double());
+    publish_ultimate_chosen_trajectory_ =
+      get_parameter("publish_ultimate_chosen_trajectory").as_bool();
+    ultimate_trajectory_line_width_m_ = std::max(
+      0.001, get_parameter("ultimate_trajectory_line_width_m").as_double());
+    ultimate_trajectory_timeout_sec_ = std::max(
+      0.01, get_parameter("ultimate_trajectory_timeout_sec").as_double());
   }
 
   void racelineCommandCallback(
@@ -286,11 +351,16 @@ private:
       }
       destination.state.clear();
       destination.reason.clear();
+      destination.arbitration_mode.clear();
       for (const auto & value : status.values) {
         if (value.key == "state") {
           destination.state = value.value;
+        } else if (value.key == "mode" && destination.state.empty()) {
+          destination.state = value.value;
         } else if (value.key == "reason") {
           destination.reason = value.value;
+        } else if (value.key == "arbitration_mode") {
+          destination.arbitration_mode = value.value;
         }
       }
       if (destination.state.empty()) {
@@ -331,6 +401,28 @@ private:
     parseStatus(*array, "reactive_control_v2/upper_corridor_follower", reactive_status_);
   }
 
+  void lowerStatusCallback(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr array)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    parseStatus(*array, "reactive_control_v2/lower_safety_controller", lower_status_);
+  }
+
+  void racelineLocalPathCallback(const nav_msgs::msg::Path::SharedPtr path)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_raceline_local_path_ = path;
+    raceline_local_path_time_ = steady_clock_.now();
+    raceline_local_path_received_ = true;
+  }
+
+  void reactiveLocalPathCallback(const nav_msgs::msg::Path::SharedPtr path)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_reactive_local_path_ = path;
+    reactive_local_path_time_ = steady_clock_.now();
+    reactive_local_path_received_ = true;
+  }
+
   void pfHealthCallback(const std_msgs::msg::Float32MultiArray::SharedPtr health)
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -366,6 +458,13 @@ private:
     result.follower = follower_status_;
     result.guard = guard_status_;
     result.reactive = reactive_status_;
+    result.lower = lower_status_;
+    result.raceline_local_path = latest_raceline_local_path_;
+    result.reactive_local_path = latest_reactive_local_path_;
+    result.raceline_local_path_received = raceline_local_path_received_;
+    result.reactive_local_path_received = reactive_local_path_received_;
+    result.raceline_local_path_time = raceline_local_path_time_;
+    result.reactive_local_path_time = reactive_local_path_time_;
     result.pf_received = pf_received_;
     result.pf_state = pf_state_;
     result.pf_time = pf_time_;
@@ -612,6 +711,92 @@ private:
     status_pub_->publish(array);
   }
 
+  void hideUltimateTrajectory()
+  {
+    if (!ultimate_trajectory_visible_) {
+      return;
+    }
+    visualization_msgs::msg::Marker marker;
+    marker.header.stamp = now();
+    marker.header.frame_id = last_ultimate_trajectory_frame_;
+    marker.ns = "ultimate_chosen_local_trajectory";
+    marker.id = 0;
+    marker.action = visualization_msgs::msg::Marker::DELETE;
+    ultimate_trajectory_pub_->publish(marker);
+    ultimate_trajectory_visible_ = false;
+  }
+
+  void publishUltimateTrajectory(
+    const Snapshot & input, const rclcpp::Time & current_time)
+  {
+    if (!publish_ultimate_chosen_trajectory_) {
+      hideUltimateTrajectory();
+      return;
+    }
+
+    const bool lower_status_fresh = input.lower.received &&
+      age(input.lower.received, input.lower.received_at, current_time) <=
+      ultimate_trajectory_timeout_sec_;
+    const std::string expected_mode = std::to_string(static_cast<uint8_t>(mode_));
+    const bool lower_follows_selected_nominal = lower_status_fresh &&
+      input.lower.state == "NOMINAL" && input.lower.arbitration_mode == expected_mode;
+
+    nav_msgs::msg::Path::SharedPtr selected_path;
+    bool path_received = false;
+    rclcpp::Time path_time(0, 0, RCL_STEADY_TIME);
+    bool show_raceline = false;
+
+    if (lower_follows_selected_nominal && mode_ == Mode::RACELINE) {
+      selected_path = input.raceline_local_path;
+      path_received = input.raceline_local_path_received;
+      path_time = input.raceline_local_path_time;
+      show_raceline = true;
+    } else if (lower_follows_selected_nominal && mode_ == Mode::REACTIVE) {
+      selected_path = input.reactive_local_path;
+      path_received = input.reactive_local_path_received;
+      path_time = input.reactive_local_path_time;
+    } else {
+      hideUltimateTrajectory();
+      return;
+    }
+
+    const bool path_fresh = path_received &&
+      age(path_received, path_time, current_time) <= ultimate_trajectory_timeout_sec_;
+    if (!path_fresh || !selected_path || selected_path->header.frame_id.empty() ||
+      selected_path->poses.size() < 2)
+    {
+      hideUltimateTrajectory();
+      return;
+    }
+
+    visualization_msgs::msg::Marker marker;
+    marker.header = selected_path->header;
+    marker.ns = "ultimate_chosen_local_trajectory";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = ultimate_trajectory_line_width_m_;
+    marker.color.a = 1.0F;
+    if (show_raceline) {
+      marker.color.r = 0.0F;
+      marker.color.g = 0.15F;
+      marker.color.b = 0.75F;
+    } else {
+      marker.color.r = 1.0F;
+      marker.color.g = 0.5F;
+      marker.color.b = 0.0F;
+    }
+    marker.points.reserve(selected_path->poses.size());
+    for (const auto & pose : selected_path->poses) {
+      marker.points.push_back(pose.pose.position);
+    }
+
+    last_ultimate_trajectory_frame_ = marker.header.frame_id;
+    ultimate_trajectory_pub_->publish(marker);
+    ultimate_trajectory_visible_ = true;
+  }
+
   void controlLoop()
   {
     Snapshot input = snapshot();
@@ -718,6 +903,7 @@ private:
     mode_message.data = static_cast<uint8_t>(mode_);
     selected_mode_pub_->publish(mode_message);
     selected_command_pub_->publish(selected);
+    publishUltimateTrajectory(input, current_time);
     publishStatus(input, current_time, primary_ready, reactive_ready, primary_failure);
     logTransition();
   }

@@ -13,6 +13,23 @@ The package contains:
 Only `reactive_control_v2/lower_safety_controller` should publish the final
 `/drive` topic. See `DESIGN.md` for interfaces and exact trigger definitions.
 
+## Ultimate chosen local trajectory (visualization only)
+
+The arbitrator publishes a single RViz `visualization_msgs/msg/Marker` on:
+
+```text
+/drive_arbitration_v2/ultimate_chosen_local_trajectory
+```
+
+- green: the raceline local path while arbitration is `RACELINE` and the lower
+  controller confirms `NOMINAL` for that mode;
+- orange: the upper corridor path while arbitration is `REACTIVE` and the lower
+  controller confirms `NOMINAL` for that mode;
+- hidden: lower FTG, reverse, emergency stop, recovery settle, waiting, stop,
+  stale status, or stale/invalid path.
+
+This publisher does not modify candidate commands, arbitration, or `/drive`.
+
 Standalone launches:
 
 ```bash
