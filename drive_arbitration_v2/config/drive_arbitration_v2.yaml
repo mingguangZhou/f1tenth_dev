@@ -42,7 +42,7 @@ drive_arbitrator:
     status_topic: "/drive_arbitration_v2/status"
 
     # Visualization only: show the local path that is actually authorized
-    # through the lower controller. Green=raceline, orange=reactive upper.
+    # through the lower controller. Dark blue=raceline, orange=reactive upper.
     raceline_local_path_topic: "/path_following_v2/local_path"
     reactive_local_path_topic: "/reactive_control_v2/local_path"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"
@@ -67,3 +67,10 @@ drive_arbitrator:
     allow_auto_recovery_from_pf_invalid: true
     allow_auto_recovery_from_raceline_unavailable: true
     raceline_recovery_stable_sec: 0.5
+
+    # Do not hand back to raceline while the final lower safety layer is using
+    # FTG, emergency stop, reverse, or recovery settle. A lower emergency that
+    # occurs after RACELINE selection also relatches REACTIVE so the existing
+    # dead-end/FTG/reverse process remains authorized.
+    enable_lower_safety_recovery_coordination: true
+    lower_status_timeout_sec: 0.30

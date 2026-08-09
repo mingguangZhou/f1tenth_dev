@@ -78,13 +78,15 @@ public:
       get_logger(),
       "drive_arbitrator ready: raceline=%s reactive=%s output=%s require_pf=%s "
       "auto_recovery(blocked=%s,pf=%s,raceline_unavailable=%s,stable=%.2fs) "
-      "ultimate_trajectory=%s",
+      "lower_recovery_coordination=%s(timeout=%.2fs) ultimate_trajectory=%s",
       raceline_command_topic_.c_str(), reactive_command_topic_.c_str(),
       selected_command_topic_.c_str(), require_pf_health_ ? "true" : "false",
       allow_auto_recovery_from_blocked_ ? "true" : "false",
       allow_auto_recovery_from_pf_invalid_ ? "true" : "false",
       allow_auto_recovery_from_raceline_unavailable_ ? "true" : "false",
       raceline_recovery_stable_sec_,
+      enable_lower_safety_recovery_coordination_ ? "true" : "false",
+      lower_status_timeout_sec_,
       publish_ultimate_chosen_trajectory_ ? ultimate_trajectory_topic_.c_str() : "disabled");
   }
 
@@ -205,6 +207,8 @@ private:
   bool allow_auto_recovery_from_pf_invalid_{false};
   bool allow_auto_recovery_from_raceline_unavailable_{false};
   double raceline_recovery_stable_sec_{1.0};
+  bool enable_lower_safety_recovery_coordination_{true};
+  double lower_status_timeout_sec_{0.30};
   bool publish_ultimate_chosen_trajectory_{true};
   double ultimate_trajectory_line_width_m_{0.05};
   double ultimate_trajectory_timeout_sec_{0.30};
@@ -266,6 +270,8 @@ private:
     declare_parameter<bool>("allow_auto_recovery_from_pf_invalid", false);
     declare_parameter<bool>("allow_auto_recovery_from_raceline_unavailable", false);
     declare_parameter<double>("raceline_recovery_stable_sec", 1.0);
+    declare_parameter<bool>("enable_lower_safety_recovery_coordination", true);
+    declare_parameter<double>("lower_status_timeout_sec", 0.30);
     declare_parameter<bool>("publish_ultimate_chosen_trajectory", true);
     declare_parameter<double>("ultimate_trajectory_line_width_m", 0.05);
     declare_parameter<double>("ultimate_trajectory_timeout_sec", 0.30);
@@ -315,6 +321,10 @@ private:
       get_parameter("allow_auto_recovery_from_raceline_unavailable").as_bool();
     raceline_recovery_stable_sec_ = std::max(
       0.0, get_parameter("raceline_recovery_stable_sec").as_double());
+    enable_lower_safety_recovery_coordination_ =
+      get_parameter("enable_lower_safety_recovery_coordination").as_bool();
+    lower_status_timeout_sec_ = std::max(
+      0.01, get_parameter("lower_status_timeout_sec").as_double());
     publish_ultimate_chosen_trajectory_ =
       get_parameter("publish_ultimate_chosen_trajectory").as_bool();
     ultimate_trajectory_line_width_m_ = std::max(
@@ -601,6 +611,48 @@ private:
       allow_auto_recovery_from_raceline_unavailable_);
   }
 
+  bool lowerStatusFresh(
+    const Snapshot & input, const rclcpp::Time & current_time) const
+  {
+    return input.lower.received &&
+      age(input.lower.received, input.lower.received_at, current_time) <=
+      lower_status_timeout_sec_;
+  }
+
+  std::string lowerRecoveryHoldReason(
+    const Snapshot & input, const rclcpp::Time & current_time) const
+  {
+    if (!enable_lower_safety_recovery_coordination_) {
+      return "";
+    }
+    if (!lowerStatusFresh(input, current_time)) {
+      return "lower safety status missing or stale";
+    }
+    // The lower status reports the arbitrator's UInt8 mode as text.  Requiring
+    // mode 2 prevents a delayed NOMINAL sample from another arbitration mode
+    // from authorizing a raceline handover.
+    if (input.lower.arbitration_mode != "2") {
+      return "lower safety has not confirmed REACTIVE arbitration mode";
+    }
+    if (input.lower.state != "NOMINAL") {
+      return "lower safety mode=" + input.lower.state;
+    }
+    return "";
+  }
+
+  bool lowerEmergencyUnderRaceline(
+    const Snapshot & input, const rclcpp::Time & current_time) const
+  {
+    // This safety net covers the short race in which the raceline guard clears,
+    // RACELINE is selected, and the final lower layer then detects a hard-front
+    // emergency.  Mode feedback must confirm 1 (RACELINE), so stale emergency
+    // status from the previous Reactive episode cannot retrigger fallback.
+    return enable_lower_safety_recovery_coordination_ &&
+      lowerStatusFresh(input, current_time) &&
+      input.lower.state == "EMERGENCY_STOP" &&
+      input.lower.arbitration_mode == "1";
+  }
+
   std::string fallbackTriggerSummary() const
   {
     std::string result;
@@ -693,6 +745,17 @@ private:
       raceline_recovery_pending_ ?
       std::to_string((current_time - raceline_recovery_started_at_).seconds()) : "0.0");
     add("raceline_recovery_stable_sec", std::to_string(raceline_recovery_stable_sec_));
+    add(
+      "lower_recovery_coordination_enabled",
+      enable_lower_safety_recovery_coordination_ ? "true" : "false");
+    add("lower_status_state", input.lower.state);
+    add("lower_status_arbitration_mode", input.lower.arbitration_mode);
+    add(
+      "lower_status_age_sec",
+      std::to_string(age(input.lower.received, input.lower.received_at, current_time)));
+    add(
+      "lower_allows_raceline_recovery",
+      lowerRecoveryHoldReason(input, current_time).empty() ? "true" : "false");
     add("path_generator_state", input.path.state);
     add("follower_state", input.follower.state);
     add("guard_state", input.guard.state);
@@ -812,6 +875,20 @@ private:
     const bool primary_ready = primary_failure.empty();
     const bool reactive_ready = reactiveChainAvailable(input, current_time);
 
+    const bool lower_emergency_fallback =
+      mode_ == Mode::RACELINE && lowerEmergencyUnderRaceline(input, current_time);
+    if (lower_emergency_fallback) {
+      // The lower controller has final /drive authority.  Keep its emergency
+      // stop, but reselect/latch REACTIVE so its existing dead-end timer, FTG,
+      // and reverse recovery are authorized on subsequent cycles.
+      const std::string trigger =
+        "RACELINE_BLOCKED: lower safety emergency while raceline selected";
+      reactive_latched_ = true;
+      latched_trigger_ = trigger;
+      recordFallbackTrigger(trigger);
+      raceline_recovery_pending_ = false;
+    }
+
     if (reactive_latched_) {
       if (!primary_ready) {
         recordFallbackTrigger(primary_failure);
@@ -824,24 +901,43 @@ private:
           mode_reason_ = primary_failure + "; reactive chain unavailable";
         }
       } else if (automaticRecoveryAllowed()) {
-        if (!raceline_recovery_pending_) {
-          raceline_recovery_pending_ = true;
-          raceline_recovery_started_at_ = current_time;
-        }
-        const double stable_age =
-          (current_time - raceline_recovery_started_at_).seconds();
-        if (stable_age >= raceline_recovery_stable_sec_) {
-          const std::string recovered_triggers = fallbackTriggerSummary();
-          clearReactiveLatch();
-          mode_ = Mode::RACELINE;
-          mode_reason_ = "automatic return after stable healthy/clear raceline; recovered from " +
-            recovered_triggers;
-        } else if (reactive_ready) {
-          mode_ = Mode::REACTIVE;
-          mode_reason_ = "automatic raceline recovery pending; stability timer running";
+        const std::string lower_hold_reason = lowerRecoveryHoldReason(input, current_time);
+        if (!lower_hold_reason.empty()) {
+          // Reset rather than pause: handover requires one uninterrupted
+          // interval with both the primary chain healthy and the lower layer
+          // confirmed NOMINAL in REACTIVE mode.
+          raceline_recovery_pending_ = false;
+          if (reactive_ready) {
+            mode_ = Mode::REACTIVE;
+            mode_reason_ = lower_emergency_fallback ?
+              "RACELINE_BLOCKED: lower safety emergency while raceline selected" :
+              "automatic raceline recovery held; " + lower_hold_reason;
+          } else {
+            mode_ = Mode::STOP;
+            mode_reason_ = "automatic raceline recovery held; " + lower_hold_reason +
+              "; reactive chain unavailable";
+          }
         } else {
-          mode_ = Mode::STOP;
-          mode_reason_ = "automatic raceline recovery pending; reactive chain unavailable";
+          if (!raceline_recovery_pending_) {
+            raceline_recovery_pending_ = true;
+            raceline_recovery_started_at_ = current_time;
+          }
+          const double stable_age =
+            (current_time - raceline_recovery_started_at_).seconds();
+          if (stable_age >= raceline_recovery_stable_sec_) {
+            const std::string recovered_triggers = fallbackTriggerSummary();
+            clearReactiveLatch();
+            mode_ = Mode::RACELINE;
+            mode_reason_ =
+              "automatic return after stable healthy/clear raceline and lower NOMINAL; "
+              "recovered from " + recovered_triggers;
+          } else if (reactive_ready) {
+            mode_ = Mode::REACTIVE;
+            mode_reason_ = "automatic raceline recovery pending; stability timer running";
+          } else {
+            mode_ = Mode::STOP;
+            mode_reason_ = "automatic raceline recovery pending; reactive chain unavailable";
+          }
         }
       } else if (reactive_ready) {
         raceline_recovery_pending_ = false;

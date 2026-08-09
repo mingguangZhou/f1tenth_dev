@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>drive_arbitration_v2</name>
-  <version>0.1.1</version>
+  <version>0.1.2</version>
   <description>Raceline-to-reactive arbitration and lightweight raceline blockage guard.</description>
 
   <maintainer email="mingguang_zhou@berkeley.edu">Mingguang Zhou</maintainer>

@@ -21,7 +21,7 @@ The arbitrator publishes a single RViz `visualization_msgs/msg/Marker` on:
 /drive_arbitration_v2/ultimate_chosen_local_trajectory
 ```
 
-- green: the raceline local path while arbitration is `RACELINE` and the lower
+- dark blue: the raceline local path while arbitration is `RACELINE` and the lower
   controller confirms `NOMINAL` for that mode;
 - orange: the upper corridor path while arbitration is `REACTIVE` and the lower
   controller confirms `NOMINAL` for that mode;
@@ -38,16 +38,37 @@ ros2 launch drive_arbitration_v2 drive_arbitration_v2_sim.launch.py
 ```
 
 The supplied sim and onboard YAML files enable automatic return from blockage,
-PF invalid/unavailable, and raceline unavailable after the complete raceline
-chain remains healthy and clear for 0.5 seconds. Trigger-specific recovery can
-be enabled independently with:
+PF invalid/unavailable, and raceline unavailable. Return now requires one
+continuous 0.5-second interval in which both conditions are true:
+
+1. The complete raceline chain is healthy and the raceline guard is clear.
+2. Fresh lower-controller status confirms `NOMINAL` while arbitration is still
+   `REACTIVE` (mode code `2`).
+
+Thus, the timer is reset while the lower layer reports `FALLBACK_FTG`,
+`EMERGENCY_STOP`, `REVERSE_RECOVERY`, or `RECOVERY_SETTLE`. Reverse recovery is
+not cancelled merely because the raceline guard becomes clear.
+
+There is also a handover-race safety net. If arbitration has selected
+`RACELINE`, but fresh lower status confirms `EMERGENCY_STOP` for raceline mode,
+the arbitrator records a `RACELINE_BLOCKED` trigger and relatches `REACTIVE`.
+The lower controller continues to hold the emergency stop, while its existing
+dead-end timer, FTG, and reverse recovery become authorized again.
+
+Configuration:
 
 ```yaml
 allow_auto_recovery_from_blocked: true
 allow_auto_recovery_from_pf_invalid: true
 allow_auto_recovery_from_raceline_unavailable: true
 raceline_recovery_stable_sec: 0.5
+enable_lower_safety_recovery_coordination: true
+lower_status_timeout_sec: 0.30
 ```
+
+`enable_lower_safety_recovery_coordination: false` restores the previous
+raceline-return behavior. This update does not change reverse-entry thresholds,
+reverse-exit conditions, FTG calculations, or the final `/drive` safety checks.
 
 Manual reset of the Reactive latch remains available:
 

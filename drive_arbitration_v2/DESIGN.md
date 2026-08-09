@@ -84,6 +84,9 @@ AND path follower status is fresh and DRIVING
 AND raceline candidate command is fresh and finite
 AND raceline guard status is fresh and CLEAR
 AND PF health is fresh and state 1 or 2       # onboard only
+AND lower safety status is fresh
+AND lower safety state is NOMINAL
+AND lower safety confirms arbitration mode 2 # still REACTIVE
 ```
 
 If any requirement fails during the interval, the timer is cancelled and must
@@ -100,12 +103,23 @@ allow_auto_recovery_from_blocked: true
 allow_auto_recovery_from_pf_invalid: true
 allow_auto_recovery_from_raceline_unavailable: true
 raceline_recovery_stable_sec: 0.5
+enable_lower_safety_recovery_coordination: true
+lower_status_timeout_sec: 0.30
 ```
 
 Therefore, after an obstacle has cleared—or after PF/path availability has
-recovered—the arbitrator keeps selecting Reactive for another continuous
-0.5 seconds, then changes to `RACELINE`. The simulator ignores PF health, so the
-PF recovery switch has no effect there.
+recovered—the arbitrator keeps selecting Reactive until the lower controller is
+also `NOMINAL`, then requires another continuous 0.5 seconds before changing to
+`RACELINE`. Any lower FTG, emergency stop, reverse, settle, stale status, or
+mode mismatch resets this timer. The simulator ignores PF health, so the PF
+recovery switch has no effect there.
+
+When fresh lower status reports `EMERGENCY_STOP` and confirms arbitration mode
+1 (`RACELINE`), the arbitrator treats this as a missed `RACELINE_BLOCKED`
+condition and relatches `REACTIVE`. Emergency braking remains active at the
+lower layer, but selecting Reactive re-authorizes its existing FTG, dead-end,
+and reverse-recovery logic. The lower controller's own reverse-entry and
+reverse-exit tests are unchanged.
 
 The parameter name `allow_auto_recovery_from_pf_invalid` covers every PF state
 that makes localization unusable: explicit state 3, missing/stale health, and
