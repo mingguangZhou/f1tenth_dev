@@ -17,8 +17,8 @@ path_generator:
     publish_rate_hz: 20.0
     # Physical horizon is primary; the point count is a compatibility fallback
     # used only when local_path_horizon_m <= 0.
-    local_path_horizon_m: 10.0
-    max_local_path_points: 600
+    local_path_horizon_m: 4.0
+    max_local_path_points: 250
     local_path_horizon_points: 80
 
     # Conservative onboard envelope; tune upward after stable steering/localization.
@@ -26,7 +26,7 @@ path_generator:
     speed_max: 2.0
 
     rule_min_speed_mps: 0.5
-    rule_max_speed_mps: 2.0
+    rule_max_speed_mps: 1.5
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_lookahead_points: 3
 
@@ -79,7 +79,7 @@ local_trajectory_planner:
     normal_speed_cap_mps: 2.0
     detour_speed_cap_mps: 1.0
     recovery_speed_cap_mps: 1.0
-    replan_pending_speed_cap_mps: 0.4
+    replan_pending_speed_cap_mps: 0.8
 
     recovery_enter_lateral_error_m: 0.18
     recovery_exit_lateral_error_m: 0.08

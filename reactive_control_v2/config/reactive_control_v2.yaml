@@ -181,7 +181,7 @@ lower_safety_controller:
     reverse_min_duration_sec: 0.30
     reverse_max_distance_m: 0.50
     reverse_max_duration_sec: 2.0
-    reverse_max_attempts: 10
+    reverse_max_attempts: 50
     reverse_attempt_reset_forward_time_sec: 0.30
     reverse_attempt_reset_speed_mps: 0.20
 
