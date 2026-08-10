@@ -12,15 +12,15 @@ raceline_guard:
     transform_timeout_sec: 0.05
     scan_range_cap_m: 6.0
 
-    # Lightweight expanded-raceline test:
+    # Final selected-primary-trajectory test (raceline or local detour):
     # half width = vehicle_width / 2 + lateral_safety_margin.
     guard_distance_m: 4.0
     guard_path_step_m: 0.10
-    vehicle_width_m: 0.32
-    lateral_safety_margin_m: 0.04
+    vehicle_width_m: 0.28
+    lateral_safety_margin_m: 0.10
     min_valid_beam_ratio: 0.35
     blocked_min_points: 3
-    blocked_confirmation_scans: 2
+    blocked_confirmation_scans: 3
     clear_confirmation_scans: 3
     critical_block_distance_m: 0.80
 
@@ -42,7 +42,8 @@ drive_arbitrator:
     status_topic: "/drive_arbitration_v2/status"
 
     # Visualization only: show the local path that is actually authorized
-    # through the lower controller. Dark blue=raceline, orange=reactive upper.
+    # through the lower controller. Dark blue=raceline, light blue=executed
+    # local replan, orange=reactive upper.
     raceline_local_path_topic: "/path_following_v2/local_path"
     reactive_local_path_topic: "/reactive_control_v2/local_path"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"

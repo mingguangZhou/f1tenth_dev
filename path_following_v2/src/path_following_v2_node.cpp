@@ -32,6 +32,8 @@ public:
     declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
     declare_parameter<std::string>("rule_speed_index_topic", "/path_following_v2/rule_speed_index");
     declare_parameter<std::string>("rl_speed_residual_topic", "/rl_speed_inference/speed_residual_mps");
+    declare_parameter<std::string>(
+      "trajectory_speed_cap_topic", "/path_following_v2/trajectory_speed_cap_mps");
     declare_parameter<std::string>("drive_topic", "/path_following_v2/nominal_cmd");
     declare_parameter<std::string>("status_topic", "/path_following_v2/status");
     declare_parameter<std::string>("global_frame", "map");
@@ -41,6 +43,7 @@ public:
     declare_parameter<double>("path_timeout_sec", 1.0);
     declare_parameter<double>("rule_speed_index_timeout_sec", 0.5);
     declare_parameter<double>("rl_residual_timeout_sec", 0.5);
+    declare_parameter<double>("trajectory_speed_cap_timeout_sec", 0.5);
     declare_parameter<double>("tf_timeout_sec", 0.1);
 
     // speed_mode = 0: rule-based speed only.
@@ -49,6 +52,7 @@ public:
     declare_parameter<double>("speed_min", 1.0);
     declare_parameter<double>("speed_max", 10.0);
     declare_parameter<double>("max_speed_delta_per_step_mps", 0.2);
+    declare_parameter<bool>("require_trajectory_speed_cap", true);
 
     declare_parameter<double>("fixed_steering_lookahead_m", 0.60);
     declare_parameter<bool>("use_speed_dependent_steering_lookahead", true);
@@ -75,6 +79,7 @@ public:
     local_path_topic_ = get_parameter("local_path_topic").as_string();
     rule_speed_index_topic_ = get_parameter("rule_speed_index_topic").as_string();
     rl_speed_residual_topic_ = get_parameter("rl_speed_residual_topic").as_string();
+    trajectory_speed_cap_topic_ = get_parameter("trajectory_speed_cap_topic").as_string();
     drive_topic_ = get_parameter("drive_topic").as_string();
     status_topic_ = get_parameter("status_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
@@ -84,12 +89,15 @@ public:
     path_timeout_sec_ = get_parameter("path_timeout_sec").as_double();
     rule_speed_index_timeout_sec_ = get_parameter("rule_speed_index_timeout_sec").as_double();
     rl_residual_timeout_sec_ = get_parameter("rl_residual_timeout_sec").as_double();
+    trajectory_speed_cap_timeout_sec_ =
+      get_parameter("trajectory_speed_cap_timeout_sec").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
 
     speed_mode_ = get_parameter("speed_mode").as_int();
     speed_min_ = get_parameter("speed_min").as_double();
     speed_max_ = get_parameter("speed_max").as_double();
     max_speed_delta_per_step_mps_ = get_parameter("max_speed_delta_per_step_mps").as_double();
+    require_trajectory_speed_cap_ = get_parameter("require_trajectory_speed_cap").as_bool();
 
     fixed_steering_lookahead_m_ = get_parameter("fixed_steering_lookahead_m").as_double();
     use_speed_dependent_steering_lookahead_ = get_parameter("use_speed_dependent_steering_lookahead").as_bool();
@@ -131,6 +139,10 @@ public:
       rl_speed_residual_topic_, 10,
       std::bind(&PathFollowingV2Node::rlSpeedResidualCallback, this, std::placeholders::_1));
 
+    trajectory_speed_cap_sub_ = create_subscription<std_msgs::msg::Float64>(
+      trajectory_speed_cap_topic_, 10,
+      std::bind(&PathFollowingV2Node::trajectorySpeedCapCallback, this, std::placeholders::_1));
+
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
     status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
 
@@ -149,6 +161,9 @@ public:
     RCLCPP_INFO(get_logger(), "  local_path_topic: %s", local_path_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  rule_speed_index_topic: %s", rule_speed_index_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  rl_speed_residual_topic: %s", rl_speed_residual_topic_.c_str());
+    RCLCPP_INFO(
+      get_logger(), "  trajectory_speed_cap_topic: %s (required=%s)",
+      trajectory_speed_cap_topic_.c_str(), require_trajectory_speed_cap_ ? "true" : "false");
     RCLCPP_INFO(get_logger(), "  drive_topic: %s", drive_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  speed_mode: %d (%s)", speed_mode_, speed_mode_ == 0 ? "rule_based" : "rule_plus_rl_residual");
@@ -164,6 +179,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rule_speed_index_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr rl_speed_residual_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr trajectory_speed_cap_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
@@ -178,17 +194,21 @@ private:
   bool path_valid_{false};
   bool rule_speed_index_valid_{false};
   bool rl_speed_residual_valid_{false};
+  bool trajectory_speed_cap_valid_{false};
   bool rl_residual_was_fresh_{false};
   double latest_rule_speed_index_{0.0};
   double latest_rl_speed_residual_mps_{0.0};
+  double latest_trajectory_speed_cap_mps_{0.0};
   double last_commanded_speed_{0.0};
   rclcpp::Time last_path_receive_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_rule_speed_index_receive_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_rl_speed_residual_receive_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_trajectory_speed_cap_receive_time_{0, 0, RCL_STEADY_TIME};
 
   std::string local_path_topic_;
   std::string rule_speed_index_topic_;
   std::string rl_speed_residual_topic_;
+  std::string trajectory_speed_cap_topic_;
   std::string drive_topic_;
   std::string status_topic_;
   std::string global_frame_;
@@ -201,12 +221,14 @@ private:
   double path_timeout_sec_{1.0};
   double rule_speed_index_timeout_sec_{0.5};
   double rl_residual_timeout_sec_{0.5};
+  double trajectory_speed_cap_timeout_sec_{0.5};
   double tf_timeout_sec_{0.1};
 
   int speed_mode_{0};
   double speed_min_{1.0};
   double speed_max_{10.0};
   double max_speed_delta_per_step_mps_{0.2};
+  bool require_trajectory_speed_cap_{true};
 
   double fixed_steering_lookahead_m_{0.60};
   bool use_speed_dependent_steering_lookahead_{true};
@@ -261,6 +283,17 @@ private:
     last_rl_speed_residual_receive_time_ = steady_clock_.now();
   }
 
+  void trajectorySpeedCapCallback(const std_msgs::msg::Float64::SharedPtr msg)
+  {
+    if (!std::isfinite(msg->data) || msg->data < 0.0) {
+      trajectory_speed_cap_valid_ = false;
+      return;
+    }
+    latest_trajectory_speed_cap_mps_ = msg->data;
+    trajectory_speed_cap_valid_ = true;
+    last_trajectory_speed_cap_receive_time_ = steady_clock_.now();
+  }
+
   bool pathFresh()
   {
     if (!path_valid_) {
@@ -283,6 +316,15 @@ private:
       return false;
     }
     return (steady_clock_.now() - last_rl_speed_residual_receive_time_).seconds() <= rl_residual_timeout_sec_;
+  }
+
+  bool trajectorySpeedCapFresh()
+  {
+    if (!trajectory_speed_cap_valid_) {
+      return false;
+    }
+    return (steady_clock_.now() - last_trajectory_speed_cap_receive_time_).seconds() <=
+      trajectory_speed_cap_timeout_sec_;
   }
 
   double speedFromIndex(double speed_index) const
@@ -412,6 +454,10 @@ private:
     add("command_valid", command_valid ? "true" : "false");
     add("path_valid", path_valid_ ? "true" : "false");
     add("rule_speed_index_valid", rule_speed_index_valid_ ? "true" : "false");
+    add("trajectory_speed_cap_valid", trajectory_speed_cap_valid_ ? "true" : "false");
+    add(
+      "trajectory_speed_cap_mps",
+      trajectory_speed_cap_valid_ ? std::to_string(latest_trajectory_speed_cap_mps_) : "none");
     add("speed_mps", std::to_string(speed));
     add("steering_rad", std::to_string(steering));
     array.status.push_back(status);
@@ -511,6 +557,19 @@ private:
       return;
     }
 
+    const bool trajectory_speed_cap_fresh = trajectorySpeedCapFresh();
+    if (require_trajectory_speed_cap_ && !trajectory_speed_cap_fresh) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), steady_clock_, 2000,
+        "Trajectory speed cap missing or stale. Holding stop.");
+      publishStop();
+      geometry_msgs::msg::Point p;
+      publishMarkers(p, 0.0, false);
+      publishStatus(
+        "SPEED_CAP_STALE", "trajectory planner speed cap missing, invalid, or stale", false);
+      return;
+    }
+
     tf2::Transform tf_map_to_base;
     if (!lookupRobotPose(tf_map_to_base)) {
       if (stop_if_no_path_) {
@@ -540,7 +599,13 @@ private:
 
     const double residual_mps = use_rl_residual ? latest_rl_speed_residual_mps_ : 0.0;
     const double requested_speed = std::clamp(rule_speed_mps + residual_mps, speed_min_, speed_max_);
-    const double commanded_speed = rateLimitSpeed(requested_speed);
+    const double rate_limited_speed = rateLimitSpeed(requested_speed);
+    // The planner cap is a safety upper bound, so apply it after the normal
+    // symmetric rate limiter.  This permits immediate deceleration when a
+    // detour begins while acceleration after rejoin remains rate limited.
+    const double active_speed_cap = trajectory_speed_cap_fresh ?
+      std::clamp(latest_trajectory_speed_cap_mps_, 0.0, speed_max_) : speed_max_;
+    const double commanded_speed = std::min(rate_limited_speed, active_speed_cap);
 
     if (!std::isfinite(commanded_speed)) {
       publishStop();
@@ -611,11 +676,12 @@ private:
 
     RCLCPP_DEBUG_THROTTLE(
       get_logger(), steady_clock_, 1000,
-      "candidate_cmd: speed=%.2f m/s, rule=%.2f, residual=%.2f (%s), mode=%d, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
+      "candidate_cmd: speed=%.2f m/s, rule=%.2f, residual=%.2f (%s), cap=%.2f, mode=%d, steer=%.3f rad, active_Ld=%.2f, lookahead=(%.2f, %.2f)",
       commanded_speed,
       rule_speed_mps,
       residual_mps,
       use_rl_residual ? "fresh" : "rule_only",
+      active_speed_cap,
       speed_mode_,
       steering_angle,
       active_lookahead_distance,

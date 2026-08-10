@@ -6,12 +6,13 @@ The integration keeps control generation, supervision, and final safety in
 separate packages:
 
 ```text
-centerline_tools -> path_following_v2 -> raceline candidate ----+
-                                                               |
-/scan -> reactive_control_v2 upper -> reactive candidate -------+-> drive_arbitration_v2
-                                                               |       |
-/scan + local raceline -> raceline_guard -----------------------+       v
-/pf/health (onboard only) --------------------------------------+  selected_cmd + selected_mode
+centerline_tools -> raw raceline -> local_trajectory_planner -> primary candidate --+
+                                      ^                                     |
+                                      | /scan                               |
+/scan -> reactive_control_v2 upper -> reactive candidate -------------------+-> drive_arbitration_v2
+                                                                            |       |
+/scan + final primary path -> raceline_guard -------------------------------+       v
+/pf/health (onboard only) --------------------------------------------------+  selected_cmd + selected_mode
                                                                        |
                                                                        v
                                                     reactive_control_v2 lower
@@ -21,12 +22,14 @@ centerline_tools -> path_following_v2 -> raceline candidate ----+
 ```
 
 - `centerline_tools` owns static raceline loading and publication.
-- `path_following_v2` owns map-based local-path generation, rule/RL speed, and
-  the raceline candidate command.
+- `path_following_v2` owns map-based raw-path generation, local left/right
+  persistent local replanning, rule/RL speed with a planner cap, and the primary
+  candidate command.
 - `reactive_control_v2/upper_corridor_follower` runs continuously as a warm
   localization-free candidate.
-- `drive_arbitration_v2/raceline_guard` only answers whether current scan
-  endpoints interfere with the upcoming raceline band.
+- `drive_arbitration_v2/raceline_guard` answers whether current scan endpoints
+  interfere with the final selected primary path band. The name remains for
+  compatibility; the path may be an unchanged raceline or a local replan.
 - `drive_arbitration_v2/drive_arbitrator` selects the authorized control mode.
 - `reactive_control_v2/lower_safety_controller` is the only final `/drive`
   publisher and retains emergency braking, FTG, low-speed assistance, and
@@ -79,10 +82,10 @@ whole `raceline_recovery_stable_sec` interval. In other words, recovery requires
 all of the following simultaneously:
 
 ```text
-path generator status is fresh and READY
+primary trajectory-planner status is fresh and READY
 AND path follower status is fresh and DRIVING
 AND raceline candidate command is fresh and finite
-AND raceline guard status is fresh and CLEAR
+AND final primary-trajectory guard status is fresh and CLEAR
 AND PF health is fresh and state 1 or 2       # onboard only
 AND lower safety status is fresh
 AND lower safety state is NOMINAL
@@ -152,7 +155,7 @@ Instead, availability is based on the live output chain:
 
 ```text
 raceline_available =
-    fresh(path_generator status) AND path_generator state == READY
+    fresh(local-trajectory-planner status) AND planner state == READY
     AND fresh(path_follower status) AND path_follower state == DRIVING
     AND fresh(raceline candidate command)
     AND finite(command speed and steering)
@@ -160,23 +163,34 @@ raceline_available =
 
 The guard and PF checks are independent requirements described below.
 
-### Path-generator states
+### Primary trajectory-planner states
 
-`/path_following_v2/path_status` publishes a heartbeat with diagnostic name
-`path_following_v2/path_generator`:
+`path_generator_node` publishes an internal 8 m raw path on
+`/path_following_v2/raceline_local_path`. `local_trajectory_planner_node` publishes
+the final `/path_following_v2/local_path` plus the public
+`/path_following_v2/path_status` heartbeat. The diagnostic name remains
+`path_following_v2/path_generator` so the existing arbitrator parser does not
+need a compatibility-breaking change.
 
 | State | Meaning |
 |---|---|
-| `WAITING_RACELINE` | No global raceline has been received. |
-| `RACELINE_INVALID` | A received raceline has invalid row sizing or is empty. |
-| `TF_UNAVAILABLE` | `map -> base_link` (or simulator robot frame) cannot be resolved. |
-| `LOCAL_PATH_INVALID` | Fewer than two local poses could be produced. |
-| `READY` | A local path and rule-speed index were published this cycle. |
+| `READY`, `trajectory_mode=RACELINE` | Raw raceline is clear; unchanged final path and normal cap published. |
+| `READY`, `trajectory_mode=AVOIDING` | Executing a persistent obstacle-passing trajectory. |
+| `READY`, `trajectory_mode=REJOINING` | Executing its stored return to the raceline. |
+| `READY`, `trajectory_mode=RECOVERING_TO_RACELINE` | Converging from lateral displacement. |
+| `READY`, `trajectory_mode=REPLAN_PENDING` | Slowed while a material update/failure is confirmed. |
+| `NO_SAFE_PATH_CONFIRMED` | Repeated fresh scans found no safe local trajectory. |
+| `CRITICAL_OBSTACLE` | Obstacle is too close to begin the configured departure. |
+| `SCAN_INVALID` | Scan is absent, stale, malformed, or below the valid-beam threshold. |
+| `TF_UNAVAILABLE` | Scan-to-path transform cannot be resolved. |
+| `INPUT_INVALID` | Raw path is absent, stale, malformed, or too short. |
 
-The important safety correction is the `TF_UNAVAILABLE` behavior. Previously,
-TF failure selected raceline index zero and still published a plausible local
-path. The updated node publishes the failure state and publishes neither a new
-local path nor a new speed index for that cycle.
+The upstream raw generator separately reports raceline/TF/horizon failures on
+`/path_following_v2/raceline_path_status`. Those failures stop its raw-path
+heartbeat, so the public planner reports `INPUT_INVALID`. On every public
+planner failure it publishes a zero trajectory-speed cap while omitting a new
+final path. This stops the primary candidate immediately while arbitration
+evaluates Reactive availability.
 
 ### Path-follower states
 
@@ -187,6 +201,7 @@ local path nor a new speed index for that cycle.
 |---|---|
 | `PATH_MISSING` / `PATH_STALE` | No usable live local path. |
 | `SPEED_INPUT_STALE` | Rule-speed input is absent, invalid, or stale. |
+| `SPEED_CAP_STALE` | Required trajectory-planner cap is absent, invalid, or stale. |
 | `TF_UNAVAILABLE` | The localization-dependent transform failed. |
 | `LOOKAHEAD_INVALID` | Pure pursuit cannot select a forward target. |
 | `COMMAND_INVALID` | A computed command is non-finite. |
@@ -203,40 +218,47 @@ follower_status_timeout_sec: 0.30
 raceline_command_timeout_sec: 0.25
 ```
 
-Existing controller tuning, including the follower's own `path_timeout_sec`,
-speed limits, lookaheads, steering limits, and the 80-point local horizon, was
-left unchanged. Arbitration can therefore reject the chain earlier than the
-follower's internal timeout without altering its standalone tuning.
+Existing pure-pursuit and rule/RL tuning remains unchanged. The raw local
+horizon is now physical-distance based (`8.0 m`) and the planner speed cap is
+applied after the rule/RL calculation and normal rate limiter. Arbitration can
+still reject the chain earlier than the follower's own path timeout.
 
-## 5. `RACELINE_BLOCKED`
+## 5. Persistent local replanning and `RACELINE_BLOCKED`
 
-The guard implements the deliberately lightweight expanded-raceline method.
-It transforms the upcoming local path into the LaserScan frame and checks the
-minimum point-to-segment distance for valid scan endpoints:
+An obstacle intersecting the raw raceline first requests local planning, not
+Reactive mode. `local_trajectory_planner` clusters adjacent scan returns, calculates
+measured obstacle extents in raceline `(s,d)` coordinates, creates quintic left
+and right departure/pass/rejoin paths, and validates each complete candidate
+against all current finite scan returns plus the steering-derived curvature
+limit. A valid candidate stays in arbitration mode `RACELINE` because command
+ownership and localization dependence have not changed.
+
+The guard then applies the deliberately lightweight expanded-path method to
+the final `/path_following_v2/local_path`:
 
 ```text
 interference if:
-distance(scan endpoint, upcoming local path) <=
+distance(scan endpoint, selected primary path) <=
     vehicle_width / 2 + lateral_safety_margin
 ```
 
-With the initial parameters:
+Common planner/guard/Reactive-upper parameters are:
 
 ```yaml
-vehicle_width_m: 0.32
-lateral_safety_margin_m: 0.04
-guard_half_width_m: 0.20  # computed
+vehicle_width_m: 0.28
+lateral_safety_margin_m: 0.10
+guard_half_width_m: 0.24  # computed
 guard_distance_m: 4.0
 guard_path_step_m: 0.10
 blocked_min_points: 3
-blocked_confirmation_scans: 2
+blocked_confirmation_scans: 3
 clear_confirmation_scans: 3
 critical_block_distance_m: 0.80
 ```
 
-No polygon union or oriented vehicle rectangles are constructed. The local
-path is downsampled before the point-to-segment checks. Ordinary blockage needs
-two distinct scans; a qualifying cluster within the critical distance bypasses
+No polygon union or oriented vehicle rectangles are constructed. The final
+path is downsampled before point-to-segment checks. Ordinary blockage needs three
+distinct scans; qualifying interference within the critical distance bypasses
 that delay. The guard reports `UNKNOWN`, `CLEAR`, or `BLOCKED` on
 `/drive_arbitration_v2/raceline_guard_status`.
 
@@ -244,10 +266,41 @@ that delay. The guard reports `UNKNOWN`, `CLEAR`, or `BLOCKED` on
 missing or invalid LaserScan also makes the Reactive chain unavailable, so the
 combined result is STOP.
 
-The requested guard distance can exceed the currently available 80-point local
-path. The guard reports `checked_path_reach_m` so this is visible during tests;
-it checks all available forward path instead of inventing geometry. The local
-horizon can be increased later after baseline integration tests.
+The raw generator accumulates points until `local_path_horizon_m: 8.0`;
+`max_local_path_points: 600` is only a dense/malformed-path failsafe. The guard
+checks the first `guard_distance_m: 4.0` of the final path and reports
+`checked_path_reach_m` for test visibility.
+
+The final obstacle hierarchy is:
+
+```text
+raw raceline -> persistent local replan -> Reactive corridor -> lower FTG/reverse -> emergency stop
+```
+
+An accepted local plan is map-frame anchored and identified by `plan_id`. Its
+published prefix is trimmed as the car advances, but its remaining geometry is
+not regenerated from each scan. It is normally released only after the stored
+rejoin index is passed, lateral error is within `0.08 m`, heading error is within
+`10 deg`, and those conditions persist for four fresh scans. A 12 s maximum
+requests a new current-pose plan; it does not directly release the stored plan.
+
+Material update triggers are confirmed active-path blockage, more than `0.35 m`
+deviation from the stored path, plan-end without convergence, or the 12 s stale
+backstop. Ordinary failure is reported as `READY/REPLAN_PENDING` with a low
+speed cap while three fresh scans are collected. The arbitrator defers a
+non-critical guard `BLOCKED` result to this confirmation logic while a local
+replan is already executing. A critical guard result, lower emergency stop,
+`NO_SAFE_PATH_CONFIRMED`, and invalid planner inputs remain immediate safety
+triggers. When Reactive is already latched, guard `CLEAR` is still required for
+the existing 0.5 s recovery handover.
+
+`NO_SAFE_PATH_CONFIRMED` and `CRITICAL_OBSTACLE` map to the existing
+`RACELINE_BLOCKED` trigger class. Invalid planner inputs map to
+`RACELINE_UNAVAILABLE`; final-guard `BLOCKED` also maps to
+`RACELINE_BLOCKED`. All make the primary chain non-ready and request Reactive. The existing
+Reactive latch and 0.5 s lower-coordinated recovery are unchanged. Recovery may
+return to a validated local replan; the raw raceline itself does not need to be clear
+when the final selected primary path is safe.
 
 ## 6. Localization policy
 
@@ -294,21 +347,27 @@ timer may instead complete and select `RACELINE`.
 The dedicated `oudtra_driver_bringup` package owns system composition:
 
 ```bash
-# Onboard: includes particle_filter; requires /pf/health.
-ros2 launch oudtra_driver_bringup full_stack_onboard.launch.py
+# Onboard: particle_filter is normally started and checked separately;
+# arbitration still requires /pf/health.
+ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
 
 # Simulator: no particle_filter; ignores /pf/health.
-ros2 launch oudtra_driver_bringup full_stack_sim.launch.py
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
-Both launches start the raceline publisher, path generator/follower, Reactive
-upper, guard, arbitrator, and Reactive lower. The final command chain is:
+Both launches start the raceline publisher, raw path generator, local trajectory
+planner, follower, Reactive upper, guard, arbitrator, and Reactive lower. The
+final command chain is:
 
 ```text
 /drive_arbitration_v2/selected_cmd
     -> lower_safety_controller
     -> /drive
 ```
+
+The onboard launch keeps `start_particle_filter:=false` by default. The PF can
+still be included for the old one-command behavior by explicitly passing
+`start_particle_filter:=true`.
 
 The optional RL speed-inference package was not in the supplied archive, so the
 master launch does not invent its package/executable name. It may continue to
@@ -324,6 +383,7 @@ periodic candidate-controller output quiet by default:
 |---|---|---|
 | `drive_arbitrator_log_level` | `info` | Selected-mode and reason transitions. |
 | `lower_safety_log_level` | `info` | Lower NOMINAL/FTG/reverse/STOP transitions. |
+| `local_trajectory_planner_log_level` | `info` | Planner startup/configuration summary and plan activation/release. |
 | `path_generator_log_level` | `warn` | Warnings and errors only. |
 | `path_follower_log_level` | `warn` | Warnings and errors only. |
 | `reactive_upper_log_level` | `warn` | Upper failure transitions, warnings, and errors. |
@@ -338,14 +398,14 @@ files; its state changes remain visible.
 For focused debugging, override only the relevant node, for example:
 
 ```bash
-ros2 launch oudtra_driver_bringup full_stack_sim.launch.py \
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   path_follower_log_level:=debug
 ```
 
 `output="screen"` only routes messages to the terminal; the per-node log level
-sets which severities appear. The raceline-publisher and particle-filter nodes
-are started through their own included launch files, so their internal logger
-levels are not overridden by these six arguments.
+sets which severities appear. The raceline-publisher and optional
+particle-filter nodes are started through their own included launch files, so
+their internal logger levels are not overridden by these seven arguments.
 
 ## 10. First integration checks
 
@@ -353,6 +413,7 @@ Build all packages in the same Foxy workspace, source the overlay, and inspect:
 
 ```bash
 ros2 topic echo /path_following_v2/path_status
+ros2 topic echo /path_following_v2/trajectory_speed_cap_mps
 ros2 topic echo /path_following_v2/status
 ros2 topic echo /drive_arbitration_v2/raceline_guard_status
 ros2 topic echo /drive_arbitration_v2/status

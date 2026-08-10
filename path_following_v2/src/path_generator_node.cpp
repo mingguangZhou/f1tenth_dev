@@ -38,7 +38,11 @@ public:
     tf_listener_(tf_buffer_)
   {
     declare_parameter<std::string>("raceline_waypoints_topic", "/raceline_waypoints");
-    declare_parameter<std::string>("local_path_topic", "/path_following_v2/local_path");
+    // The generator now publishes the unmodified local raceline.  The
+    // local_trajectory_planner owns the public /local_path topic consumed by the
+    // follower and final trajectory guard.
+    declare_parameter<std::string>(
+      "local_path_topic", "/path_following_v2/raceline_local_path");
     declare_parameter<std::string>("rule_speed_index_topic", "/path_following_v2/rule_speed_index");
     declare_parameter<std::string>("status_topic", "/path_following_v2/path_status");
     declare_parameter<std::string>("global_frame", "map");
@@ -46,6 +50,11 @@ public:
 
     declare_parameter<double>("publish_rate_hz", 20.0);
     declare_parameter<double>("tf_timeout_sec", 0.05);
+    // Prefer a physical horizon so changing CSV point spacing does not change
+    // the distance available for obstacle detection, departure and rejoin.
+    // Set <= 0 to use the legacy point-count horizon.
+    declare_parameter<double>("local_path_horizon_m", 10.0);
+    declare_parameter<int>("max_local_path_points", 600);
     declare_parameter<int>("local_path_horizon_points", 80);
 
     // Rule-based speed preview. The steering pure-pursuit lookahead lives in path_following_v2_node.
@@ -68,6 +77,8 @@ public:
 
     publish_rate_hz_ = get_parameter("publish_rate_hz").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
+    local_path_horizon_m_ = get_parameter("local_path_horizon_m").as_double();
+    max_local_path_points_ = get_parameter("max_local_path_points").as_int();
     local_path_horizon_points_ = get_parameter("local_path_horizon_points").as_int();
 
     speed_min_ = get_parameter("speed_min").as_double();
@@ -81,6 +92,7 @@ public:
       RCLCPP_WARN(get_logger(), "local_path_horizon_points must be >= 2; forcing to 2.");
       local_path_horizon_points_ = 2;
     }
+    max_local_path_points_ = std::max(2, max_local_path_points_);
 
     if (speed_min_ > speed_max_) {
       RCLCPP_WARN(get_logger(), "speed_min > speed_max; swapping them.");
@@ -111,7 +123,9 @@ public:
     RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  physical speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
     RCLCPP_INFO(get_logger(), "  rule speed range: %.2f to %.2f m/s", rule_min_speed_mps_, rule_max_speed_mps_);
-    RCLCPP_INFO(get_logger(), "  local_path_horizon_points: %d", local_path_horizon_points_);
+    RCLCPP_INFO(
+      get_logger(), "  local horizon: %.2f m (max %d points; legacy fallback %d points)",
+      local_path_horizon_m_, max_local_path_points_, local_path_horizon_points_);
   }
 
 private:
@@ -142,9 +156,13 @@ private:
   double rule_min_speed_mps_{1.0};
   double rule_max_speed_mps_{6.0};
   double rule_speed_curvature_gain_{2.0};
+  double local_path_horizon_m_{10.0};
+  double last_local_path_length_m_{0.0};
 
+  int max_local_path_points_{600};
   int local_path_horizon_points_{80};
   int rule_speed_curvature_lookahead_points_{3};
+  bool last_horizon_reached_{false};
 
   void racelineCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
   {
@@ -238,7 +256,7 @@ private:
     return tf2::toMsg(q);
   }
 
-  nav_msgs::msg::Path buildLocalRacelinePath(int nearest_idx) const
+  nav_msgs::msg::Path buildLocalRacelinePath(int nearest_idx)
   {
     nav_msgs::msg::Path path;
     path.header.stamp = now();
@@ -249,8 +267,13 @@ private:
     }
 
     const int n = static_cast<int>(raceline_.size());
-    const int horizon = std::min(local_path_horizon_points_, n);
+    const bool use_metric_horizon = local_path_horizon_m_ > 0.0;
+    const int horizon = use_metric_horizon ?
+      std::min(max_local_path_points_, n) :
+      std::min(local_path_horizon_points_, n);
     path.poses.reserve(static_cast<std::size_t>(horizon));
+    last_local_path_length_m_ = 0.0;
+    last_horizon_reached_ = !use_metric_horizon;
 
     for (int step = 0; step < horizon; ++step) {
       const int idx = ((nearest_idx + step) % n + n) % n;
@@ -263,6 +286,15 @@ private:
       pose.pose.position.z = 0.0;
       pose.pose.orientation = yawToQuaternion(wp.yaw);
       path.poses.push_back(pose);
+
+      if (path.poses.size() >= 2) {
+        const auto & previous = path.poses[path.poses.size() - 2].pose.position;
+        last_local_path_length_m_ += std::hypot(wp.x - previous.x, wp.y - previous.y);
+      }
+      if (use_metric_horizon && last_local_path_length_m_ >= local_path_horizon_m_) {
+        last_horizon_reached_ = true;
+        break;
+      }
     }
 
     return path;
@@ -326,6 +358,8 @@ private:
     add("raceline_valid", raceline_valid_ ? "true" : "false");
     add("raceline_points", std::to_string(raceline_.size()));
     add("local_path_points", std::to_string(local_path_points));
+    add("local_path_length_m", std::to_string(last_local_path_length_m_));
+    add("metric_horizon_reached", last_horizon_reached_ ? "true" : "false");
     add("nearest_index", std::to_string(nearest_idx));
     array.status.push_back(status);
     status_pub_->publish(array);
@@ -360,6 +394,14 @@ private:
         nearest_idx, local_path.poses.size());
       return;
     }
+    if (local_path_horizon_m_ > 0.0 && !last_horizon_reached_) {
+      // A short/malformed raceline or an excessively dense path must not look
+      // like a complete detour-planning window.
+      publishStatus(
+        "LOCAL_PATH_INVALID", "metric horizon not reached before point limit",
+        nearest_idx, local_path.poses.size());
+      return;
+    }
     local_path_pub_->publish(local_path);
 
     std_msgs::msg::Float64 speed_index_msg;
@@ -371,9 +413,10 @@ private:
 
     RCLCPP_DEBUG_THROTTLE(
       get_logger(), *get_clock(), 1000,
-      "local raceline: nearest=%d, horizon=%d, rule_speed_index=%.3f, current_curv_abs=%.3f",
+      "local raceline: nearest=%d, length=%.2f m, points=%zu, rule_speed_index=%.3f, current_curv_abs=%.3f",
       nearest_idx,
-      local_path_horizon_points_,
+      last_local_path_length_m_,
+      local_path.poses.size(),
       speed_index_msg.data,
       raceline_[nearest_idx].curvature_abs);
   }

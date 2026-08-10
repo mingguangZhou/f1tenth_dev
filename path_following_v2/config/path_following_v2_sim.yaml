@@ -12,15 +12,19 @@ path_generator:
     # [index, x, y, yaw, curvature, curvature_abs]
     raceline_waypoints_topic: "/raceline_waypoints"
 
-    # Outputs consumed by path_following_v2.
-    local_path_topic: "/path_following_v2/local_path"
+    # Internal raw-raceline outputs. local_trajectory_planner owns the public
+    # /path_following_v2/local_path and /path_following_v2/path_status topics.
+    local_path_topic: "/path_following_v2/raceline_local_path"
     rule_speed_index_topic: "/path_following_v2/rule_speed_index"
-    status_topic: "/path_following_v2/path_status"
+    status_topic: "/path_following_v2/raceline_path_status"
 
     publish_rate_hz: 20.0
 
-    # Local forward window extracted from the global raceline.
-    local_path_horizon_points: 80
+    # Ten physical metres normally produce about 334 points for the current
+    # ~0.03 m CSV spacing. Point count remains only as a compatibility fallback.
+    local_path_horizon_m: 10.0
+    max_local_path_points: 600
+    local_path_horizon_points: 100
 
     # Final physical speed envelope. Must match the follower.
     speed_min: 1.0
@@ -33,6 +37,82 @@ path_generator:
     rule_max_speed_mps: 2.5
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_lookahead_points: 3
+
+local_trajectory_planner:
+  ros__parameters:
+    use_sim_time: true
+
+    raw_path_topic: "/path_following_v2/raceline_local_path"
+    final_path_topic: "/path_following_v2/local_path"
+    scan_topic: "/scan"
+    speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
+    status_topic: "/path_following_v2/path_status"
+    marker_topic: "/path_following_v2/detour_markers"
+    robot_frame: "ego_racecar/base_link"
+
+    control_rate_hz: 20.0
+    raw_path_timeout_sec: 0.30
+    scan_timeout_sec: 0.30
+    transform_timeout_sec: 0.05
+    # Use scan/raceline information up to the common 10 m local ceiling. The
+    # actual obstacle trigger is clipped automatically only when a complete
+    # detour plus minimum smooth return would not fit in the current path.
+    scan_range_cap_m: 10.0
+    planning_distance_m: 10.0
+
+    vehicle_width_m: 0.28
+    lateral_safety_margin_m: 0.10
+    min_valid_beam_ratio: 0.35
+    blocked_min_points: 3
+
+    cluster_max_beam_gap: 2
+    cluster_point_gap_m: 0.18
+    max_obstacle_size_m: 0.50
+    obstacle_size_tolerance_m: 0.15
+    critical_obstacle_distance_m: 0.80
+
+    # Each side samples at most six offsets, 0.08 m apart, then chooses the
+    # corridor-centred candidate with the best bottleneck clearance.
+    detour_longitudinal_buffer_m: 0.20
+    detour_extra_clearance_m: 0.0
+    detour_return_min_length_m: 2.50
+    detour_return_max_length_m: 5.00
+    candidate_lateral_step_m: 0.08
+    max_candidates_per_side: 6
+    max_lateral_shift_m: 0.80
+    wheelbase_m: 0.33
+    steering_max_deg: 20.6
+    curvature_safety_factor: 0.95
+    normal_speed_cap_mps: 10.0
+    detour_speed_cap_mps: 1.5
+    recovery_speed_cap_mps: 1.5
+    replan_pending_speed_cap_mps: 0.5
+
+    # Start local recovery outside 0.18 m; release only after the car has
+    # passed the plan's rejoin anchor and is back within 0.08 m.
+    recovery_enter_lateral_error_m: 0.18
+    recovery_exit_lateral_error_m: 0.08
+    recovery_exit_heading_error_deg: 10.0
+    recovery_min_rejoin_length_m: 2.5
+    recovery_max_rejoin_length_m: 5.0
+    recovery_length_gain: 3.0
+
+    # A plan is normally held by geometric completion, not a timer. The 12 s
+    # maximum only forces a stale-plan update attempt.
+    minimum_plan_hold_sec: 0.50
+    maximum_plan_hold_sec: 12.0
+    plan_deviation_replan_m: 0.35
+    side_switch_clearance_advantage_m: 0.10
+    side_commit_obstacle_distance_m: 3.0
+    side_commit_lateral_progress_m: 0.08
+    precommit_max_sec: 0.75
+    precommit_refine_interval_scans: 2
+    side_switch_confirmation_evaluations: 2
+    rejoin_confirmation_scans: 4
+    active_path_blocked_confirmation_scans: 3
+    no_safe_path_confirmation_scans: 3
+    enable_detour_planning: true
+    publish_markers: true
 
 path_following_v2:
   ros__parameters:
@@ -47,6 +127,7 @@ path_following_v2:
     local_path_topic: "/path_following_v2/local_path"
     rule_speed_index_topic: "/path_following_v2/rule_speed_index"
     rl_speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
+    trajectory_speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
 
     # Output control command.
     drive_topic: "/path_following_v2/nominal_cmd"
@@ -56,6 +137,7 @@ path_following_v2:
     path_timeout_sec: 1.0
     rule_speed_index_timeout_sec: 0.5
     rl_residual_timeout_sec: 0.5
+    trajectory_speed_cap_timeout_sec: 0.5
 
     # speed_mode:
     #   0 = rule-based only
@@ -70,6 +152,7 @@ path_following_v2:
 
     # Final command rate limit after rule speed + residual, aligned with rl_training.
     max_speed_delta_per_step_mps: 0.2
+    require_trajectory_speed_cap: true
 
     # Pure pursuit steering.
     wheelbase: 0.33

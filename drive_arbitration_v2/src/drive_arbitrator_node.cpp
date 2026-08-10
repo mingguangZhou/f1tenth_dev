@@ -105,6 +105,7 @@ private:
     std::string state;
     std::string reason;
     std::string arbitration_mode;
+    std::string trajectory_mode;
     rclcpp::Time received_at{0, 0, RCL_STEADY_TIME};
   };
 
@@ -362,6 +363,7 @@ private:
       destination.state.clear();
       destination.reason.clear();
       destination.arbitration_mode.clear();
+      destination.trajectory_mode.clear();
       for (const auto & value : status.values) {
         if (value.key == "state") {
           destination.state = value.value;
@@ -371,6 +373,8 @@ private:
           destination.reason = value.value;
         } else if (value.key == "arbitration_mode") {
           destination.arbitration_mode = value.value;
+        } else if (value.key == "trajectory_mode") {
+          destination.trajectory_mode = value.value;
         }
       }
       if (destination.state.empty()) {
@@ -527,8 +531,18 @@ private:
     {
       return "RACELINE_UNAVAILABLE: path-generator status missing or stale";
     }
+    if (input.path.state == "NO_SAFE_PATH_CONFIRMED" ||
+      input.path.state == "NO_SAFE_DETOUR" ||
+      input.path.state == "CRITICAL_OBSTACLE")
+    {
+      // These are obstacle outcomes, not generic raceline-data failures. Keep
+      // them in the existing blockage trigger class so the blockage recovery
+      // policy and diagnostics remain meaningful.
+      return "RACELINE_BLOCKED: trajectory planner state " + input.path.state +
+        ": " + input.path.reason;
+    }
     if (input.path.state != "READY") {
-      return "RACELINE_UNAVAILABLE: path generator state " + input.path.state;
+      return "RACELINE_UNAVAILABLE: primary trajectory planner state " + input.path.state;
     }
     if (!input.follower.received ||
       age(input.follower.received, input.follower.received_at, current_time) >
@@ -554,6 +568,19 @@ private:
       return "RACELINE_UNAVAILABLE: raceline guard status missing or stale";
     }
     if (input.guard.state == "BLOCKED") {
+      const bool critical_guard = input.guard.reason.find("critical") != std::string::npos;
+      const bool local_replan_executing =
+        input.path.trajectory_mode == "AVOIDING" ||
+        input.path.trajectory_mode == "REJOINING" ||
+        input.path.trajectory_mode == "RECOVERING_TO_RACELINE" ||
+        input.path.trajectory_mode == "REPLAN_PENDING";
+      if (local_replan_executing && !critical_guard && !reactive_latched_) {
+        // The local planner applies the same widened-band test and confirms a
+        // blocked active plan over fresh scans.  Let it slow/replan instead of
+        // latching Reactive from one transient guard result.  Once Reactive is
+        // already latched, guard CLEAR is still required for recovery.
+        return "";
+      }
       return "RACELINE_BLOCKED: " + input.guard.reason;
     }
     if (input.guard.state != "CLEAR") {
@@ -757,6 +784,9 @@ private:
       "lower_allows_raceline_recovery",
       lowerRecoveryHoldReason(input, current_time).empty() ? "true" : "false");
     add("path_generator_state", input.path.state);
+    add(
+      "primary_trajectory_mode",
+      input.path.trajectory_mode.empty() ? "UNKNOWN" : input.path.trajectory_mode);
     add("follower_state", input.follower.state);
     add("guard_state", input.guard.state);
     add("reactive_upper_state", input.reactive.state);
@@ -841,7 +871,18 @@ private:
     marker.pose.orientation.w = 1.0;
     marker.scale.x = ultimate_trajectory_line_width_m_;
     marker.color.a = 1.0F;
-    if (show_raceline) {
+    const bool show_local_replan = show_raceline &&
+      (input.path.trajectory_mode == "AVOIDING" ||
+      input.path.trajectory_mode == "REJOINING" ||
+      input.path.trajectory_mode == "RECOVERING_TO_RACELINE" ||
+      input.path.trajectory_mode == "REPLAN_PENDING");
+    if (show_local_replan) {
+      // Light blue means this is the localization-based local replan that is
+      // actually authorized through the lower controller right now.
+      marker.color.r = 0.20F;
+      marker.color.g = 0.80F;
+      marker.color.b = 1.00F;
+    } else if (show_raceline) {
       marker.color.r = 0.0F;
       marker.color.g = 0.15F;
       marker.color.b = 0.75F;

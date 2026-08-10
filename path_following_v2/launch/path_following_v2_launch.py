@@ -18,6 +18,13 @@ def generate_launch_description():
         ),
         Node(
             package='path_following_v2',
+            executable='local_trajectory_planner_node',
+            name='local_trajectory_planner',
+            output='screen',
+            parameters=[params_file],
+        ),
+        Node(
+            package='path_following_v2',
             executable='path_following_v2_node',
             name='path_following_v2',
             output='screen',

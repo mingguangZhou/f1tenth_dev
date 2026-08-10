@@ -22,6 +22,28 @@ trajectory against the scan. Reverse recovery uses VESC-derived odometry as its
 primary motion feedback; scan-derived motion and PF switching remain future
 extensions.
 
+## Common vehicle envelope
+
+The upper corridor follower uses the measured `0.28 m` car width and the same
+adjustable per-side safety margin as the local trajectory planner and final primary
+trajectory guard:
+
+```yaml
+vehicle_width_m: 0.28
+lateral_safety_margin_m: 0.10
+```
+
+The computed collision-envelope radius is therefore:
+
+```text
+0.28 / 2 + 0.10 = 0.24 m per side
+```
+
+The physical width and uncertainty margin remain separate parameters; code
+does not hard-code `0.24`. When tuning, keep these two values aligned across
+`reactive_control_v2`, `path_following_v2/local_trajectory_planner`, and
+`drive_arbitration_v2/raceline_guard`.
+
 ## I/O
 
 ### Inputs

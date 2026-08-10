@@ -283,10 +283,10 @@ private:
   double min_valid_beam_ratio_{0.35};
 
   // Geometry and corridor parameters
-  double vehicle_width_m_{0.32};
+  double vehicle_width_m_{0.28};
   double lateral_safety_margin_m_{0.10};
   double obstacle_endpoint_margin_m_{0.03};
-  double envelope_radius_{0.26};
+  double envelope_radius_{0.24};
   double forward_start_m_{0.25};
   double forward_max_m_{5.0};
   double forward_slice_step_m_{0.20};
@@ -385,7 +385,7 @@ private:
     declare_parameter<int>("median_filter_window", 3);
     declare_parameter<double>("min_valid_beam_ratio", 0.35);
 
-    declare_parameter<double>("vehicle_width_m", 0.32);
+    declare_parameter<double>("vehicle_width_m", 0.28);
     declare_parameter<double>("lateral_safety_margin_m", 0.10);
     declare_parameter<double>("obstacle_endpoint_margin_m", 0.03);
     declare_parameter<double>("forward_start_m", 0.25);

@@ -23,6 +23,9 @@ def generate_launch_description():
     integration_config = LaunchConfiguration("integration_config")
     final_drive_topic = LaunchConfiguration("final_drive_topic")
     path_generator_log_level = LaunchConfiguration("path_generator_log_level")
+    local_trajectory_planner_log_level = LaunchConfiguration(
+        "local_trajectory_planner_log_level"
+    )
     path_follower_log_level = LaunchConfiguration("path_follower_log_level")
     reactive_upper_log_level = LaunchConfiguration("reactive_upper_log_level")
     raceline_guard_log_level = LaunchConfiguration("raceline_guard_log_level")
@@ -79,6 +82,9 @@ def generate_launch_description():
             description="Only lower_safety_controller publishes this topic.",
         ),
         DeclareLaunchArgument("path_generator_log_level", default_value="warn"),
+        DeclareLaunchArgument(
+            "local_trajectory_planner_log_level", default_value="info"
+        ),
         DeclareLaunchArgument("path_follower_log_level", default_value="warn"),
         DeclareLaunchArgument("reactive_upper_log_level", default_value="warn"),
         DeclareLaunchArgument("raceline_guard_log_level", default_value="warn"),
@@ -112,6 +118,22 @@ def generate_launch_description():
             output="screen",
             parameters=[path_config],
             arguments=["--ros-args", "--log-level", path_generator_log_level],
+        ),
+        # The generator publishes the raw raceline window. The persistent local
+        # trajectory planner converts it into the final path consumed by the follower
+        # and the raceline guard. Keep this node in the master launch because
+        # those two consumers must never bypass obstacle validation.
+        Node(
+            package="path_following_v2",
+            executable="local_trajectory_planner_node",
+            name="local_trajectory_planner",
+            output="screen",
+            parameters=[path_config],
+            arguments=[
+                "--ros-args",
+                "--log-level",
+                local_trajectory_planner_log_level,
+            ],
         ),
         Node(
             package="path_following_v2",

@@ -14,6 +14,7 @@ find_package(rclcpp REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -23,6 +24,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 
 add_executable(path_following_v2_node src/path_following_v2_node.cpp)
 add_executable(path_generator_node src/path_generator_node.cpp)
+add_executable(local_trajectory_planner_node src/local_trajectory_planner_node.cpp)
 
 ament_target_dependencies(path_following_v2_node
   rclcpp
@@ -48,13 +50,31 @@ ament_target_dependencies(path_generator_node
   tf2_geometry_msgs
 )
 
+ament_target_dependencies(local_trajectory_planner_node
+  rclcpp
+  diagnostic_msgs
+  nav_msgs
+  geometry_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+
 install(TARGETS
   path_following_v2_node
   path_generator_node
+  local_trajectory_planner_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY launch config
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(FILES README.md
   DESTINATION share/${PROJECT_NAME}
 )
 

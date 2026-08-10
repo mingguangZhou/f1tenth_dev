@@ -64,8 +64,8 @@ public:
     declare_parameter<double>("scan_range_cap_m", 6.0);
     declare_parameter<double>("guard_distance_m", 4.0);
     declare_parameter<double>("guard_path_step_m", 0.10);
-    declare_parameter<double>("vehicle_width_m", 0.32);
-    declare_parameter<double>("lateral_safety_margin_m", 0.04);
+    declare_parameter<double>("vehicle_width_m", 0.28);
+    declare_parameter<double>("lateral_safety_margin_m", 0.10);
     declare_parameter<double>("min_valid_beam_ratio", 0.35);
     declare_parameter<int>("blocked_min_points", 3);
     declare_parameter<int>("blocked_confirmation_scans", 2);
@@ -146,9 +146,9 @@ private:
   double scan_range_cap_m_{6.0};
   double guard_distance_m_{4.0};
   double guard_path_step_m_{0.10};
-  double vehicle_width_m_{0.32};
-  double lateral_safety_margin_m_{0.04};
-  double guard_half_width_m_{0.20};
+  double vehicle_width_m_{0.28};
+  double lateral_safety_margin_m_{0.10};
+  double guard_half_width_m_{0.24};
   double min_valid_beam_ratio_{0.35};
   int blocked_min_points_{3};
   int blocked_confirmation_scans_{2};
@@ -210,7 +210,7 @@ private:
       tf2::fromMsg(transform.transform, target_from_path);
     } catch (const tf2::TransformException & exception) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), steady_clock_, 2000, "raceline guard TF failed: %s", exception.what());
+        get_logger(), steady_clock_, 2000, "primary trajectory guard TF failed: %s", exception.what());
       return false;
     }
 
@@ -346,12 +346,12 @@ private:
       minimum_interference_range <= critical_block_distance_m_;
     updateDebounce(raw_blocked, critical);
     if (state_ == State::BLOCKED) {
-      last_reason_ = critical ? "critical close interference inside expanded raceline" :
-        "interference inside expanded raceline confirmed";
+      last_reason_ = critical ? "critical close interference inside selected trajectory" :
+        "interference inside selected trajectory confirmed";
     } else if (raw_blocked) {
       last_reason_ = "possible interference awaiting confirmation";
     } else if (state_ == State::CLEAR) {
-      last_reason_ = "expanded upcoming raceline is clear";
+      last_reason_ = "expanded selected primary trajectory is clear";
     } else {
       last_reason_ = "clear scan awaiting confirmation";
     }
@@ -363,7 +363,7 @@ private:
     array.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus status;
     status.name = "drive_arbitration_v2/raceline_guard";
-    status.hardware_id = "expanded_raceline_scan_guard";
+    status.hardware_id = "selected_primary_trajectory_scan_guard";
     status.level = state_ == State::CLEAR ?
       diagnostic_msgs::msg::DiagnosticStatus::OK :
       diagnostic_msgs::msg::DiagnosticStatus::WARN;
