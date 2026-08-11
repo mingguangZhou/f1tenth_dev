@@ -9,6 +9,7 @@
 #include <numeric>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -279,7 +280,7 @@ private:
   double planning_angle_min_rad_{-degToRad(100.0)};
   double planning_angle_max_rad_{degToRad(100.0)};
   double scan_range_cap_m_{6.0};
-  int median_filter_window_{3};
+  int median_filter_window_beams_{3};
   double min_valid_beam_ratio_{0.35};
 
   // Geometry and corridor parameters
@@ -307,7 +308,7 @@ private:
   int spatial_smoothing_passes_{3};
   double spatial_smoothing_weight_{0.45};
   double temporal_smoothing_alpha_{0.40};
-  int path_start_anchor_points_{2};
+  double path_start_anchor_distance_m_{0.50};
   double lookahead_distance_m_{0.50};
   double wheelbase_m_{0.33};
   double steering_max_rad_{degToRad(20.6)};
@@ -382,7 +383,7 @@ private:
     declare_parameter<double>("planning_angle_min_deg", -100.0);
     declare_parameter<double>("planning_angle_max_deg", 100.0);
     declare_parameter<double>("scan_range_cap_m", 6.0);
-    declare_parameter<int>("median_filter_window", 3);
+    declare_parameter<int>("median_filter_window_beams", 3);
     declare_parameter<double>("min_valid_beam_ratio", 0.35);
 
     declare_parameter<double>("vehicle_width_m", 0.28);
@@ -406,7 +407,7 @@ private:
     declare_parameter<int>("spatial_smoothing_passes", 3);
     declare_parameter<double>("spatial_smoothing_weight", 0.45);
     declare_parameter<double>("temporal_smoothing_alpha", 0.40);
-    declare_parameter<int>("path_start_anchor_points", 2);
+    declare_parameter<double>("path_start_anchor_distance_m", 0.50);
     declare_parameter<double>("lookahead_distance_m", 0.50);
     declare_parameter<double>("wheelbase_m", 0.33);
     declare_parameter<double>("steering_max_deg", 20.6);
@@ -448,7 +449,7 @@ private:
     planning_angle_min_rad_ = degToRad(get_parameter("planning_angle_min_deg").as_double());
     planning_angle_max_rad_ = degToRad(get_parameter("planning_angle_max_deg").as_double());
     scan_range_cap_m_ = get_parameter("scan_range_cap_m").as_double();
-    median_filter_window_ = get_parameter("median_filter_window").as_int();
+    median_filter_window_beams_ = get_parameter("median_filter_window_beams").as_int();
     min_valid_beam_ratio_ = get_parameter("min_valid_beam_ratio").as_double();
 
     vehicle_width_m_ = get_parameter("vehicle_width_m").as_double();
@@ -476,7 +477,8 @@ private:
     spatial_smoothing_passes_ = get_parameter("spatial_smoothing_passes").as_int();
     spatial_smoothing_weight_ = get_parameter("spatial_smoothing_weight").as_double();
     temporal_smoothing_alpha_ = get_parameter("temporal_smoothing_alpha").as_double();
-    path_start_anchor_points_ = get_parameter("path_start_anchor_points").as_int();
+    path_start_anchor_distance_m_ =
+      get_parameter("path_start_anchor_distance_m").as_double();
     lookahead_distance_m_ = get_parameter("lookahead_distance_m").as_double();
     wheelbase_m_ = get_parameter("wheelbase_m").as_double();
     steering_max_rad_ = degToRad(get_parameter("steering_max_deg").as_double());
@@ -516,13 +518,15 @@ private:
     forward_start_m_ = std::max(forward_slice_step_m_, forward_start_m_);
     forward_max_m_ = std::max(forward_start_m_ + forward_slice_step_m_, forward_max_m_);
     lateral_limit_m_ = std::max(envelope_radius_ + 0.1, lateral_limit_m_);
-    median_filter_window_ = std::max(1, median_filter_window_);
-    if (median_filter_window_ % 2 == 0) {
-      ++median_filter_window_;
+    median_filter_window_beams_ = std::max(1, median_filter_window_beams_);
+    if (median_filter_window_beams_ % 2 == 0) {
+      ++median_filter_window_beams_;
     }
     min_valid_beam_ratio_ = clampValue(min_valid_beam_ratio_, 0.0, 1.0);
     spatial_smoothing_weight_ = clampValue(spatial_smoothing_weight_, 0.0, 1.0);
     temporal_smoothing_alpha_ = clampValue(temporal_smoothing_alpha_, 0.0, 1.0);
+    path_start_anchor_distance_m_ = clampValue(
+      path_start_anchor_distance_m_, 0.0, forward_max_m_);
     steering_filter_alpha_ = clampValue(steering_filter_alpha_, 0.0, 1.0);
     switch_confirmation_cycles_ = std::max(1, switch_confirmation_cycles_);
     swept_path_failure_confirmation_cycles_ =
@@ -716,13 +720,13 @@ private:
     output.valid_ratio = planning_beams > 0 ?
       static_cast<double>(valid_beams) / static_cast<double>(planning_beams) : 0.0;
 
-    if (median_filter_window_ > 1) {
+    if (median_filter_window_beams_ > 1) {
       // The one-sided median filter may shorten a suspiciously long ray but
       // deliberately cannot lengthen a close return and erase an obstacle.
       const std::vector<double> original = output.ranges;
-      const int radius = median_filter_window_ / 2;
+      const int radius = median_filter_window_beams_ / 2;
       std::vector<double> window;
-      window.reserve(static_cast<size_t>(median_filter_window_));
+      window.reserve(static_cast<size_t>(median_filter_window_beams_));
       for (size_t i = 0; i < count; ++i) {
         if (!output.observed[i]) {
           continue;
@@ -1133,9 +1137,23 @@ private:
       }
     }
 
-    const size_t anchor_index = std::min(
-      static_cast<size_t>(std::max(0, path_start_anchor_points_)),
-      path.size() - 1);
+    // Choose the sampled path point nearest to the configured physical anchor
+    // distance. Unlike the old point count, this remains stable if the forward
+    // slice resolution changes.
+    auto anchor_iterator = std::lower_bound(
+      path.begin(), path.end(), path_start_anchor_distance_m_,
+      [](const Point2 & point, const double distance_m) {
+        return point.x < distance_m;
+      });
+    size_t anchor_index = anchor_iterator == path.end() ?
+      path.size() - 1 : static_cast<size_t>(std::distance(path.begin(), anchor_iterator));
+    if (
+      anchor_index > 0 &&
+      std::abs(path[anchor_index - 1].x - path_start_anchor_distance_m_) <=
+      std::abs(path[anchor_index].x - path_start_anchor_distance_m_))
+    {
+      --anchor_index;
+    }
     for (int pass = 0; pass < spatial_smoothing_passes_; ++pass) {
       // Each spatial pass reduces local zig-zags. A separate vector prevents
       // early points in this pass from immediately influencing later points.

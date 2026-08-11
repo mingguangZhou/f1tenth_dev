@@ -585,6 +585,40 @@ publish:
 ros2 topic pub --once /reactive_control_v2/enable std_msgs/msg/Bool "{data: true}"
 ```
 
+## YAML tuning guide
+
+The simulator and onboard YAML files use the same section order. Their opening
+comments list the small set of primary tuning controls; detailed sampling,
+hysteresis, and confirmation settings are marked advanced.
+
+The four speed groups have separate ownership and are not duplicates:
+
+| Group | Owner and purpose |
+| --- | --- |
+| `velocity_min/max_mps` | Upper corridor follower nominal speed |
+| `fallback_speed_min/max_mps` | Lower FTG fallback speed |
+| `low_speed_assist_output_mps` | Forced magnitude for eligible stalled commands |
+| `reverse_speed_mps` | Bounded reverse-recovery command |
+
+Spatial settings use metres where they represent physical geometry. In
+particular, `path_start_anchor_distance_m: 0.70` replaces the former
+slice-count anchor while preserving its current geometry. Discrete evidence and
+hysteresis remain count based: `median_filter_window_beams`, confirmation
+cycles, valid ratios, and reverse attempt limits should not be converted to
+metres.
+
+Parameter-interface rename map:
+
+| Previous name | Current name |
+| --- | --- |
+| `median_filter_window` | `median_filter_window_beams` |
+| `path_start_anchor_points` | `path_start_anchor_distance_m` |
+
+The lower-controller YAML follows its actual decision flow: authorization and
+freshness, emergency stop, FTG, low-speed assistance, reverse entry, bounded
+reverse, handoff, side-clearance abort, and debug. This organization changes no
+priority or recovery logic.
+
 ## Main tuning order
 
 1. Confirm `vehicle_width_m` from the actual car.

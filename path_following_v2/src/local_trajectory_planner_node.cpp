@@ -253,8 +253,8 @@ private:
   double wheelbase_m_{0.33};
   double steering_max_deg_{20.6};
   double curvature_safety_factor_{0.95};
-  double normal_speed_cap_mps_{2.0};
-  double detour_speed_cap_mps_{1.0};
+  double command_speed_max_mps_{2.0};
+  double avoidance_speed_cap_mps_{1.0};
   double recovery_speed_cap_mps_{1.0};
   double replan_pending_speed_cap_mps_{0.4};
   double recovery_enter_lateral_error_m_{0.18};
@@ -336,8 +336,12 @@ private:
     declare_parameter<double>("wheelbase_m", 0.33);
     declare_parameter<double>("steering_max_deg", 20.6);
     declare_parameter<double>("curvature_safety_factor", 0.95);
-    declare_parameter<double>("normal_speed_cap_mps", 2.0);
-    declare_parameter<double>("detour_speed_cap_mps", 1.0);
+    // Both shared envelope parameters are declared so the common YAML wildcard
+    // is explicit for this node. Planning uses only the maximum as its normal cap.
+    declare_parameter<double>("command_speed_min_mps", 0.0);
+    declare_parameter<double>("command_speed_max_mps", 2.0);
+    // Temporary maneuver caps; these do not generate normal raceline speed.
+    declare_parameter<double>("avoidance_speed_cap_mps", 1.0);
     declare_parameter<double>("recovery_speed_cap_mps", 1.0);
     declare_parameter<double>("replan_pending_speed_cap_mps", 0.4);
 
@@ -420,8 +424,10 @@ private:
     steering_max_deg_ = std::max(0.1, get_parameter("steering_max_deg").as_double());
     curvature_safety_factor_ = std::clamp(
       get_parameter("curvature_safety_factor").as_double(), 0.1, 1.0);
-    normal_speed_cap_mps_ = std::max(0.0, get_parameter("normal_speed_cap_mps").as_double());
-    detour_speed_cap_mps_ = std::max(0.0, get_parameter("detour_speed_cap_mps").as_double());
+    command_speed_max_mps_ = std::max(
+      0.0, get_parameter("command_speed_max_mps").as_double());
+    avoidance_speed_cap_mps_ = std::max(
+      0.0, get_parameter("avoidance_speed_cap_mps").as_double());
     recovery_speed_cap_mps_ = std::max(
       0.0, get_parameter("recovery_speed_cap_mps").as_double());
     replan_pending_speed_cap_mps_ = std::max(
@@ -1320,7 +1326,7 @@ private:
 
   double activeSpeedCap() const
   {
-    return active_plan_.side == 0 ? recovery_speed_cap_mps_ : detour_speed_cap_mps_;
+    return active_plan_.side == 0 ? recovery_speed_cap_mps_ : avoidance_speed_cap_mps_;
   }
 
   void publishSpeedCap(const double cap)
@@ -1383,7 +1389,7 @@ private:
     double reported_speed_cap = 0.0;
     if (state == "READY") {
       if (trajectory_mode == "RACELINE") {
-        reported_speed_cap = normal_speed_cap_mps_;
+        reported_speed_cap = command_speed_max_mps_;
       } else if (trajectory_mode == "REPLAN_PENDING") {
         reported_speed_cap = replan_pending_speed_cap_mps_;
       } else {
@@ -1917,7 +1923,7 @@ private:
     no_safe_path_cycles_ = 0;
     active_blocked_cycles_ = 0;
     publishPath(*raw_message);
-    publishSpeedCap(normal_speed_cap_mps_);
+    publishSpeedCap(command_speed_max_mps_);
     publishStatus(
       "READY", "raw local raceline is clear and car is within recovery threshold",
       "RACELINE", 0, raw_age, scan_age, valid_beam_ratio);

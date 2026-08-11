@@ -46,11 +46,12 @@ public:
     declare_parameter<double>("trajectory_speed_cap_timeout_sec", 0.5);
     declare_parameter<double>("tf_timeout_sec", 0.1);
 
-    // speed_mode = 0: rule-based speed only.
-    // speed_mode = 1: rule-based speed + fresh RL residual, otherwise rule-based speed only.
-    declare_parameter<int>("speed_mode", 0);
-    declare_parameter<double>("speed_min", 1.0);
-    declare_parameter<double>("speed_max", 10.0);
+    // speed_policy_mode = 0: rule-based speed only.
+    // speed_policy_mode = 1: rule-based speed + fresh RL residual, otherwise
+    // rule-based speed only. The command envelope is shared with the generator.
+    declare_parameter<int>("speed_policy_mode", 0);
+    declare_parameter<double>("command_speed_min_mps", 1.0);
+    declare_parameter<double>("command_speed_max_mps", 10.0);
     declare_parameter<double>("max_speed_delta_per_step_mps", 0.2);
     declare_parameter<bool>("require_trajectory_speed_cap", true);
 
@@ -66,9 +67,9 @@ public:
     declare_parameter<double>("max_lookahead", 1.6);
     declare_parameter<double>("lookahead_speed_gain", 0.25);
 
-    declare_parameter<double>("wheelbase", 0.33);
+    declare_parameter<double>("wheelbase_m", 0.33);
     declare_parameter<double>("steering_max_deg", 20.6);
-    declare_parameter<double>("min_forward_point_x", 0.05);
+    declare_parameter<double>("min_forward_point_x_m", 0.05);
     declare_parameter<bool>("stop_if_no_path", true);
 
     declare_parameter<bool>("publish_markers", true);
@@ -93,9 +94,9 @@ public:
       get_parameter("trajectory_speed_cap_timeout_sec").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
 
-    speed_mode_ = get_parameter("speed_mode").as_int();
-    speed_min_ = get_parameter("speed_min").as_double();
-    speed_max_ = get_parameter("speed_max").as_double();
+    speed_policy_mode_ = get_parameter("speed_policy_mode").as_int();
+    command_speed_min_mps_ = get_parameter("command_speed_min_mps").as_double();
+    command_speed_max_mps_ = get_parameter("command_speed_max_mps").as_double();
     max_speed_delta_per_step_mps_ = get_parameter("max_speed_delta_per_step_mps").as_double();
     require_trajectory_speed_cap_ = get_parameter("require_trajectory_speed_cap").as_bool();
 
@@ -105,9 +106,9 @@ public:
     steering_max_lookahead_m_ = get_parameter("steering_max_lookahead_m").as_double();
     steering_lookahead_speed_gain_ = get_parameter("steering_lookahead_speed_gain").as_double();
 
-    wheelbase_ = get_parameter("wheelbase").as_double();
+    wheelbase_m_ = get_parameter("wheelbase_m").as_double();
     steering_max_deg_ = get_parameter("steering_max_deg").as_double();
-    min_forward_point_x_ = get_parameter("min_forward_point_x").as_double();
+    min_forward_point_x_m_ = get_parameter("min_forward_point_x_m").as_double();
     stop_if_no_path_ = get_parameter("stop_if_no_path").as_bool();
 
     publish_markers_ = get_parameter("publish_markers").as_bool();
@@ -115,16 +116,20 @@ public:
     lookahead_marker_topic_ = get_parameter("lookahead_marker_topic").as_string();
     steering_marker_topic_ = get_parameter("steering_marker_topic").as_string();
 
-    if (speed_min_ > speed_max_) {
-      RCLCPP_WARN(get_logger(), "speed_min > speed_max; swapping them.");
-      std::swap(speed_min_, speed_max_);
+    if (command_speed_min_mps_ > command_speed_max_mps_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "command_speed_min_mps > command_speed_max_mps; swapping them.");
+      std::swap(command_speed_min_mps_, command_speed_max_mps_);
     }
-    if (speed_mode_ != 0 && speed_mode_ != 1) {
-      RCLCPP_WARN(get_logger(), "Unsupported speed_mode=%d; forcing rule-based mode 0.", speed_mode_);
-      speed_mode_ = 0;
+    if (speed_policy_mode_ != 0 && speed_policy_mode_ != 1) {
+      RCLCPP_WARN(
+        get_logger(), "Unsupported speed_policy_mode=%d; forcing rule-based mode 0.",
+        speed_policy_mode_);
+      speed_policy_mode_ = 0;
     }
     max_speed_delta_per_step_mps_ = std::max(0.0, max_speed_delta_per_step_mps_);
-    last_commanded_speed_ = speed_min_;
+    last_commanded_speed_ = command_speed_min_mps_;
 
     path_sub_ = create_subscription<nav_msgs::msg::Path>(
       local_path_topic_,
@@ -166,8 +171,12 @@ public:
       trajectory_speed_cap_topic_.c_str(), require_trajectory_speed_cap_ ? "true" : "false");
     RCLCPP_INFO(get_logger(), "  drive_topic: %s", drive_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  speed_mode: %d (%s)", speed_mode_, speed_mode_ == 0 ? "rule_based" : "rule_plus_rl_residual");
-    RCLCPP_INFO(get_logger(), "  final speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
+    RCLCPP_INFO(
+      get_logger(), "  speed_policy_mode: %d (%s)", speed_policy_mode_,
+      speed_policy_mode_ == 0 ? "rule_based" : "rule_plus_rl_residual");
+    RCLCPP_INFO(
+      get_logger(), "  command speed envelope: %.2f to %.2f m/s",
+      command_speed_min_mps_, command_speed_max_mps_);
     RCLCPP_INFO(get_logger(), "  max_speed_delta_per_step_mps: %.2f", max_speed_delta_per_step_mps_);
     RCLCPP_INFO(
       get_logger(),
@@ -224,9 +233,9 @@ private:
   double trajectory_speed_cap_timeout_sec_{0.5};
   double tf_timeout_sec_{0.1};
 
-  int speed_mode_{0};
-  double speed_min_{1.0};
-  double speed_max_{10.0};
+  int speed_policy_mode_{0};
+  double command_speed_min_mps_{1.0};
+  double command_speed_max_mps_{10.0};
   double max_speed_delta_per_step_mps_{0.2};
   bool require_trajectory_speed_cap_{true};
 
@@ -236,9 +245,9 @@ private:
   double steering_max_lookahead_m_{1.6};
   double steering_lookahead_speed_gain_{0.25};
 
-  double wheelbase_{0.33};
+  double wheelbase_m_{0.33};
   double steering_max_deg_{20.6};
-  double min_forward_point_x_{0.05};
+  double min_forward_point_x_m_{0.05};
 
   bool stop_if_no_path_{true};
   bool publish_markers_{true};
@@ -330,12 +339,14 @@ private:
   double speedFromIndex(double speed_index) const
   {
     const double idx = std::clamp(speed_index, 0.0, 1.0);
-    return speed_min_ + idx * (speed_max_ - speed_min_);
+    return command_speed_min_mps_ +
+           idx * (command_speed_max_mps_ - command_speed_min_mps_);
   }
 
   double rateLimitSpeed(double requested_speed) const
   {
-    requested_speed = std::clamp(requested_speed, speed_min_, speed_max_);
+    requested_speed = std::clamp(
+      requested_speed, command_speed_min_mps_, command_speed_max_mps_);
     if (max_speed_delta_per_step_mps_ <= 0.0) {
       return requested_speed;
     }
@@ -390,7 +401,7 @@ private:
       const double x = p_base.x();
       const double y = p_base.y();
 
-      if (x < min_forward_point_x_) {
+      if (x < min_forward_point_x_m_) {
         continue;
       }
 
@@ -583,14 +594,14 @@ private:
 
     const double rule_speed_mps = speedFromIndex(latest_rule_speed_index_);
     const bool residual_is_fresh = rlResidualFresh();
-    const bool use_rl_residual = (speed_mode_ == 1) && residual_is_fresh;
+    const bool use_rl_residual = (speed_policy_mode_ == 1) && residual_is_fresh;
 
-    if (speed_mode_ == 1 && residual_is_fresh && !rl_residual_was_fresh_) {
+    if (speed_policy_mode_ == 1 && residual_is_fresh && !rl_residual_was_fresh_) {
       RCLCPP_INFO(
         get_logger(),
         "RL speed residual is fresh; using rule speed + RL residual.");
     }
-    if (speed_mode_ == 1 && !residual_is_fresh && rl_residual_was_fresh_) {
+    if (speed_policy_mode_ == 1 && !residual_is_fresh && rl_residual_was_fresh_) {
       RCLCPP_WARN(
         get_logger(),
         "RL speed residual is stale/unhealthy; falling back to rule-based speed only.");
@@ -598,13 +609,15 @@ private:
     rl_residual_was_fresh_ = residual_is_fresh;
 
     const double residual_mps = use_rl_residual ? latest_rl_speed_residual_mps_ : 0.0;
-    const double requested_speed = std::clamp(rule_speed_mps + residual_mps, speed_min_, speed_max_);
+    const double requested_speed = std::clamp(
+      rule_speed_mps + residual_mps, command_speed_min_mps_, command_speed_max_mps_);
     const double rate_limited_speed = rateLimitSpeed(requested_speed);
     // The planner cap is a safety upper bound, so apply it after the normal
     // symmetric rate limiter.  This permits immediate deceleration when a
     // detour begins while acceleration after rejoin remains rate limited.
     const double active_speed_cap = trajectory_speed_cap_fresh ?
-      std::clamp(latest_trajectory_speed_cap_mps_, 0.0, speed_max_) : speed_max_;
+      std::clamp(latest_trajectory_speed_cap_mps_, 0.0, command_speed_max_mps_) :
+      command_speed_max_mps_;
     const double commanded_speed = std::min(rate_limited_speed, active_speed_cap);
 
     if (!std::isfinite(commanded_speed)) {
@@ -655,7 +668,7 @@ private:
     }
 
     const double curvature = 2.0 * y / (L * L);
-    double steering_angle = std::atan(wheelbase_ * curvature);
+    double steering_angle = std::atan(wheelbase_m_ * curvature);
 
     const double steering_max_rad = steering_max_deg_ * M_PI / 180.0;
     steering_angle = std::clamp(steering_angle, -steering_max_rad, steering_max_rad);
@@ -682,7 +695,7 @@ private:
       residual_mps,
       use_rl_residual ? "fresh" : "rule_only",
       active_speed_cap,
-      speed_mode_,
+      speed_policy_mode_,
       steering_angle,
       active_lookahead_distance,
       x,

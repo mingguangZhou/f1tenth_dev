@@ -1,12 +1,25 @@
+# Reactive Control V2 — onboard parameters
+#
+# START TUNING HERE
+#   Upper motion:      lookahead_distance_m, velocity_min/max_mps,
+#                      slow/stop_reach_distance_m
+#   Upper envelope:    vehicle_width_m, lateral_safety_margin_m
+#   Upper horizon:     scan_range_cap_m, forward_max_m
+#   Lower FTG speed:   fallback_speed_min/max_mps
+#   Stall assistance: low_speed_assist_*
+#   Reverse recovery: reverse_speed_mps, reverse_*distance/duration*
+#
+# Parameters marked ADVANCED normally should remain unchanged during speed tuning.
+
 upper_corridor_follower:
   ros__parameters:
     use_sim_time: false
 
-    # ROS interfaces
+    # ========================================================
+    # 1. ROS INTERFACES, FRAME AND AUTHORIZATION
+    # ========================================================
     scan_topic: "/scan"
     odom_topic: "/odom"
-    # All paths, control geometry, validation and markers use this frame.
-    # LaserScan endpoints are transformed here through the existing static TF.
     base_frame: "base_link"
     transform_timeout_sec: 0.05
     enable_topic: "/reactive_control_v2/enable"
@@ -16,22 +29,32 @@ upper_corridor_follower:
     status_topic: "/reactive_control_v2/status"
     require_enable_message: false
 
-    # Input handling
+    # ========================================================
+    # 2. SENSOR FRESHNESS AND PLANNING FIELD OF VIEW
+    # median_filter_window_beams is intentionally beam/count based.
+    # ========================================================
     scan_timeout_sec: 0.30
     odom_timeout_sec: 0.50
     require_fresh_odom: false
     planning_angle_min_deg: -75.0
     planning_angle_max_deg: 75.0
     scan_range_cap_m: 6.0
-    median_filter_window: 3
+    median_filter_window_beams: 3
     min_valid_beam_ratio: 0.35
 
-    # Vehicle envelope
+    # ========================================================
+    # 3. VEHICLE SAFETY ENVELOPE — PRIMARY SAFETY TUNING
+    # Effective half-width = vehicle_width / 2 + lateral_safety_margin.
+    # Current value: 0.28 / 2 + 0.10 = 0.24 m per side.
+    # ========================================================
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
     obstacle_endpoint_margin_m: 0.02
 
-    # Corridor construction
+    # ========================================================
+    # 4. CORRIDOR HORIZON AND RESOLUTION
+    # ADVANCED: smaller slice/sample steps cost more CPU.
+    # ========================================================
     forward_start_m: 0.30
     forward_max_m: 6.0
     forward_slice_step_m: 0.20
@@ -41,50 +64,55 @@ upper_corridor_follower:
     max_interval_shift_per_slice_m: 0.25
     min_path_reach_m: 0.80
 
-    # Corridor persistence
+    # ========================================================
+    # 5. CORRIDOR SELECTION PERSISTENCE — ADVANCED
+    # Cycle counts are intentionally discrete hysteresis settings.
+    # ========================================================
     reach_tie_tolerance_m: 0.30
     width_tie_tolerance_m: 0.08
     switch_reach_advantage_m: 0.50
     switch_confirmation_cycles: 3
     side_deadband_m: 0.12
 
-    # Local-path smoothing
+    # ========================================================
+    # 6. LOCAL-PATH SMOOTHING — ADVANCED
+    # path_start_anchor_distance_m replaces the former point-count setting.
+    # 0.70 m preserves the former three-slice anchor with 0.30 m start and
+    # 0.20 m slice spacing.
+    # ========================================================
     spatial_smoothing_passes: 3
     spatial_smoothing_weight: 0.45
     temporal_smoothing_alpha: 0.30
-    path_start_anchor_points: 3
+    path_start_anchor_distance_m: 0.70
 
-    # Validate the complete smoothed/raw path against observed LiDAR free space.
-    # Set false only for controlled debugging; PATH_INVALID and its hysteresis
-    # are then disabled, so they cannot request lower-layer FTG takeover.
-    enable_swept_path_validation: true
-    # First failed cycle stops the upper immediately as PATH_VALIDATION_PENDING.
-    # PATH_INVALID is published only after this many consecutive failed cycles.
-    swept_path_failure_confirmation_cycles: 1
-    # Once PATH_INVALID is latched, require this many consecutive valid paths
-    # before returning to DRIVING.
-    swept_path_recovery_confirmation_cycles: 2
-
-    # Pure pursuit (kept close to the existing path-following controller)
+    # ========================================================
+    # 7. PURE PURSUIT AND REACTIVE SPEED — PRIMARY MOTION TUNING
+    # ========================================================
     lookahead_distance_m: 0.50
     wheelbase_m: 0.33
     steering_max_deg: 20.6
     steering_filter_alpha: 0.40
-
-    # Simple nominal speed profile
     velocity_max_mps: 1.65
     velocity_min_mps: 0.75
     slow_reach_distance_m: 1.00
     stop_reach_distance_m: 0.50
 
-    # Debug
+    # ========================================================
+    # 8. SWEPT-PATH VALIDATION AND HYSTERESIS
+    # First failed cycle stops immediately as PATH_VALIDATION_PENDING.
+    # PATH_INVALID and recovery use the confirmation counts below.
+    # ========================================================
+    enable_swept_path_validation: true
+    swept_path_failure_confirmation_cycles: 1
+    swept_path_recovery_confirmation_cycles: 2
+
+    # ========================================================
+    # 9. DEBUG AND VISUALIZATION
+    # ========================================================
     publish_visualization: true
     marker_lifetime_sec: 0.25
-    # Limit RViz MarkerArray work to 10 Hz. Set 0.0 to publish every scan.
+    # 0.10 s limits MarkerArray work to 10 Hz; 0.0 publishes every scan.
     visualization_period_sec: 0.10
-    # Default: print one concise warning only when entering/changing a stop state.
-    # True: also print full driving/path diagnostics immediately on change and
-    # periodically according to terminal_status_period_sec.
     full_terminal_debug: false
     terminal_status_period_sec: 2.0
 
@@ -93,46 +121,52 @@ lower_safety_controller:
   ros__parameters:
     use_sim_time: false
 
-    # ROS interfaces. In the standalone simulator launch, selected_cmd is
-    # remapped to the upper follower's nominal_cmd and safe_cmd to /drive.
+    # Forward decision flow:
+    # authorization/freshness -> emergency stop -> selected command or FTG
+    # -> optional low-speed assist -> final emergency/TTC validation.
+    # Reverse recovery uses its bounded reverse/settle state until completion
+    # or a scan, odometry, or side-clearance abort.
+
+    # ========================================================
+    # 1. ROS INTERFACES AND REACTIVE AUTHORIZATION
+    # ========================================================
     selected_command_topic: "/reactive_control_v2/selected_cmd"
     scan_topic: "/scan"
-    # VESC-derived onboard speed feedback.
     odom_topic: "/odom"
     upper_status_topic: "/reactive_control_v2/status"
     arbitration_mode_topic: "/drive_arbitration_v2/selected_mode"
     safe_command_topic: "/reactive_control_v2/safe_cmd"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"
-
     control_frequency_hz: 20.0
     command_timeout_sec: 0.30
     scan_timeout_sec: 0.30
     odom_timeout_sec: 0.50
     upper_status_timeout_sec: 0.50
-    # If true, a fresh upper PATH_INVALID or BLOCKED status requests lower FTG.
-    # Set false when selected_cmd may come from a different controller. The
-    # previous use_upper_status_fallback name has been replaced by this one.
     enable_fallback_on_upper_failure_status: true
-    # Standalone compatibility. The integrated master launch overrides this to
-    # true, authorizing FTG/reverse only when arbitration selects REACTIVE.
+    # Integrated master launch overrides this to true. Standalone default stays
+    # false so FTG/reverse can operate without the arbitrator topic.
     require_arbitration_mode: false
     arbitration_mode_timeout_sec: 0.50
 
-    # Final command bounds. Speed remains a loose sanity limit; steering is
-    # clamped to the approximate physical limit.
+    # ========================================================
+    # 2. ABSOLUTE COMMAND SANITY LIMITS
+    # ========================================================
     absolute_speed_limit_mps: 20.0
-    # Physical steering is approximately +/-25 degrees.
     absolute_steering_limit_deg: 25.0
 
-    # Simple forward emergency brake only. No commanded-trajectory prediction
-    # or scan-versus-steering validation is performed in this lower controller.
+    # ========================================================
+    # 3. FORWARD EMERGENCY STOP / TTC
+    # ========================================================
     emergency_sector_half_angle_deg: 15.0
     emergency_distance_m: 0.35
     emergency_ttc_sec: 0.2
     emergency_ttc_clearance_m: 0.12
 
-    # Slow Follow-the-Gap fallback, adapted from the supplied safety_bubble
-    # reference package and kept deliberately less aggressive than the upper.
+    # ========================================================
+    # 4. LOWER FOLLOW-THE-GAP FALLBACK
+    # This speed range belongs only to lower FTG; it is independent of the
+    # upper follower's velocity range and reverse speed.
+    # ========================================================
     fallback_sector_half_angle_deg: 90.0
     fallback_range_cap_m: 1.0
     fallback_min_valid_ratio: 0.35
@@ -143,18 +177,15 @@ lower_safety_controller:
     fallback_steering_limit_deg: 25.0
     fallback_speed_max_mps: 1.00
     fallback_speed_min_mps: 0.75
-    # Target the centre of beams at least this fraction of the selected gap's
-    # maximum depth. This avoids the old near-zero-angle deepest-beam tie-break.
     fallback_deepest_region_ratio: 0.90
-
-    # Periodic FTG terminal details for tuning. Default off to avoid ROS log
-    # growth. When enabled, prints gap, bubble, target, steering and speed.
     fallback_terminal_debug: false
     fallback_terminal_debug_period_sec: 0.50
 
-    # Bidirectional VESC low-speed stall assistance. The demand ceiling only
-    # selects eligible commands; output_mps is the independent forced magnitude.
-    # Shortfall is max(0, |requested speed| - |measured speed|).
+    # ========================================================
+    # 5. LOW-SPEED STALL ASSISTANCE
+    # demand_max selects eligible commands; output_mps is the forced magnitude.
+    # Shortfall = max(0, |requested speed| - |measured speed|).
+    # ========================================================
     enable_low_speed_assist: true
     low_speed_assist_demand_max_mps: 0.80
     low_speed_assist_output_mps: 0.90
@@ -163,19 +194,21 @@ lower_safety_controller:
     low_speed_assist_confirmation_sec: 0.30
     low_speed_assist_exit_shortfall_mps: 0.20
 
-    # Bounded reverse recovery
-    # VESC-derived odometry is required for reverse entry, distance estimation,
-    # and the complete-stop handoff. Scan motion is not required in this version.
+    # ========================================================
+    # 6. REVERSE ENTRY DETECTION
+    # VESC odometry is required for entry, distance and complete-stop handoff.
+    # ========================================================
     enable_reverse_recovery: true
-
-    # Entry confirmation
     stationary_speed_threshold_mps: 0.05
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20
     stuck_speed_threshold_mps: 0.05
     stuck_confirmation_sec: 0.5
 
-    # Reverse command and bounds. Recovery always commands zero steering.
+    # ========================================================
+    # 7. REVERSE COMMAND AND BOUNDS
+    # Recovery always commands zero steering.
+    # ========================================================
     reverse_speed_mps: 0.85
     reverse_min_distance_m: 0.10
     reverse_min_duration_sec: 0.30
@@ -185,19 +218,25 @@ lower_safety_controller:
     reverse_attempt_reset_forward_time_sec: 0.30
     reverse_attempt_reset_speed_mps: 0.20
 
-    # Reverse exit and forward handoff. This hysteresis is used for reverse
-    # recovery only; ordinary upper-to-FTG takeover remains immediate.
+    # ========================================================
+    # 8. REVERSE EXIT AND FORWARD HANDOFF
+    # ========================================================
     ftg_recovery_valid_cycles: 5
     recovery_settle_time_sec: 0.20
 
-    # A front Hokuyo cannot observe directly behind the car. Available rear-side
-    # beams are only an extra abort check; reverse remains a bounded retrace.
+    # ========================================================
+    # 9. REVERSE SIDE-CLEARANCE ABORT
+    # The front Hokuyo cannot observe directly behind; rear-side beams provide
+    # only an extra abort check. Reverse remains a bounded retrace.
+    # ========================================================
     reverse_require_side_clearance: true
     reverse_side_sector_min_angle_deg: 100.0
     reverse_side_sector_max_angle_deg: 135.0
     reverse_min_side_clearance_m: 0.20
     reverse_side_min_valid_ratio: 0.25
 
-    # Rate-limited reverse state details. Default off.
+    # ========================================================
+    # 10. REVERSE DEBUG
+    # ========================================================
     reverse_terminal_debug: false
     reverse_terminal_debug_period_sec: 0.50

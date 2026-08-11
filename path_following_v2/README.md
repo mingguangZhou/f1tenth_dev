@@ -51,8 +51,8 @@ lateral_safety_margin_m: 0.10
 point spacing:
 
 ```yaml
-local_path_horizon_m: 10.0
-max_local_path_points: 600
+local_path_target_length_m: 10.0
+local_path_max_points: 600
 ```
 
 At roughly `0.03 m` spacing, 10 m is about 334 points. The planner also caps
@@ -69,8 +69,29 @@ buffers, and `detour_return_min_length_m`. With the defaults and a complete
 10 m raw path, the effective trigger is about 6.4 m. Scan returns farther ahead
 are still available for candidate validation, but they do not cause a
 predictable premature `NO_SAFE_PATH` before a complete maneuver can fit. The old
-`local_path_horizon_points` remains only as a compatibility fallback when the
-metric horizon is set to zero or less.
+point-count behavior remains as the internal `legacy_local_path_points`
+fallback when the metric target is set to zero or less. It is intentionally not
+shown in the shipped YAML because the positive metric target is authoritative.
+
+The generator stops at the physical target, one unique lap, or the point
+ceiling—whichever is reached first. The simulator uses a 10 m target; the
+onboard file currently keeps the tested short-track target of 4 m.
+
+Parameter-interface rename map:
+
+| Previous name | Current name |
+| --- | --- |
+| `local_path_horizon_m` | `local_path_target_length_m` |
+| `max_local_path_points` | `local_path_max_points` |
+| `speed_min/max` | `command_speed_min/max_mps` |
+| `rule_min_speed_mps` | `rule_curve_min_speed_mps` |
+| `rule_max_speed_mps` | `rule_straight_speed_mps` |
+| `rule_speed_curvature_lookahead_points` | `rule_speed_curvature_preview_m` |
+| `normal_speed_cap_mps` | removed; uses shared `command_speed_max_mps` |
+| `detour_speed_cap_mps` | `avoidance_speed_cap_mps` |
+| `speed_mode` | `speed_policy_mode` |
+| `wheelbase` | `wheelbase_m` |
+| `min_forward_point_x` | `min_forward_point_x_m` |
 
 ## Planner activation
 
@@ -307,6 +328,48 @@ path at the current approximately 0.03 m spacing.
 
 ## Speed and visualization
 
+The physical command envelope is configured once at the top of each YAML:
+
+```yaml
+/**:
+  ros__parameters:
+    command_speed_min_mps: 1.0
+    command_speed_max_mps: 10.0
+```
+
+The generator and follower use the same range to encode/decode the normalized
+rule-speed index. The local planner uses `command_speed_max_mps` as the
+ordinary-raceline cap, so there is no separate normal-speed-cap value to keep
+synchronized.
+
+Normal raceline demand is tuned only in `path_generator`:
+
+```yaml
+rule_curve_min_speed_mps: 1.0
+rule_straight_speed_mps: 2.5
+rule_speed_curvature_gain: 2.0
+rule_speed_curvature_preview_m: 0.09
+```
+
+The curvature preview is physical distance, not waypoint count. `0.09 m`
+preserves the former three-waypoint preview at the current approximately
+`0.03 m` spacing. Changing it is functional speed tuning and should be tested
+separately from this parameter cleanup.
+
+The planner exposes only temporary maneuver caps:
+
+```yaml
+avoidance_speed_cap_mps: 1.5
+recovery_speed_cap_mps: 1.5
+replan_pending_speed_cap_mps: 0.5
+```
+
+`speed_policy_mode` selects rule-only (`0`) or rule plus a fresh RL speed
+residual (`1`). The established future RL structure is unchanged: bounded
+learning modifies the rule baseline, while the physical envelope, command-rate
+limit, maneuver cap, arbitrator, and lower safety controller remain outside the
+policy.
+
 The follower applies the planner cap after rule/RL speed calculation:
 
 ```text
@@ -371,5 +434,7 @@ ros2 topic echo /drive_arbitration_v2/selected_mode
 ```
 
 First confirm `plan_id` stays constant through `AVOIDING` and `REJOINING`, the
-light-blue trajectory shortens from the front without changing shape, and
-Reactive is requested only after confirmed no-safe-path or critical conditions.
+stored modified section advances without changing shape, the fresh raceline
+tail keeps the published light-blue path at the configured physical horizon,
+and Reactive is requested only after confirmed no-safe-path or critical
+conditions.

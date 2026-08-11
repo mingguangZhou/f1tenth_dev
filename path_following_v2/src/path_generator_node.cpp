@@ -53,20 +53,21 @@ public:
     // Prefer a physical horizon so changing CSV point spacing does not change
     // the distance available for obstacle detection, departure and rejoin.
     // Set <= 0 to use the legacy point-count horizon.
-    declare_parameter<double>("local_path_horizon_m", 10.0);
-    declare_parameter<int>("max_local_path_points", 600);
-    declare_parameter<int>("local_path_horizon_points", 80);
+    declare_parameter<double>("local_path_target_length_m", 10.0);
+    declare_parameter<int>("local_path_max_points", 600);
+    declare_parameter<int>("legacy_local_path_points", 80);
 
-    // Rule-based speed preview. The steering pure-pursuit lookahead lives in path_following_v2_node.
-    // Keep the old parameter names declared for compatibility, but use the clearer names below.
-    declare_parameter<double>("speed_min", 1.0);
-    declare_parameter<double>("speed_max", 10.0);
-    declare_parameter<double>("rule_min_speed_mps", 1.0);
-    declare_parameter<double>("rule_max_speed_mps", 6.0);
+    // Shared physical command envelope. The same two parameter names are
+    // declared by the follower and are configured once in the YAML wildcard.
+    declare_parameter<double>("command_speed_min_mps", 1.0);
+    declare_parameter<double>("command_speed_max_mps", 10.0);
+
+    // Rule-based speed preview. The steering pure-pursuit lookahead lives in
+    // path_following_v2_node and is a separate control setting.
+    declare_parameter<double>("rule_curve_min_speed_mps", 1.0);
+    declare_parameter<double>("rule_straight_speed_mps", 6.0);
     declare_parameter<double>("rule_speed_curvature_gain", 2.0);
-    declare_parameter<int>("rule_speed_curvature_lookahead_points", 3);
-    declare_parameter<double>("curvature_speed_gain", 2.0);          // deprecated alias
-    declare_parameter<int>("curvature_lookahead_points", 3);         // deprecated alias
+    declare_parameter<double>("rule_speed_curvature_preview_m", 0.09);
 
     raceline_waypoints_topic_ = get_parameter("raceline_waypoints_topic").as_string();
     local_path_topic_ = get_parameter("local_path_topic").as_string();
@@ -77,29 +78,35 @@ public:
 
     publish_rate_hz_ = get_parameter("publish_rate_hz").as_double();
     tf_timeout_sec_ = get_parameter("tf_timeout_sec").as_double();
-    local_path_horizon_m_ = get_parameter("local_path_horizon_m").as_double();
-    max_local_path_points_ = get_parameter("max_local_path_points").as_int();
-    local_path_horizon_points_ = get_parameter("local_path_horizon_points").as_int();
+    local_path_target_length_m_ =
+      get_parameter("local_path_target_length_m").as_double();
+    local_path_max_points_ = get_parameter("local_path_max_points").as_int();
+    legacy_local_path_points_ = get_parameter("legacy_local_path_points").as_int();
 
-    speed_min_ = get_parameter("speed_min").as_double();
-    speed_max_ = get_parameter("speed_max").as_double();
-    rule_min_speed_mps_ = get_parameter("rule_min_speed_mps").as_double();
-    rule_max_speed_mps_ = get_parameter("rule_max_speed_mps").as_double();
+    command_speed_min_mps_ = get_parameter("command_speed_min_mps").as_double();
+    command_speed_max_mps_ = get_parameter("command_speed_max_mps").as_double();
+    rule_curve_min_speed_mps_ = get_parameter("rule_curve_min_speed_mps").as_double();
+    rule_straight_speed_mps_ = get_parameter("rule_straight_speed_mps").as_double();
     rule_speed_curvature_gain_ = get_parameter("rule_speed_curvature_gain").as_double();
-    rule_speed_curvature_lookahead_points_ = get_parameter("rule_speed_curvature_lookahead_points").as_int();
+    rule_speed_curvature_preview_m_ =
+      std::max(0.0, get_parameter("rule_speed_curvature_preview_m").as_double());
 
-    if (local_path_horizon_points_ < 2) {
-      RCLCPP_WARN(get_logger(), "local_path_horizon_points must be >= 2; forcing to 2.");
-      local_path_horizon_points_ = 2;
+    if (legacy_local_path_points_ < 2) {
+      RCLCPP_WARN(get_logger(), "legacy_local_path_points must be >= 2; forcing to 2.");
+      legacy_local_path_points_ = 2;
     }
-    max_local_path_points_ = std::max(2, max_local_path_points_);
+    local_path_max_points_ = std::max(2, local_path_max_points_);
 
-    if (speed_min_ > speed_max_) {
-      RCLCPP_WARN(get_logger(), "speed_min > speed_max; swapping them.");
-      std::swap(speed_min_, speed_max_);
+    if (command_speed_min_mps_ > command_speed_max_mps_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "command_speed_min_mps > command_speed_max_mps; swapping them.");
+      std::swap(command_speed_min_mps_, command_speed_max_mps_);
     }
-    rule_min_speed_mps_ = std::clamp(rule_min_speed_mps_, speed_min_, speed_max_);
-    rule_max_speed_mps_ = std::clamp(rule_max_speed_mps_, rule_min_speed_mps_, speed_max_);
+    rule_curve_min_speed_mps_ = std::clamp(
+      rule_curve_min_speed_mps_, command_speed_min_mps_, command_speed_max_mps_);
+    rule_straight_speed_mps_ = std::clamp(
+      rule_straight_speed_mps_, rule_curve_min_speed_mps_, command_speed_max_mps_);
 
     raceline_sub_ = create_subscription<std_msgs::msg::Float64MultiArray>(
       raceline_waypoints_topic_,
@@ -121,11 +128,16 @@ public:
     RCLCPP_INFO(get_logger(), "  local_path_topic: %s", local_path_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  rule_speed_index_topic: %s", rule_speed_index_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  status_topic: %s", status_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "  physical speed range: %.2f to %.2f m/s", speed_min_, speed_max_);
-    RCLCPP_INFO(get_logger(), "  rule speed range: %.2f to %.2f m/s", rule_min_speed_mps_, rule_max_speed_mps_);
+    RCLCPP_INFO(
+      get_logger(), "  command speed envelope: %.2f to %.2f m/s",
+      command_speed_min_mps_, command_speed_max_mps_);
+    RCLCPP_INFO(
+      get_logger(), "  rule speed range: %.2f to %.2f m/s (preview %.2f m)",
+      rule_curve_min_speed_mps_, rule_straight_speed_mps_,
+      rule_speed_curvature_preview_m_);
     RCLCPP_INFO(
       get_logger(), "  local horizon: %.2f m (max %d points; legacy fallback %d points)",
-      local_path_horizon_m_, max_local_path_points_, local_path_horizon_points_);
+      local_path_target_length_m_, local_path_max_points_, legacy_local_path_points_);
   }
 
 private:
@@ -151,17 +163,17 @@ private:
 
   double publish_rate_hz_{20.0};
   double tf_timeout_sec_{0.05};
-  double speed_min_{1.0};
-  double speed_max_{10.0};
-  double rule_min_speed_mps_{1.0};
-  double rule_max_speed_mps_{6.0};
+  double command_speed_min_mps_{1.0};
+  double command_speed_max_mps_{10.0};
+  double rule_curve_min_speed_mps_{1.0};
+  double rule_straight_speed_mps_{6.0};
   double rule_speed_curvature_gain_{2.0};
-  double local_path_horizon_m_{10.0};
+  double rule_speed_curvature_preview_m_{0.09};
+  double local_path_target_length_m_{10.0};
   double last_local_path_length_m_{0.0};
 
-  int max_local_path_points_{600};
-  int local_path_horizon_points_{80};
-  int rule_speed_curvature_lookahead_points_{3};
+  int local_path_max_points_{600};
+  int legacy_local_path_points_{80};
   bool last_horizon_reached_{false};
 
   void racelineCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
@@ -267,10 +279,10 @@ private:
     }
 
     const int n = static_cast<int>(raceline_.size());
-    const bool use_metric_horizon = local_path_horizon_m_ > 0.0;
+    const bool use_metric_horizon = local_path_target_length_m_ > 0.0;
     const int horizon = use_metric_horizon ?
-      std::min(max_local_path_points_, n) :
-      std::min(local_path_horizon_points_, n);
+      std::min(local_path_max_points_, n) :
+      std::min(legacy_local_path_points_, n);
     path.poses.reserve(static_cast<std::size_t>(horizon));
     last_local_path_length_m_ = 0.0;
     last_horizon_reached_ = !use_metric_horizon;
@@ -291,7 +303,10 @@ private:
         const auto & previous = path.poses[path.poses.size() - 2].pose.position;
         last_local_path_length_m_ += std::hypot(wp.x - previous.x, wp.y - previous.y);
       }
-      if (use_metric_horizon && last_local_path_length_m_ >= local_path_horizon_m_) {
+      if (
+        use_metric_horizon &&
+        last_local_path_length_m_ >= local_path_target_length_m_)
+      {
         last_horizon_reached_ = true;
         break;
       }
@@ -307,27 +322,53 @@ private:
     }
 
     const int n = static_cast<int>(raceline_.size());
-    const int preview_points = std::max(0, rule_speed_curvature_lookahead_points_);
 
-    // Match rl_training: use the maximum curvature_abs from nearest_idx to nearest_idx + N.
-    double curvature_abs = 0.0;
-    for (int offset = 0; offset <= preview_points; ++offset) {
+    // Choose the waypoint nearest to the requested physical preview boundary.
+    // At the current ~0.03 m CSV spacing, 0.09 m therefore preserves the old
+    // nearest_idx..nearest_idx+3 sample set without depending on point count.
+    double preview_distance_m = 0.0;
+    int preview_end_offset = 0;
+    for (int offset = 1; offset < n; ++offset) {
+      const int previous_idx = ((nearest_idx + offset - 1) % n + n) % n;
       const int idx = ((nearest_idx + offset) % n + n) % n;
-      curvature_abs = std::max(curvature_abs, std::max(0.0, raceline_[idx].curvature_abs));
+      const double next_preview_distance_m = preview_distance_m + std::hypot(
+        raceline_[idx].x - raceline_[previous_idx].x,
+        raceline_[idx].y - raceline_[previous_idx].y);
+      if (next_preview_distance_m >= rule_speed_curvature_preview_m_) {
+        if (
+          std::abs(next_preview_distance_m - rule_speed_curvature_preview_m_) <
+          std::abs(rule_speed_curvature_preview_m_ - preview_distance_m))
+        {
+          preview_end_offset = offset;
+        }
+        break;
+      }
+      preview_distance_m = next_preview_distance_m;
+      preview_end_offset = offset;
+    }
+
+    double curvature_abs = 0.0;
+    for (int offset = 0; offset <= preview_end_offset; ++offset) {
+      const int idx = ((nearest_idx + offset) % n + n) % n;
+      curvature_abs = std::max(
+        curvature_abs, std::max(0.0, raceline_[idx].curvature_abs));
     }
 
     // Match rl_training curvature_based_speed():
-    //   speed = rule_max / (1 + curvature_gain * curvature_abs), clipped to rule range.
+    //   speed = straight_speed / (1 + curvature_gain * curvature_abs), clipped to rule range.
     // Then convert the physical rule speed into the final normalized speed index range.
     const double raw_rule_speed_mps =
-      rule_max_speed_mps_ / (1.0 + rule_speed_curvature_gain_ * curvature_abs);
+      rule_straight_speed_mps_ / (1.0 + rule_speed_curvature_gain_ * curvature_abs);
     const double rule_speed_mps =
-      std::clamp(raw_rule_speed_mps, rule_min_speed_mps_, rule_max_speed_mps_);
+      std::clamp(
+        raw_rule_speed_mps, rule_curve_min_speed_mps_, rule_straight_speed_mps_);
 
-    if (speed_max_ <= speed_min_) {
+    if (command_speed_max_mps_ <= command_speed_min_mps_) {
       return 0.0;
     }
-    const double speed_index = (rule_speed_mps - speed_min_) / (speed_max_ - speed_min_);
+    const double speed_index =
+      (rule_speed_mps - command_speed_min_mps_) /
+      (command_speed_max_mps_ - command_speed_min_mps_);
     return std::clamp(speed_index, 0.0, 1.0);
   }
 
@@ -394,7 +435,7 @@ private:
         nearest_idx, local_path.poses.size());
       return;
     }
-    if (local_path_horizon_m_ > 0.0 && !last_horizon_reached_) {
+    if (local_path_target_length_m_ > 0.0 && !last_horizon_reached_) {
       // A short/malformed raceline or an excessively dense path must not look
       // like a complete detour-planning window.
       publishStatus(

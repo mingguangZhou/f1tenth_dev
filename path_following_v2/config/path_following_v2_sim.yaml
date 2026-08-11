@@ -1,47 +1,68 @@
+# Path Following V2 — simulator parameters
+#
+# START TUNING HERE
+#   Normal speed:      rule_straight_speed_mps, rule_curve_min_speed_mps,
+#                      rule_speed_curvature_gain, rule_speed_curvature_preview_m
+#   Absolute limit:    command_speed_min_mps, command_speed_max_mps (defined once)
+#   Maneuver limits:   avoidance/recovery/replan_pending_speed_cap_mps
+#   Steering response: steering_*_lookahead_m and steering_lookahead_speed_gain
+#   Local window:      local_path_target_length_m (primary physical target)
+
+# ============================================================
+# SHARED PHYSICAL COMMAND ENVELOPE
+# Adjust once; generator encodes with it, planner uses its maximum as the
+# ordinary-path cap, and follower decodes/clips with the same values.
+# ============================================================
+/**:
+  ros__parameters:
+    command_speed_min_mps: 0.5
+    command_speed_max_mps: 10.0
+
 path_generator:
   ros__parameters:
     use_sim_time: true
 
-    # Frames
+    # --------------------------------------------------------
+    # FRAMES, INTERFACES AND TIMING
+    # --------------------------------------------------------
     global_frame: "map"
     robot_frame: "ego_racecar/base_link"
     tf_timeout_sec: 0.05
-
-    # Input from centerline_tools raceline publisher.
-    # Expected Float64MultiArray rows:
-    # [index, x, y, yaw, curvature, curvature_abs]
     raceline_waypoints_topic: "/raceline_waypoints"
-
-    # Internal raw-raceline outputs. local_trajectory_planner owns the public
-    # /path_following_v2/local_path and /path_following_v2/path_status topics.
     local_path_topic: "/path_following_v2/raceline_local_path"
     rule_speed_index_topic: "/path_following_v2/rule_speed_index"
     status_topic: "/path_following_v2/raceline_path_status"
-
     publish_rate_hz: 20.0
 
-    # Ten physical metres normally produce about 334 points for the current
-    # ~0.03 m CSV spacing. Point count remains only as a compatibility fallback.
-    local_path_horizon_m: 10.0
-    max_local_path_points: 600
-    local_path_horizon_points: 100
+    # --------------------------------------------------------
+    # LOCAL PATH WINDOW
+    # Physical length is primary. Point count is only a computation ceiling.
+    # Ten metres normally need about 334 points at the current ~0.03 m spacing.
+    # The legacy point-count fallback remains internal and is used only if the
+    # metric target is set <= 0.
+    # --------------------------------------------------------
+    local_path_target_length_m: 10.0
+    local_path_max_points: 600
 
-    # Final physical speed envelope. Must match the follower.
-    speed_min: 1.0
-    speed_max: 10.0
-
-    # Rule-based speed baseline, aligned with rl_training.
-    # rule_speed = clip(rule_max / (1 + gain * max_curvature_abs), rule_min, rule_max)
-    # max_curvature_abs is max curvature_abs from nearest_idx to nearest_idx + N.
-    rule_min_speed_mps: 1.0
-    rule_max_speed_mps: 2.5
+    # --------------------------------------------------------
+    # RULE-BASED BASELINE SPEED — PRIMARY SPEED TUNING
+    # rule_speed = clip(straight_speed / (1 + gain * preview_curvature),
+    #                   curve_min_speed, straight_speed)
+    # The 0.09 m preview preserves the previous three-waypoint behavior for
+    # the current ~0.03 m raceline spacing. Tune it separately if desired.
+    # --------------------------------------------------------
+    rule_curve_min_speed_mps: 1.0
+    rule_straight_speed_mps: 2.5
     rule_speed_curvature_gain: 2.0
-    rule_speed_curvature_lookahead_points: 3
+    rule_speed_curvature_preview_m: 0.50
 
 local_trajectory_planner:
   ros__parameters:
     use_sim_time: true
 
+    # --------------------------------------------------------
+    # INTERFACES, FRAME AND FRESHNESS
+    # --------------------------------------------------------
     raw_path_topic: "/path_following_v2/raceline_local_path"
     final_path_topic: "/path_following_v2/local_path"
     scan_topic: "/scan"
@@ -49,33 +70,41 @@ local_trajectory_planner:
     status_topic: "/path_following_v2/path_status"
     marker_topic: "/path_following_v2/detour_markers"
     robot_frame: "ego_racecar/base_link"
-
     control_rate_hz: 20.0
     raw_path_timeout_sec: 0.30
     scan_timeout_sec: 0.30
     transform_timeout_sec: 0.05
-    # Use scan/raceline information up to the common 10 m local ceiling. The
-    # actual obstacle trigger is clipped automatically only when a complete
-    # detour plus minimum smooth return would not fit in the current path.
+
+    # --------------------------------------------------------
+    # PLANNING AND SENSOR DISTANCES
+    # The actual obstacle trigger is clipped only when a complete detour plus
+    # the minimum smooth return would not fit in the available local path.
+    # --------------------------------------------------------
     scan_range_cap_m: 10.0
     planning_distance_m: 10.0
 
+    # --------------------------------------------------------
+    # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
+    # Effective half-width = vehicle_width / 2 + lateral margin = 0.24 m.
+    # blocked_min_points and beam-gap settings are intentionally count based.
+    # --------------------------------------------------------
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
     min_valid_beam_ratio: 0.35
     blocked_min_points: 3
-
     cluster_max_beam_gap: 2
     cluster_point_gap_m: 0.18
     max_obstacle_size_m: 0.50
     obstacle_size_tolerance_m: 0.15
     critical_obstacle_distance_m: 0.80
 
-    # Each side samples at most six offsets, 0.08 m apart, then chooses the
-    # corridor-centred candidate with the best bottleneck clearance.
+    # --------------------------------------------------------
+    # DETOUR GEOMETRY AND CURVATURE FEASIBILITY
+    # Advanced: candidate count remains discrete to bound computation.
+    # --------------------------------------------------------
     detour_longitudinal_buffer_m: 0.20
     detour_extra_clearance_m: 0.0
-    detour_return_min_length_m: 2.50
+    detour_return_min_length_m: 1.50
     detour_return_max_length_m: 5.00
     candidate_lateral_step_m: 0.08
     max_candidates_per_side: 6
@@ -83,22 +112,24 @@ local_trajectory_planner:
     wheelbase_m: 0.33
     steering_max_deg: 20.6
     curvature_safety_factor: 0.95
-    normal_speed_cap_mps: 10.0
-    detour_speed_cap_mps: 1.5
-    recovery_speed_cap_mps: 1.5
-    replan_pending_speed_cap_mps: 0.5
 
-    # Start local recovery outside 0.18 m; release only after the car has
-    # passed the plan's rejoin anchor and is back within 0.08 m.
+    # --------------------------------------------------------
+    # TEMPORARY LOCAL-TRAJECTORY SPEED CAPS
+    # Ordinary raceline cap = shared command_speed_max_mps.
+    # --------------------------------------------------------
+    avoidance_speed_cap_mps: 1.5
+    recovery_speed_cap_mps: 1.5
+    replan_pending_speed_cap_mps: 1.0
+
+    # --------------------------------------------------------
+    # RECOVERY AND PERSISTENT-PLAN STATE
+    # --------------------------------------------------------
     recovery_enter_lateral_error_m: 0.18
     recovery_exit_lateral_error_m: 0.08
     recovery_exit_heading_error_deg: 10.0
     recovery_min_rejoin_length_m: 2.5
     recovery_max_rejoin_length_m: 5.0
     recovery_length_gain: 3.0
-
-    # A plan is normally held by geometric completion, not a timer. The 12 s
-    # maximum only forces a stale-plan update attempt.
     minimum_plan_hold_sec: 0.50
     maximum_plan_hold_sec: 12.0
     plan_deviation_replan_m: 0.35
@@ -118,56 +149,50 @@ path_following_v2:
   ros__parameters:
     use_sim_time: true
 
-    # Frames
+    # --------------------------------------------------------
+    # FRAMES, INTERFACES AND FRESHNESS
+    # --------------------------------------------------------
     global_frame: "map"
     robot_frame: "ego_racecar/base_link"
     tf_timeout_sec: 0.1
-
-    # Inputs from path_generator and optional RL inference.
     local_path_topic: "/path_following_v2/local_path"
     rule_speed_index_topic: "/path_following_v2/rule_speed_index"
     rl_speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
     trajectory_speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
-
-    # Output control command.
     drive_topic: "/path_following_v2/nominal_cmd"
     status_topic: "/path_following_v2/status"
-
     control_rate_hz: 20.0
     path_timeout_sec: 1.0
     rule_speed_index_timeout_sec: 0.5
     rl_residual_timeout_sec: 0.5
     trajectory_speed_cap_timeout_sec: 0.5
 
-    # speed_mode:
-    #   0 = rule-based only
-    #   1 = rule-based + fresh RL residual; if residual is absent/stale, use rule-based only
-    speed_mode: 1
-
-    # Final physical speed envelope, aligned with rl_training.
-    # The rule_speed_index is mapped by:
-    # speed = speed_min + index * (speed_max - speed_min)
-    speed_min: 1.0
-    speed_max: 10.0
-
-    # Final command rate limit after rule speed + residual, aligned with rl_training.
+    # --------------------------------------------------------
+    # SPEED POLICY AND COMMAND DYNAMICS
+    # 0 = rule baseline only; 1 = rule baseline + fresh RL speed residual.
+    # A stale residual automatically falls back to the rule baseline.
+    # --------------------------------------------------------
+    speed_policy_mode: 1
     max_speed_delta_per_step_mps: 0.2
     require_trajectory_speed_cap: true
 
-    # Pure pursuit steering.
-    wheelbase: 0.33
+    # --------------------------------------------------------
+    # PURE-PURSUIT STEERING — ALL SPATIAL VALUES ARE METRES
+    # active lookahead = clip(min + gain * commanded_speed, min, max)
+    # --------------------------------------------------------
+    wheelbase_m: 0.33
     steering_max_deg: 20.6
-    min_forward_point_x: 0.05
+    min_forward_point_x_m: 0.05
     stop_if_no_path: true
-
-    # Speed-dependent pure-pursuit steering lookahead, in meters.
     fixed_steering_lookahead_m: 0.60
     use_speed_dependent_steering_lookahead: true
     steering_min_lookahead_m: 0.3
     steering_max_lookahead_m: 1.5
     steering_lookahead_speed_gain: 0.25
 
-    # Optional RViz debug markers in robot/base frame.
+    # --------------------------------------------------------
+    # DEBUG AND VISUALIZATION
+    # --------------------------------------------------------
     publish_markers: true
     marker_frame: "ego_racecar/base_link"
     lookahead_marker_topic: "/path_following_v2/lookahead_marker"
