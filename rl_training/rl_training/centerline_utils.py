@@ -174,6 +174,112 @@ def get_upcoming_curvature_abs(
     return max_curv
 
 
+
+def _segment_distance(centerline: List[CenterlinePoint], from_idx: int, to_idx: int) -> float:
+    """Distance between two wrapped neighboring centerline indices."""
+    n = len(centerline)
+    p0 = centerline[get_loop_index(from_idx, n)]
+    p1 = centerline[get_loop_index(to_idx, n)]
+    return math.hypot(p1.x - p0.x, p1.y - p0.y)
+
+
+def get_preview_end_offset_by_distance(
+    nearest_idx: int,
+    centerline: List[CenterlinePoint],
+    preview_distance_m: float,
+) -> int:
+    """Return the forward waypoint offset closest to a metric preview distance.
+
+    This mirrors path_following_v2/path_generator_node.cpp: walk forward along
+    the closed raceline and choose the waypoint offset whose accumulated arc
+    length is nearest to the requested preview boundary.  A preview distance of
+    0 uses the nearest waypoint only.
+    """
+    n = len(centerline)
+    if n <= 1 or preview_distance_m <= 0.0:
+        return 0
+
+    preview_distance_m = float(preview_distance_m)
+    accumulated = 0.0
+    end_offset = 0
+
+    for offset in range(1, n):
+        previous_idx = get_loop_index(nearest_idx + offset - 1, n)
+        idx = get_loop_index(nearest_idx + offset, n)
+        next_accumulated = accumulated + _segment_distance(centerline, previous_idx, idx)
+
+        if next_accumulated >= preview_distance_m:
+            # Choose whichever boundary is closer: previous offset or current offset.
+            if abs(next_accumulated - preview_distance_m) < abs(preview_distance_m - accumulated):
+                end_offset = offset
+            break
+
+        accumulated = next_accumulated
+        end_offset = offset
+
+    return int(end_offset)
+
+
+def get_upcoming_curvature_abs_by_distance(
+    nearest_idx: int,
+    centerline: List[CenterlinePoint],
+    preview_distance_m: float,
+) -> float:
+    """Maximum abs curvature from nearest_idx to a metric preview distance.
+
+    This is the metre-based counterpart of get_upcoming_curvature_abs(...,
+    lookahead_points=N) and is intended to match the rule-speed preview in
+    path_following_v2.
+    """
+    n = len(centerline)
+    end_offset = get_preview_end_offset_by_distance(nearest_idx, centerline, preview_distance_m)
+    max_curv = 0.0
+    for offset in range(end_offset + 1):
+        idx = get_loop_index(nearest_idx + offset, n)
+        max_curv = max(max_curv, max(0.0, centerline[idx].curvature_abs))
+    return float(max_curv)
+
+
+def get_curvature_abs_section_average_by_distance(
+    nearest_idx: int,
+    centerline: List[CenterlinePoint],
+    start_distance_m: float,
+    end_distance_m: float,
+) -> float:
+    """Average abs curvature over a forward metric section.
+
+    The section is [start_distance_m, end_distance_m] measured along the closed
+    raceline from nearest_idx.  If no waypoint center falls in the requested
+    section, the function falls back to the max-curvature preview at end_distance_m
+    so that reward computation remains well-defined.
+    """
+    n = len(centerline)
+    if n == 0:
+        return 0.0
+
+    start_distance_m = max(0.0, float(start_distance_m))
+    end_distance_m = max(start_distance_m, float(end_distance_m))
+
+    values = []
+    accumulated = 0.0
+
+    for offset in range(n):
+        idx = get_loop_index(nearest_idx + offset, n)
+        if accumulated >= start_distance_m and accumulated <= end_distance_m:
+            values.append(max(0.0, centerline[idx].curvature_abs))
+
+        if accumulated > end_distance_m:
+            break
+
+        next_idx = get_loop_index(nearest_idx + offset + 1, n)
+        accumulated += _segment_distance(centerline, idx, next_idx)
+
+    if values:
+        return float(sum(values) / len(values))
+
+    return get_upcoming_curvature_abs_by_distance(nearest_idx, centerline, end_distance_m)
+
+
 def compute_centerline_progress_delta(
     previous_idx: int,
     current_idx: int,

@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 from stable_baselines3 import PPO
 from rl_training.f110_speed_env import F110SpeedEnv
-from rl_training.config_utils import parse_args_with_config
+from rl_training.config_utils import parse_args_with_config, apply_start_centerline_idx
 
 REWARD_TERM_KEYS = [
     "reward_progress",
@@ -46,8 +46,10 @@ def print_reward_breakdown(acc, total_reward):
 
 def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--steps", type=int, default=3000)
-    parser.add_argument("--min_speed", type=float, default=0.5)
-    parser.add_argument("--max_speed", type=float, default=4.0)
+    parser.add_argument("--min_speed", type=float, default=0.5, help="Legacy alias for command_speed_min_mps")
+    parser.add_argument("--max_speed", type=float, default=4.0, help="Legacy alias for command_speed_max_mps")
+    parser.add_argument("--command_speed_min_mps", type=float, default=None)
+    parser.add_argument("--command_speed_max_mps", type=float, default=None)
     parser.add_argument("--max_speed_index_delta", type=float, default=0.05, help="Deprecated compatibility arg")
     parser.add_argument("--max_speed_delta_per_step_mps", type=float, default=0.10)
     parser.add_argument("--max_delta_speed_mps", type=float, default=0.30)
@@ -57,6 +59,10 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model_curvature_short_points", type=int, default=10)
     parser.add_argument("--model_curvature_mid_points", type=int, default=40)
     parser.add_argument("--model_curvature_long_points", type=int, default=80)
+    parser.add_argument("--rule_speed_curvature_preview_m", type=float, default=None)
+    parser.add_argument("--model_curvature_short_preview_m", type=float, default=None)
+    parser.add_argument("--model_curvature_mid_preview_m", type=float, default=None)
+    parser.add_argument("--model_curvature_long_preview_m", type=float, default=None)
     parser.add_argument("--target_lap_steps", type=int, default=5000)
     parser.add_argument("--random_start_along_centerline", action="store_true")
     parser.add_argument("--random_start_min_index", type=int, default=-1)
@@ -73,8 +79,11 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
 
     # High-speed residual training: separate the conservative rule-based
     # reference range from the physical command clamp.
-    parser.add_argument("--rule_min_speed_mps", type=float, default=None)
-    parser.add_argument("--rule_max_speed_mps", type=float, default=None)
+    parser.add_argument("--rule_min_speed_mps", type=float, default=None, help="Legacy alias for rule_curve_min_speed_mps")
+    parser.add_argument("--rule_max_speed_mps", type=float, default=None, help="Legacy alias for rule_straight_speed_mps")
+    parser.add_argument("--rule_curve_min_speed_mps", type=float, default=None)
+    parser.add_argument("--rule_straight_speed_mps", type=float, default=None)
+    parser.add_argument("--rule_speed_curvature_gain", type=float, default=None)
 
     # Optional early failure when the car has effectively lost the raceline.
     parser.add_argument("--enable_bad_tracking_termination", action="store_true")
@@ -88,6 +97,8 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target_speed_smoothness_weight", type=float, default=0.04)
     parser.add_argument("--reward_curvature_section_start_points", type=int, default=2)
     parser.add_argument("--reward_curvature_section_end_points", type=int, default=40)
+    parser.add_argument("--reward_curvature_section_start_m", type=float, default=None)
+    parser.add_argument("--reward_curvature_section_end_m", type=float, default=None)
     parser.add_argument("--curvature_speed_section_weight", type=float, default=0.006)
     parser.add_argument("--residual_smoothness_weight", type=float, default=0.08)
     parser.add_argument("--residual_free_band_mps", type=float, default=0.8)
@@ -103,6 +114,15 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rl_gate_fade_in_step", type=float, default=0.05)
     parser.add_argument("--rl_gate_fade_out_step", type=float, default=0.10)
 
+    parser.add_argument("--wheelbase_m", type=float, default=None)
+    parser.add_argument("--steering_max_deg", type=float, default=None)
+    parser.add_argument("--fixed_steering_lookahead_m", type=float, default=None)
+    parser.add_argument("--use_speed_dependent_steering_lookahead", action="store_true", default=None)
+    parser.add_argument("--steering_min_lookahead_m", type=float, default=None)
+    parser.add_argument("--steering_max_lookahead_m", type=float, default=None)
+    parser.add_argument("--steering_lookahead_speed_gain", type=float, default=None)
+    parser.add_argument("--min_forward_point_x_m", type=float, default=0.05)
+
     parser.add_argument("--random_seed", type=int, default=None)
 
 
@@ -112,6 +132,8 @@ def make_env(args) -> F110SpeedEnv:
         map_ext=args.map_ext,
         centerline_csv=args.centerline_csv,
         start_pose=(args.sx, args.sy, args.stheta),
+        command_speed_min_mps=args.command_speed_min_mps,
+        command_speed_max_mps=args.command_speed_max_mps,
         min_speed=args.min_speed,
         max_speed=args.max_speed,
         max_speed_index_delta=args.max_speed_index_delta,
@@ -125,6 +147,10 @@ def make_env(args) -> F110SpeedEnv:
         model_curvature_short_points=args.model_curvature_short_points,
         model_curvature_mid_points=args.model_curvature_mid_points,
         model_curvature_long_points=args.model_curvature_long_points,
+        rule_speed_curvature_preview_m=args.rule_speed_curvature_preview_m,
+        model_curvature_short_preview_m=args.model_curvature_short_preview_m,
+        model_curvature_mid_preview_m=args.model_curvature_mid_preview_m,
+        model_curvature_long_preview_m=args.model_curvature_long_preview_m,
         random_start_along_centerline=args.random_start_along_centerline,
         random_start_min_index=args.random_start_min_index,
         random_start_max_index=args.random_start_max_index,
@@ -140,6 +166,9 @@ def make_env(args) -> F110SpeedEnv:
 
         rule_min_speed_mps=args.rule_min_speed_mps,
         rule_max_speed_mps=args.rule_max_speed_mps,
+        rule_curve_min_speed_mps=args.rule_curve_min_speed_mps,
+        rule_straight_speed_mps=args.rule_straight_speed_mps,
+        rule_speed_curvature_gain=args.rule_speed_curvature_gain,
         enable_bad_tracking_termination=args.enable_bad_tracking_termination,
         bad_tracking_min_steps=args.bad_tracking_min_steps,
         bad_tracking_cte_threshold=args.bad_tracking_cte_threshold,
@@ -149,6 +178,8 @@ def make_env(args) -> F110SpeedEnv:
         target_speed_smoothness_weight=args.target_speed_smoothness_weight,
         reward_curvature_section_start_points=args.reward_curvature_section_start_points,
         reward_curvature_section_end_points=args.reward_curvature_section_end_points,
+        reward_curvature_section_start_m=args.reward_curvature_section_start_m,
+        reward_curvature_section_end_m=args.reward_curvature_section_end_m,
         curvature_speed_section_weight=args.curvature_speed_section_weight,
         residual_smoothness_weight=args.residual_smoothness_weight,
         residual_free_band_mps=args.residual_free_band_mps,
@@ -163,6 +194,14 @@ def make_env(args) -> F110SpeedEnv:
         rl_gate_fade_in_step=args.rl_gate_fade_in_step,
         rl_gate_fade_out_step=args.rl_gate_fade_out_step,
         random_seed=args.random_seed,
+        wheelbase_m=args.wheelbase_m,
+        steering_max_deg=args.steering_max_deg,
+        fixed_steering_lookahead_m=args.fixed_steering_lookahead_m,
+        use_speed_dependent_steering_lookahead=args.use_speed_dependent_steering_lookahead,
+        steering_min_lookahead_m=args.steering_min_lookahead_m,
+        steering_max_lookahead_m=args.steering_max_lookahead_m,
+        steering_lookahead_speed_gain=args.steering_lookahead_speed_gain,
+        min_forward_point_x_m=args.min_forward_point_x_m,
         use_speed_dependent_lookahead=True,
     )
 
@@ -176,11 +215,13 @@ def main():
     parser.add_argument("--sx", type=float, default=None)
     parser.add_argument("--sy", type=float, default=None)
     parser.add_argument("--stheta", type=float, default=None)
+    parser.add_argument("--start_centerline_idx", type=int, default=-1, help="Optional raceline CSV index used to set sx/sy/stheta for same-start tests")
     add_common_env_args(parser)
     args = parse_args_with_config(
         parser,
         required_keys=["model_path", "map_path", "map_ext", "centerline_csv", "sx", "sy", "stheta"],
     )
+    args = apply_start_centerline_idx(args)
 
     env = make_env(args)
     model = PPO.load(args.model_path)

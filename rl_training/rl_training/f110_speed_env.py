@@ -8,6 +8,8 @@ from rl_training.centerline_utils import (
     load_centerline_csv,
     get_centerline_state_features,
     get_upcoming_curvature_abs,
+    get_upcoming_curvature_abs_by_distance,
+    get_curvature_abs_section_average_by_distance,
     compute_centerline_progress_delta,
 )
 from rl_training.pure_pursuit import compute_pure_pursuit_steering
@@ -64,10 +66,17 @@ class F110SpeedEnv(gym.Env):
         lookahead_distance: float = 1.0,
         wheelbase: float = 0.33,
         max_steer: float = 0.4189,
+        wheelbase_m: float = None,
+        steering_max_deg: float = None,
+        command_speed_min_mps: float = None,
+        command_speed_max_mps: float = None,
         min_speed: float = 0.5,
         max_speed: float = 4.0,
         rule_min_speed_mps: float = None,
         rule_max_speed_mps: float = None,
+        rule_curve_min_speed_mps: float = None,
+        rule_straight_speed_mps: float = None,
+        rule_speed_curvature_gain: float = None,
         max_speed_index_delta: float = 0.05,  # kept for backward CLI compatibility
         max_speed_delta_per_step_mps: float = 0.10,
         max_delta_speed_mps: float = 0.30,
@@ -81,6 +90,10 @@ class F110SpeedEnv(gym.Env):
         model_curvature_short_points: int = 10,
         model_curvature_mid_points: int = 40,
         model_curvature_long_points: int = 80,
+        rule_speed_curvature_preview_m: float = None,
+        model_curvature_short_preview_m: float = None,
+        model_curvature_mid_preview_m: float = None,
+        model_curvature_long_preview_m: float = None,
         random_start_along_centerline: bool = False,
         random_start_min_index: int = -1,
         random_start_max_index: int = -1,
@@ -102,6 +115,8 @@ class F110SpeedEnv(gym.Env):
         target_speed_smoothness_weight: float = 0.04,
         reward_curvature_section_start_points: int = 2,
         reward_curvature_section_end_points: int = 40,
+        reward_curvature_section_start_m: float = None,
+        reward_curvature_section_end_m: float = None,
         curvature_speed_section_weight: float = 0.006,
         residual_smoothness_weight: float = 0.08,
         residual_free_band_mps: float = 0.8,
@@ -117,11 +132,45 @@ class F110SpeedEnv(gym.Env):
         rl_gate_fade_out_step: float = 0.10,
         random_seed: int = None,
         use_speed_dependent_lookahead: bool = True,
+        use_speed_dependent_steering_lookahead: bool = None,
+        fixed_steering_lookahead_m: float = None,
         min_lookahead: float = 0.6,
         max_lookahead: float = 1.6,
         lookahead_speed_gain: float = 0.25,
+        steering_min_lookahead_m: float = None,
+        steering_max_lookahead_m: float = None,
+        steering_lookahead_speed_gain: float = None,
+        min_forward_point_x_m: float = 0.05,
     ):
         super().__init__()
+
+        # ROS path_following_v2-compatible aliases. The old argument names are
+        # kept for backward compatibility, but the new YAML profiles use the
+        # same terminology as path_following_v2.
+        if command_speed_min_mps is not None:
+            min_speed = command_speed_min_mps
+        if command_speed_max_mps is not None:
+            max_speed = command_speed_max_mps
+        if rule_curve_min_speed_mps is not None:
+            rule_min_speed_mps = rule_curve_min_speed_mps
+        if rule_straight_speed_mps is not None:
+            rule_max_speed_mps = rule_straight_speed_mps
+        if rule_speed_curvature_gain is not None:
+            curvature_gain = rule_speed_curvature_gain
+        if wheelbase_m is not None:
+            wheelbase = wheelbase_m
+        if steering_max_deg is not None:
+            max_steer = math.radians(float(steering_max_deg))
+        if fixed_steering_lookahead_m is not None:
+            lookahead_distance = fixed_steering_lookahead_m
+        if use_speed_dependent_steering_lookahead is not None:
+            use_speed_dependent_lookahead = bool(use_speed_dependent_steering_lookahead)
+        if steering_min_lookahead_m is not None:
+            min_lookahead = steering_min_lookahead_m
+        if steering_max_lookahead_m is not None:
+            max_lookahead = steering_max_lookahead_m
+        if steering_lookahead_speed_gain is not None:
+            lookahead_speed_gain = steering_lookahead_speed_gain
 
         if max_speed <= min_speed:
             raise ValueError(
@@ -143,6 +192,7 @@ class F110SpeedEnv(gym.Env):
         self.min_lookahead = min_lookahead
         self.max_lookahead = max_lookahead
         self.lookahead_speed_gain = lookahead_speed_gain
+        self.min_forward_point_x_m = float(min_forward_point_x_m)
 
         self.min_speed = float(min_speed)
         self.max_speed = float(max_speed)
@@ -171,6 +221,18 @@ class F110SpeedEnv(gym.Env):
         self.model_curvature_short_points = int(model_curvature_short_points)
         self.model_curvature_mid_points = int(model_curvature_mid_points)
         self.model_curvature_long_points = int(model_curvature_long_points)
+        self.rule_speed_curvature_preview_m = (
+            None if rule_speed_curvature_preview_m is None else max(0.0, float(rule_speed_curvature_preview_m))
+        )
+        self.model_curvature_short_preview_m = (
+            None if model_curvature_short_preview_m is None else max(0.0, float(model_curvature_short_preview_m))
+        )
+        self.model_curvature_mid_preview_m = (
+            None if model_curvature_mid_preview_m is None else max(0.0, float(model_curvature_mid_preview_m))
+        )
+        self.model_curvature_long_preview_m = (
+            None if model_curvature_long_preview_m is None else max(0.0, float(model_curvature_long_preview_m))
+        )
 
         self.random_start_along_centerline = bool(random_start_along_centerline)
         self.random_start_min_index = int(random_start_min_index)
@@ -197,6 +259,15 @@ class F110SpeedEnv(gym.Env):
         self.reward_curvature_section_end_points = max(
             self.reward_curvature_section_start_points,
             int(reward_curvature_section_end_points),
+        )
+        self.reward_curvature_section_start_m = (
+            None if reward_curvature_section_start_m is None else max(0.0, float(reward_curvature_section_start_m))
+        )
+        self.reward_curvature_section_end_m = (
+            None if reward_curvature_section_end_m is None else max(
+                self.reward_curvature_section_start_m if self.reward_curvature_section_start_m is not None else 0.0,
+                float(reward_curvature_section_end_m),
+            )
         )
         self.curvature_speed_section_weight = float(curvature_speed_section_weight)
         self.residual_smoothness_weight = max(0.0, float(residual_smoothness_weight))
@@ -339,11 +410,14 @@ class F110SpeedEnv(gym.Env):
             lookahead_distance=self.lookahead_distance,
             wheelbase=self.wheelbase,
             max_steer=self.max_steer,
-            current_speed=car_speed,
+            # path_following_v2 uses the final commanded speed for speed-dependent
+            # steering lookahead, not the current measured vehicle speed.
+            current_speed=target_speed,
             use_speed_dependent_lookahead=self.use_speed_dependent_lookahead,
             min_lookahead=self.min_lookahead,
             max_lookahead=self.max_lookahead,
             lookahead_speed_gain=self.lookahead_speed_gain,
+            min_forward_point_x_m=self.min_forward_point_x_m,
         )
 
         gym_action = np.array([[steering, target_speed]], dtype=np.float32)
@@ -506,11 +580,23 @@ class F110SpeedEnv(gym.Env):
         current_speed_mps = float(features[0])
         cross_track_error = float(features[1])
         heading_error = float(features[2])
-        rule_curvature_abs = float(features[3])
 
-        curv_short_abs = get_upcoming_curvature_abs(nearest_idx, self.centerline, self.model_curvature_short_points)
-        curv_mid_abs = get_upcoming_curvature_abs(nearest_idx, self.centerline, self.model_curvature_mid_points)
-        curv_long_abs = get_upcoming_curvature_abs(nearest_idx, self.centerline, self.model_curvature_long_points)
+        if self.rule_speed_curvature_preview_m is not None:
+            rule_curvature_abs = get_upcoming_curvature_abs_by_distance(
+                nearest_idx, self.centerline, self.rule_speed_curvature_preview_m
+            )
+        else:
+            rule_curvature_abs = float(features[3])
+
+        curv_short_abs = self._get_preview_curvature_abs(
+            nearest_idx, self.model_curvature_short_preview_m, self.model_curvature_short_points
+        )
+        curv_mid_abs = self._get_preview_curvature_abs(
+            nearest_idx, self.model_curvature_mid_preview_m, self.model_curvature_mid_points
+        )
+        curv_long_abs = self._get_preview_curvature_abs(
+            nearest_idx, self.model_curvature_long_preview_m, self.model_curvature_long_points
+        )
 
         rule_speed_mps = curvature_based_speed(
             upcoming_curvature_abs=rule_curvature_abs,
@@ -560,8 +646,8 @@ class F110SpeedEnv(gym.Env):
 
         The policy observation still contains short/mid/long curvature preview.
         The reward separately uses an average absolute curvature over a fixed
-        section ahead of the vehicle, default 2..40 points, roughly 0.1..2.0 m
-        for a 0.05 m waypoint spacing.
+        metre-based section ahead of the vehicle when configured. Legacy
+        point-count section parameters remain as a fallback.
         """
         cross_track_error = float(true_rl_obs[2])
         heading_error = float(true_rl_obs[3])
@@ -649,8 +735,26 @@ class F110SpeedEnv(gym.Env):
         }
         return float(reward)
 
+    def _get_preview_curvature_abs(self, nearest_idx: int, preview_m, fallback_points: int) -> float:
+        """Get max abs curvature using metre preview when available, else point count."""
+        if preview_m is not None:
+            return get_upcoming_curvature_abs_by_distance(
+                nearest_idx, self.centerline, float(preview_m)
+            )
+        return get_upcoming_curvature_abs(nearest_idx, self.centerline, int(fallback_points))
+
     def _get_curvature_section_average_abs(self, nearest_idx: int, start_offset_points: int, end_offset_points: int) -> float:
         """Average absolute curvature over a forward section of the closed raceline."""
+        if self.reward_curvature_section_start_m is not None or self.reward_curvature_section_end_m is not None:
+            start_m = 0.0 if self.reward_curvature_section_start_m is None else self.reward_curvature_section_start_m
+            end_m = start_m if self.reward_curvature_section_end_m is None else self.reward_curvature_section_end_m
+            return get_curvature_abs_section_average_by_distance(
+                nearest_idx=nearest_idx,
+                centerline=self.centerline,
+                start_distance_m=start_m,
+                end_distance_m=end_m,
+            )
+
         n = len(self.centerline)
         if n <= 0:
             return 0.0

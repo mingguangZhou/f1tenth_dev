@@ -78,3 +78,35 @@ def parse_args_with_config(
         )
 
     return args
+
+
+
+def apply_start_centerline_idx(args):
+    """If args.start_centerline_idx is set, use that CSV row as sx/sy/stheta.
+
+    This keeps command lines short for fair same-start rule-vs-PPO analysis.
+    The config may still contain sx/sy/stheta defaults; this helper overrides
+    them only when start_centerline_idx >= 0.
+    """
+    import csv
+
+    idx = int(getattr(args, "start_centerline_idx", -1) or -1)
+    if idx < 0:
+        return args
+
+    csv_path = getattr(args, "centerline_csv", None)
+    if not csv_path:
+        raise ValueError("--start_centerline_idx requires --centerline_csv or a config value")
+
+    with open(csv_path, newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    if idx >= len(rows):
+        raise ValueError(f"start_centerline_idx {idx} out of range 0..{len(rows)-1}")
+
+    row = rows[idx]
+    args.sx = float(row["x"])
+    args.sy = float(row["y"])
+    args.stheta = float(row["yaw"])
+    args.random_start_along_centerline = False
+    return args

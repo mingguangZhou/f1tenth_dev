@@ -51,19 +51,18 @@ def compute_speed_dependent_lookahead(
 def find_lookahead_index(
     car_x: float,
     car_y: float,
+    car_yaw: float,
     centerline: List[CenterlinePoint],
     lookahead_distance: float,
+    min_forward_point_x_m: float = 0.05,
 ) -> int:
-    """
-    Find a centerline point approximately lookahead_distance ahead of the car.
+    """Find a lookahead point in front of the car, matching path_following_v2.
 
-    Method:
-        1. Find the nearest centerline point to the car.
-        2. Walk forward along the closed-loop centerline.
-        3. Return the first point whose Euclidean distance from the car
-           is greater than or equal to lookahead_distance.
-
-    This is intentionally simple and robust for the first RL pipeline.
+    Candidate points are transformed into the vehicle frame.  Points with
+    local x < min_forward_point_x_m are ignored, then the selected target is
+    the point with distance >= lookahead_distance and the smallest distance
+    error.  This mirrors path_following_v2_node.cpp more closely than the
+    original first-distance-crossing helper.
     """
     nearest_idx = find_nearest_centerline_index(
         x=car_x,
@@ -72,23 +71,34 @@ def find_lookahead_index(
     )
 
     n = len(centerline)
+    best_idx = nearest_idx
+    best_dist_error = float("inf")
 
     for offset in range(n):
         idx = get_loop_index(nearest_idx + offset, n)
         p = centerline[idx]
 
-        distance = distance_2d(
-            car_x,
-            car_y,
-            p.x,
-            p.y,
+        local_x, local_y = transform_point_to_vehicle_frame(
+            point_x=p.x,
+            point_y=p.y,
+            car_x=car_x,
+            car_y=car_y,
+            car_yaw=car_yaw,
         )
 
-        if distance >= lookahead_distance:
-            return idx
+        if local_x < min_forward_point_x_m:
+            continue
 
-    # Fallback: should rarely happen on a valid closed-loop centerline.
-    return nearest_idx
+        distance = math.hypot(local_x, local_y)
+        if distance < lookahead_distance:
+            continue
+
+        dist_error = abs(distance - lookahead_distance)
+        if dist_error < best_dist_error:
+            best_dist_error = dist_error
+            best_idx = idx
+
+    return best_idx
 
 
 def transform_point_to_vehicle_frame(
@@ -134,6 +144,7 @@ def compute_pure_pursuit_steering(
     min_lookahead: float = 0.6,
     max_lookahead: float = 1.6,
     lookahead_speed_gain: float = 0.25,
+    min_forward_point_x_m: float = 0.05,
 ) -> Tuple[float, int]:
     """
     Compute steering angle using pure pursuit.
@@ -180,8 +191,10 @@ def compute_pure_pursuit_steering(
     lookahead_idx = find_lookahead_index(
         car_x=car_x,
         car_y=car_y,
+        car_yaw=car_yaw,
         centerline=centerline,
         lookahead_distance=active_lookahead_distance,
+        min_forward_point_x_m=min_forward_point_x_m,
     )
 
     target = centerline[lookahead_idx]
