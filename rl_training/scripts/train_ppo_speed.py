@@ -18,6 +18,10 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max_speed_index_delta", type=float, default=0.05, help="Deprecated compatibility arg")
     parser.add_argument("--max_speed_delta_per_step_mps", type=float, default=0.10)
     parser.add_argument("--max_delta_speed_mps", type=float, default=0.30)
+    parser.add_argument("--residual_output_mode", default="physical_mps", choices=["physical_mps", "speed_ratio"])
+    parser.add_argument("--positive_assist_ratio", type=float, default=0.667)
+    parser.add_argument("--negative_assist_ratio", type=float, default=0.50)
+    parser.add_argument("--assist_gain", type=float, default=1.0)
     parser.add_argument("--residual_correction_scale", type=float, default=0.25, help="Deprecated compatibility arg")
     parser.add_argument("--curvature_gain", type=float, default=2.0)
     parser.add_argument("--rule_curvature_lookahead_points", type=int, default=3)
@@ -75,6 +79,9 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--residual_smoothness_weight", type=float, default=0.08)
     parser.add_argument("--residual_free_band_mps", type=float, default=0.8)
     parser.add_argument("--residual_excess_weight", type=float, default=0.05)
+    parser.add_argument("--assist_smoothness_weight", type=float, default=0.08)
+    parser.add_argument("--assist_free_band", type=float, default=0.15)
+    parser.add_argument("--assist_excess_weight", type=float, default=0.05)
     # Optional runtime/inference safety gate for the learned residual.
     parser.add_argument("--enable_rl_gate", action="store_true")
     parser.add_argument("--rl_gate_enable_cte", type=float, default=0.25)
@@ -111,6 +118,10 @@ def make_env(args) -> F110SpeedEnv:
         max_speed_index_delta=args.max_speed_index_delta,
         max_speed_delta_per_step_mps=args.max_speed_delta_per_step_mps,
         max_delta_speed_mps=args.max_delta_speed_mps,
+        residual_output_mode=args.residual_output_mode,
+        positive_assist_ratio=args.positive_assist_ratio,
+        negative_assist_ratio=args.negative_assist_ratio,
+        assist_gain=args.assist_gain,
         residual_correction_scale=args.residual_correction_scale,
         max_episode_steps=args.max_episode_steps,
         target_lap_steps=args.target_lap_steps,
@@ -156,6 +167,9 @@ def make_env(args) -> F110SpeedEnv:
         residual_smoothness_weight=args.residual_smoothness_weight,
         residual_free_band_mps=args.residual_free_band_mps,
         residual_excess_weight=args.residual_excess_weight,
+        assist_smoothness_weight=args.assist_smoothness_weight,
+        assist_free_band=args.assist_free_band,
+        assist_excess_weight=args.assist_excess_weight,
         enable_rl_gate=args.enable_rl_gate,
         rl_gate_enable_cte=args.rl_gate_enable_cte,
         rl_gate_enable_heading=args.rl_gate_enable_heading,

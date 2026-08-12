@@ -37,6 +37,8 @@ REWARD_TERM_KEYS = [
     "penalty_target_speed_smoothness",
     "penalty_residual_smoothness",
     "penalty_residual_excess",
+    "penalty_assist_smoothness",
+    "penalty_assist_excess",
     "penalty_time",
     "penalty_crash",
     "penalty_timeout",
@@ -108,6 +110,10 @@ def create_env(args) -> F110SpeedEnv:
         max_speed_index_delta=args.max_speed_index_delta,
         max_speed_delta_per_step_mps=args.max_speed_delta_per_step_mps,
         max_delta_speed_mps=args.max_delta_speed_mps,
+        residual_output_mode=args.residual_output_mode,
+        positive_assist_ratio=args.positive_assist_ratio,
+        negative_assist_ratio=args.negative_assist_ratio,
+        assist_gain=args.assist_gain,
         max_episode_steps=args.steps,
         target_lap_steps=args.target_lap_steps,
         curvature_gain=args.curvature_gain,
@@ -153,6 +159,9 @@ def create_env(args) -> F110SpeedEnv:
         residual_smoothness_weight=args.residual_smoothness_weight,
         residual_free_band_mps=args.residual_free_band_mps,
         residual_excess_weight=args.residual_excess_weight,
+        assist_smoothness_weight=args.assist_smoothness_weight,
+        assist_free_band=args.assist_free_band,
+        assist_excess_weight=args.assist_excess_weight,
         enable_rl_gate=args.enable_rl_gate,
         rl_gate_enable_cte=args.rl_gate_enable_cte,
         rl_gate_enable_heading=args.rl_gate_enable_heading,
@@ -239,6 +248,9 @@ def rollout_policy(args, name: str, model: Optional[PPO]) -> Tuple[pd.DataFrame,
                 "previous_delta_speed_mps_obs": float(obs[7]) if len(obs) >= 8 else np.nan,
                 "correction_action": float(info.get("correction_action", action[0])),
                 "raw_delta_speed_mps": float(info.get("raw_delta_speed_mps", info.get("delta_speed_mps", np.nan))),
+                "raw_assist_ratio": float(info.get("raw_assist_ratio", np.nan)),
+                "assist_ratio": float(info.get("assist_ratio", np.nan)),
+                "assist_gain": float(info.get("assist_gain", np.nan)),
                 "rl_gate_enabled": bool(info.get("rl_gate_enabled", True)),
                 "rl_gate_scale": float(info.get("rl_gate_scale", 1.0)),
                 "rl_gate_good_count": int(info.get("rl_gate_good_count", 0)),
@@ -606,6 +618,10 @@ def parse_args():
     p.add_argument("--max_speed_index_delta", type=float, default=0.05, help="Deprecated compatibility arg")
     p.add_argument("--max_speed_delta_per_step_mps", type=float, default=0.10)
     p.add_argument("--max_delta_speed_mps", type=float, default=0.30)
+    p.add_argument("--residual_output_mode", default="physical_mps", choices=["physical_mps", "speed_ratio"])
+    p.add_argument("--positive_assist_ratio", type=float, default=0.667)
+    p.add_argument("--negative_assist_ratio", type=float, default=0.50)
+    p.add_argument("--assist_gain", type=float, default=1.0)
     p.add_argument("--curvature_gain", type=float, default=2.0)
     p.add_argument("--residual_correction_scale", type=float, default=0.10, help="Deprecated compatibility arg")
     p.add_argument("--rule_curvature_lookahead_points", type=int, default=3)
@@ -655,6 +671,9 @@ def parse_args():
     p.add_argument("--residual_smoothness_weight", type=float, default=0.08)
     p.add_argument("--residual_free_band_mps", type=float, default=0.8)
     p.add_argument("--residual_excess_weight", type=float, default=0.05)
+    p.add_argument("--assist_smoothness_weight", type=float, default=0.08)
+    p.add_argument("--assist_free_band", type=float, default=0.15)
+    p.add_argument("--assist_excess_weight", type=float, default=0.05)
     # Optional runtime/inference safety gate for the learned residual.
     p.add_argument("--enable_rl_gate", action="store_true")
     p.add_argument("--rl_gate_enable_cte", type=float, default=0.25)

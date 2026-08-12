@@ -15,6 +15,8 @@ REWARD_TERM_KEYS = [
     "penalty_target_speed_smoothness",
     "penalty_residual_smoothness",
     "penalty_residual_excess",
+    "penalty_assist_smoothness",
+    "penalty_assist_excess",
     "penalty_time",
     "penalty_crash",
     "penalty_timeout",
@@ -38,6 +40,8 @@ def print_reward_breakdown(acc, total_reward):
     print(f"penalty_target_speed_smoothness:  -{acc['penalty_target_speed_smoothness']:.3f}")
     print(f"penalty_residual_smoothness:      -{acc['penalty_residual_smoothness']:.3f}")
     print(f"penalty_residual_excess:          -{acc['penalty_residual_excess']:.3f}")
+    print(f"penalty_assist_smoothness:        -{acc['penalty_assist_smoothness']:.3f}")
+    print(f"penalty_assist_excess:            -{acc['penalty_assist_excess']:.3f}")
     print(f"penalty_time:                     -{acc['penalty_time']:.3f}")
     print(f"penalty_crash:                    -{acc['penalty_crash']:.3f}")
     print(f"penalty_timeout:                  -{acc['penalty_timeout']:.3f}")
@@ -53,6 +57,10 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max_speed_index_delta", type=float, default=0.05, help="Deprecated compatibility arg")
     parser.add_argument("--max_speed_delta_per_step_mps", type=float, default=0.10)
     parser.add_argument("--max_delta_speed_mps", type=float, default=0.30)
+    parser.add_argument("--residual_output_mode", default="physical_mps", choices=["physical_mps", "speed_ratio"])
+    parser.add_argument("--positive_assist_ratio", type=float, default=0.667)
+    parser.add_argument("--negative_assist_ratio", type=float, default=0.50)
+    parser.add_argument("--assist_gain", type=float, default=1.0)
     parser.add_argument("--residual_correction_scale", type=float, default=0.25, help="Deprecated compatibility arg")
     parser.add_argument("--curvature_gain", type=float, default=2.0)
     parser.add_argument("--rule_curvature_lookahead_points", type=int, default=3)
@@ -103,6 +111,9 @@ def add_common_env_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--residual_smoothness_weight", type=float, default=0.08)
     parser.add_argument("--residual_free_band_mps", type=float, default=0.8)
     parser.add_argument("--residual_excess_weight", type=float, default=0.05)
+    parser.add_argument("--assist_smoothness_weight", type=float, default=0.08)
+    parser.add_argument("--assist_free_band", type=float, default=0.15)
+    parser.add_argument("--assist_excess_weight", type=float, default=0.05)
     # Optional runtime/inference safety gate for the learned residual.
     parser.add_argument("--enable_rl_gate", action="store_true")
     parser.add_argument("--rl_gate_enable_cte", type=float, default=0.25)
@@ -139,6 +150,10 @@ def make_env(args) -> F110SpeedEnv:
         max_speed_index_delta=args.max_speed_index_delta,
         max_speed_delta_per_step_mps=args.max_speed_delta_per_step_mps,
         max_delta_speed_mps=args.max_delta_speed_mps,
+        residual_output_mode=args.residual_output_mode,
+        positive_assist_ratio=args.positive_assist_ratio,
+        negative_assist_ratio=args.negative_assist_ratio,
+        assist_gain=args.assist_gain,
         residual_correction_scale=args.residual_correction_scale,
         max_episode_steps=args.steps,
         target_lap_steps=args.target_lap_steps,
@@ -184,6 +199,9 @@ def make_env(args) -> F110SpeedEnv:
         residual_smoothness_weight=args.residual_smoothness_weight,
         residual_free_band_mps=args.residual_free_band_mps,
         residual_excess_weight=args.residual_excess_weight,
+        assist_smoothness_weight=args.assist_smoothness_weight,
+        assist_free_band=args.assist_free_band,
+        assist_excess_weight=args.assist_excess_weight,
         enable_rl_gate=args.enable_rl_gate,
         rl_gate_enable_cte=args.rl_gate_enable_cte,
         rl_gate_enable_heading=args.rl_gate_enable_heading,
@@ -250,12 +268,13 @@ def main():
                 f"step={step:04d} "
                 f"action={float(action[0]): .3f} "
                 f"raw_delta={info.get('raw_delta_speed_mps', info.get('delta_speed_mps', 0.0)): .3f} "
+                f"assist={info.get('assist_ratio', 0.0): .3f} "
                 f"gate={info.get('rl_gate_scale', 1.0): .2f} "
                 f"delta_v={info.get('delta_speed_mps', 0.0): .3f} "
                 f"rule_v={info.get('rule_speed_mps', 0.0): .3f} "
                 f"req_v={info.get('requested_speed_mps', 0.0): .3f} "
                 f"target_v={info.get('target_speed_mps', 0.0): .3f} "
-                f"actual_v={obs[0]: .3f} "
+                f"actual_v={info.get('current_speed_mps', obs[0]): .3f} "
                 f"cte={obs[2]: .3f} "
                 f"heading_err={obs[3]: .3f} "
                 f"curv_s={obs[4]: .3f} curv_m={obs[5]: .3f} curv_l={obs[6]: .3f} "

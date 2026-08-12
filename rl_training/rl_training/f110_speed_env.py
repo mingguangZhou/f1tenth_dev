@@ -24,9 +24,16 @@ class F110SpeedEnv(gym.Env):
     current ROS 2 path_following_v2 pipeline.
 
     Longitudinal architecture:
-        rule_speed_mps      = curvature_based_speed(rule_curvature_abs, rule_min/max_speed_mps)
-        delta_speed_mps     = max_delta_speed_mps * correction_action
-        requested_speed_mps = rule_speed_mps + delta_speed_mps
+        rule_speed_mps = curvature_based_speed(rule_curvature_abs, rule_min/max_speed_mps)
+
+        physical_mps legacy mode:
+            delta_speed_mps = max_delta_speed_mps * correction_action
+
+        speed_ratio mode, recommended for highspeed-train -> reserved-apply:
+            assist_ratio    = correction_action * positive/negative_assist_ratio * assist_gain
+            delta_speed_mps = assist_ratio * rule_speed_mps
+
+        requested_speed_mps = rule_speed_mps + gated_delta_speed_mps
         target_speed_mps    = rate_limited_and_clipped(requested_speed_mps)
 
     The rule-based speed uses a deliberately short and simple curvature preview.
@@ -45,16 +52,16 @@ class F110SpeedEnv(gym.Env):
         [correction_action] in [-1.0, 1.0]
 
     RL observation:
-        [
-            current_speed_mps,
-            rule_speed_mps,
-            cross_track_error_obs,
-            heading_error_obs,
-            curv_short_abs,
-            curv_mid_abs,
-            curv_long_abs,
-            previous_delta_speed_mps,
-        ]
+        physical_mps mode:
+            [current_speed_mps, rule_speed_mps, cte, heading_error,
+             curv_short_abs, curv_mid_abs, curv_long_abs, previous_delta_speed_mps]
+
+        speed_ratio mode:
+            [current_speed_ratio, rule_speed_ratio, cte, heading_error,
+             curv_short_abs, curv_mid_abs, curv_long_abs, previous_assist_ratio]
+
+        The observation dimension stays 8 in both modes, but the first, second,
+        and last speed-related features become dimensionless in speed_ratio mode.
     """
 
     def __init__(
@@ -80,6 +87,10 @@ class F110SpeedEnv(gym.Env):
         max_speed_index_delta: float = 0.05,  # kept for backward CLI compatibility
         max_speed_delta_per_step_mps: float = 0.10,
         max_delta_speed_mps: float = 0.30,
+        residual_output_mode: str = "physical_mps",
+        positive_assist_ratio: float = 0.667,
+        negative_assist_ratio: float = 0.50,
+        assist_gain: float = 1.0,
         residual_correction_scale: float = 0.25,  # deprecated; not used by physical residual mode
         max_episode_steps: int = 5000,
         lap_completion_ratio: float = 0.995,
@@ -121,6 +132,9 @@ class F110SpeedEnv(gym.Env):
         residual_smoothness_weight: float = 0.08,
         residual_free_band_mps: float = 0.8,
         residual_excess_weight: float = 0.05,
+        assist_smoothness_weight: float = 0.08,
+        assist_free_band: float = 0.15,
+        assist_excess_weight: float = 0.05,
         enable_rl_gate: bool = False,
         rl_gate_enable_cte: float = 0.25,
         rl_gate_enable_heading: float = 0.20,
@@ -178,6 +192,17 @@ class F110SpeedEnv(gym.Env):
             )
         if max_delta_speed_mps < 0.0:
             raise ValueError("max_delta_speed_mps must be non-negative")
+
+        self.residual_output_mode = str(residual_output_mode or "physical_mps").strip().lower()
+        valid_residual_modes = {"physical_mps", "speed_ratio"}
+        if self.residual_output_mode not in valid_residual_modes:
+            raise ValueError(
+                f"residual_output_mode must be one of {sorted(valid_residual_modes)}. "
+                f"Got {residual_output_mode!r}."
+            )
+        self.positive_assist_ratio = max(0.0, float(positive_assist_ratio))
+        self.negative_assist_ratio = max(0.0, float(negative_assist_ratio))
+        self.assist_gain = max(0.0, float(assist_gain))
 
         self.map_path = map_path
         self.map_ext = map_ext
@@ -273,7 +298,11 @@ class F110SpeedEnv(gym.Env):
         self.residual_smoothness_weight = max(0.0, float(residual_smoothness_weight))
         self.residual_free_band_mps = max(0.0, float(residual_free_band_mps))
         self.residual_excess_weight = max(0.0, float(residual_excess_weight))
+        self.assist_smoothness_weight = max(0.0, float(assist_smoothness_weight))
+        self.assist_free_band = max(0.0, float(assist_free_band))
+        self.assist_excess_weight = max(0.0, float(assist_excess_weight))
         self.last_reward_terms = {}
+        self.last_observation_meta = {}
 
         # Optional runtime-style safety gate for the learned residual.
         # When enabled, the PPO residual is used only inside a near-raceline
@@ -311,8 +340,30 @@ class F110SpeedEnv(gym.Env):
             dtype=np.float32,
         )
 
-        self.observation_space = gym.spaces.Box(
-            low=np.array([
+        if self.residual_output_mode == "speed_ratio":
+            max_assist_feature = max(1.0, self.assist_gain * max(self.positive_assist_ratio, self.negative_assist_ratio))
+            obs_low = np.array([
+                0.0,
+                0.0,
+                -5.0,
+                -math.pi,
+                0.0,
+                0.0,
+                0.0,
+                -max_assist_feature,
+            ], dtype=np.float32)
+            obs_high = np.array([
+                1.5,
+                1.5,
+                5.0,
+                math.pi,
+                10.0,
+                10.0,
+                10.0,
+                max_assist_feature,
+            ], dtype=np.float32)
+        else:
+            obs_low = np.array([
                 0.0,
                 self.min_speed,
                 -5.0,
@@ -321,8 +372,8 @@ class F110SpeedEnv(gym.Env):
                 0.0,
                 0.0,
                 -self.max_delta_speed_mps,
-            ], dtype=np.float32),
-            high=np.array([
+            ], dtype=np.float32)
+            obs_high = np.array([
                 max(10.0, self.max_speed * 1.5),
                 self.rule_max_speed_mps,
                 5.0,
@@ -331,7 +382,11 @@ class F110SpeedEnv(gym.Env):
                 10.0,
                 10.0,
                 self.max_delta_speed_mps,
-            ], dtype=np.float32),
+            ], dtype=np.float32)
+
+        self.observation_space = gym.spaces.Box(
+            low=obs_low,
+            high=obs_high,
             dtype=np.float32,
         )
 
@@ -344,6 +399,7 @@ class F110SpeedEnv(gym.Env):
         self.cumulative_progress_m = 0.0
         self.previous_target_speed_mps = self.min_speed
         self.previous_delta_speed_mps = 0.0
+        self.previous_assist_ratio = 0.0
         self.previous_correction_action = 0.0
         self._reset_rl_gate_state()
         self.lap_completed = False
@@ -362,6 +418,7 @@ class F110SpeedEnv(gym.Env):
         self.step_count = 0
         self.previous_target_speed_mps = self.min_speed
         self.previous_delta_speed_mps = 0.0
+        self.previous_assist_ratio = 0.0
         self.previous_correction_action = 0.0
         self._reset_rl_gate_state()
         self.lap_completed = False
@@ -384,10 +441,13 @@ class F110SpeedEnv(gym.Env):
         self.step_count += 1
 
         true_pre_obs, _ = self._get_rl_observation_with_index(apply_observation_noise=False)
-        rule_speed_mps = float(true_pre_obs[1])
+        rule_speed_mps = float(self.last_observation_meta.get("rule_speed_mps", true_pre_obs[1]))
 
         correction_action = float(np.clip(action[0], -1.0, 1.0))
-        raw_delta_speed_mps = self.max_delta_speed_mps * correction_action
+        raw_delta_speed_mps, raw_assist_ratio = self._action_to_raw_residual(
+            correction_action=correction_action,
+            rule_speed_mps=rule_speed_mps,
+        )
 
         gate_enabled, gate_scale = self._update_rl_gate(
             cross_track_error=float(true_pre_obs[2]),
@@ -398,6 +458,7 @@ class F110SpeedEnv(gym.Env):
         # gated residual is sent into the speed command. If the gate is disabled
         # or fading out, this smoothly falls back to rule_speed_mps.
         delta_speed_mps = gate_scale * raw_delta_speed_mps
+        assist_ratio = gate_scale * raw_assist_ratio
         requested_speed_mps = float(np.clip(rule_speed_mps + delta_speed_mps, self.min_speed, self.max_speed))
         target_speed = self._rate_limit_speed_mps(requested_speed_mps)
 
@@ -471,11 +532,13 @@ class F110SpeedEnv(gym.Env):
             nearest_idx=nearest_idx,
             target_speed=target_speed,
             delta_speed_mps=delta_speed_mps,
+            assist_ratio=assist_ratio,
         )
 
         self.previous_centerline_idx = nearest_idx
         self.previous_target_speed_mps = target_speed
         self.previous_delta_speed_mps = delta_speed_mps
+        self.previous_assist_ratio = assist_ratio
         self.previous_correction_action = correction_action
 
         info = dict(info)
@@ -486,8 +549,14 @@ class F110SpeedEnv(gym.Env):
         info["rule_speed_index"] = rule_speed_index
         info["rule_min_speed_mps"] = self.rule_min_speed_mps
         info["rule_max_speed_mps"] = self.rule_max_speed_mps
+        info["residual_output_mode"] = self.residual_output_mode
         info["correction_action"] = correction_action
         info["raw_delta_speed_mps"] = raw_delta_speed_mps
+        info["raw_assist_ratio"] = raw_assist_ratio
+        info["assist_ratio"] = assist_ratio
+        info["assist_gain"] = self.assist_gain
+        info["positive_assist_ratio"] = self.positive_assist_ratio
+        info["negative_assist_ratio"] = self.negative_assist_ratio
         info["rl_gate_enabled"] = bool(gate_enabled)
         info["rl_gate_scale"] = float(gate_scale)
         info["rl_gate_good_count"] = int(self.rl_gate_good_count)
@@ -498,6 +567,7 @@ class F110SpeedEnv(gym.Env):
         info["requested_speed_index"] = requested_speed_index
         info["executed_speed_index"] = executed_speed_index
         info["target_speed_mps"] = target_speed
+        info["current_speed_mps"] = float(self.last_observation_meta.get("current_speed_mps", float("nan")))
         info["steering_rad"] = steering
         info["nearest_idx"] = int(nearest_idx)
         info["start_centerline_idx"] = int(self.start_centerline_idx) if self.start_centerline_idx is not None else -1
@@ -508,6 +578,7 @@ class F110SpeedEnv(gym.Env):
         info["curv_mid_abs"] = float(true_obs[5])
         info["curv_long_abs"] = float(true_obs[6])
         info["previous_delta_speed_mps"] = float(self.previous_delta_speed_mps)
+        info["previous_assist_ratio"] = float(self.previous_assist_ratio)
         info["previous_correction_action"] = float(self.previous_correction_action)
         info["bad_tracking_failure"] = bool(self.bad_tracking_failure)
         info["reset_random_index"] = int(self.last_reset_random_index)
@@ -605,16 +676,37 @@ class F110SpeedEnv(gym.Env):
             curvature_gain=self.curvature_gain,
         )
 
-        rl_features = np.array([
-            current_speed_mps,
-            float(rule_speed_mps),
-            cross_track_error,
-            heading_error,
-            float(curv_short_abs),
-            float(curv_mid_abs),
-            float(curv_long_abs),
-            float(self.previous_delta_speed_mps),
-        ], dtype=np.float32)
+        if self.residual_output_mode == "speed_ratio":
+            previous_assist_feature = float(self.previous_assist_ratio)
+            rl_features = np.array([
+                self._normalize_command_speed(current_speed_mps),
+                self._normalize_rule_speed(rule_speed_mps),
+                cross_track_error,
+                heading_error,
+                float(curv_short_abs),
+                float(curv_mid_abs),
+                float(curv_long_abs),
+                previous_assist_feature,
+            ], dtype=np.float32)
+        else:
+            rl_features = np.array([
+                current_speed_mps,
+                float(rule_speed_mps),
+                cross_track_error,
+                heading_error,
+                float(curv_short_abs),
+                float(curv_mid_abs),
+                float(curv_long_abs),
+                float(self.previous_delta_speed_mps),
+            ], dtype=np.float32)
+
+        self.last_observation_meta = {
+            "current_speed_mps": float(current_speed_mps),
+            "rule_speed_mps": float(rule_speed_mps),
+            "cross_track_error": float(cross_track_error),
+            "heading_error": float(heading_error),
+            "nearest_idx": int(nearest_idx),
+        }
 
         if apply_observation_noise:
             rl_features = self._apply_observation_noise(rl_features)
@@ -624,14 +716,24 @@ class F110SpeedEnv(gym.Env):
         out = np.array(obs, dtype=np.float32, copy=True)
         if self.obs_speed_noise_std > 0.0:
             out[0] += float(self.rng.normal(0.0, self.obs_speed_noise_std))
-            out[0] = float(np.clip(out[0], 0.0, max(10.0, self.max_speed * 1.5)))
+            if self.residual_output_mode == "speed_ratio":
+                out[0] = float(np.clip(out[0], 0.0, 1.5))
+            else:
+                out[0] = float(np.clip(out[0], 0.0, max(10.0, self.max_speed * 1.5)))
         if self.obs_cte_noise_std > 0.0:
             out[2] += float(self.rng.normal(0.0, self.obs_cte_noise_std))
         if self.obs_heading_noise_std > 0.0:
             out[3] = self._wrap_angle(out[3] + float(self.rng.normal(0.0, self.obs_heading_noise_std)))
         return out
 
-    def _compute_reward(self, true_rl_obs: np.ndarray, nearest_idx: int, target_speed: float, delta_speed_mps: float) -> float:
+    def _compute_reward(
+        self,
+        true_rl_obs: np.ndarray,
+        nearest_idx: int,
+        target_speed: float,
+        delta_speed_mps: float,
+        assist_ratio: float,
+    ) -> float:
         """
         Behavior-focused physical-residual reward.
 
@@ -687,17 +789,30 @@ class F110SpeedEnv(gym.Env):
             * abs(target_speed - self.previous_target_speed_mps)
         )
 
-        # Mild residual regularization. This is intentionally weaker and more
-        # targeted than the old direct residual magnitude penalty:
-        #   - residual_smoothness_penalty discourages jumpy model intent,
-        #   - residual_excess_penalty only activates outside a free band, so
-        #     useful moderate residuals are not punished.
-        residual_smoothness_penalty = (
-            self.residual_smoothness_weight
-            * abs(delta_speed_mps - self.previous_delta_speed_mps)
-        )
-        residual_excess = max(0.0, abs(delta_speed_mps) - self.residual_free_band_mps)
-        residual_excess_penalty = self.residual_excess_weight * residual_excess * residual_excess
+        # Mild residual/assist regularization. In physical_mps mode this acts on
+        # physical residual m/s. In speed_ratio mode it acts on the dimensionless
+        # assist ratio so that a trend learned in the high-speed profile can be
+        # applied to a reserved profile without carrying over absolute m/s costs.
+        if self.residual_output_mode == "speed_ratio":
+            residual_smoothness_penalty = 0.0
+            residual_excess = 0.0
+            residual_excess_penalty = 0.0
+            assist_smoothness_penalty = (
+                self.assist_smoothness_weight
+                * abs(float(assist_ratio) - self.previous_assist_ratio)
+            )
+            assist_excess = max(0.0, abs(float(assist_ratio)) - self.assist_free_band)
+            assist_excess_penalty = self.assist_excess_weight * assist_excess * assist_excess
+        else:
+            residual_smoothness_penalty = (
+                self.residual_smoothness_weight
+                * abs(delta_speed_mps - self.previous_delta_speed_mps)
+            )
+            residual_excess = max(0.0, abs(delta_speed_mps) - self.residual_free_band_mps)
+            residual_excess_penalty = self.residual_excess_weight * residual_excess * residual_excess
+            assist_smoothness_penalty = 0.0
+            assist_excess = 0.0
+            assist_excess_penalty = 0.0
 
         time_penalty = 0.02
         crash_penalty = self.crash_penalty_value if self.crashed else 0.0
@@ -712,6 +827,8 @@ class F110SpeedEnv(gym.Env):
             - target_speed_smoothness_penalty
             - residual_smoothness_penalty
             - residual_excess_penalty
+            - assist_smoothness_penalty
+            - assist_excess_penalty
             - time_penalty
             - crash_penalty
             - timeout_penalty
@@ -727,6 +844,10 @@ class F110SpeedEnv(gym.Env):
             "penalty_residual_smoothness": float(residual_smoothness_penalty),
             "penalty_residual_excess": float(residual_excess_penalty),
             "residual_excess_mps": float(residual_excess),
+            "penalty_assist_smoothness": float(assist_smoothness_penalty),
+            "penalty_assist_excess": float(assist_excess_penalty),
+            "assist_excess_ratio": float(assist_excess),
+            "reward_assist_ratio": float(assist_ratio),
             "penalty_time": float(time_penalty),
             "penalty_crash": float(crash_penalty),
             "penalty_timeout": float(timeout_penalty),
@@ -734,6 +855,42 @@ class F110SpeedEnv(gym.Env):
             "reward_curvature_section_abs": float(curvature_section_abs),
         }
         return float(reward)
+
+
+    def _normalize_command_speed(self, speed_mps: float) -> float:
+        """Normalize physical command speed to the current profile envelope."""
+        denom = max(self.max_speed - self.min_speed, 1e-6)
+        return float(np.clip((float(speed_mps) - self.min_speed) / denom, -0.5, 1.5))
+
+    def _normalize_rule_speed(self, rule_speed_mps: float) -> float:
+        """Normalize rule speed inside the rule profile envelope."""
+        denom = max(self.rule_max_speed_mps - self.rule_min_speed_mps, 1e-6)
+        return float(np.clip((float(rule_speed_mps) - self.rule_min_speed_mps) / denom, -0.5, 1.5))
+
+    def _action_to_raw_residual(self, correction_action: float, rule_speed_mps: float):
+        """Convert PPO action into a raw residual before gate scaling.
+
+        physical_mps mode preserves the legacy interpretation: action scales a
+        fixed m/s residual authority.
+
+        speed_ratio mode interprets action as a dimensionless assist trend. The
+        resulting m/s residual is computed relative to the current rule speed,
+        which lets the same policy be trained with a high-speed profile and then
+        applied to a reserved profile with a different rule-speed scale.
+        """
+        action = float(np.clip(correction_action, -1.0, 1.0))
+        rule_speed = max(float(rule_speed_mps), 1e-6)
+        if self.residual_output_mode == "speed_ratio":
+            if action >= 0.0:
+                raw_assist_ratio = action * self.positive_assist_ratio * self.assist_gain
+            else:
+                raw_assist_ratio = action * self.negative_assist_ratio * self.assist_gain
+            raw_delta_speed_mps = raw_assist_ratio * rule_speed
+            return float(raw_delta_speed_mps), float(raw_assist_ratio)
+
+        raw_delta_speed_mps = self.max_delta_speed_mps * action
+        raw_assist_ratio = raw_delta_speed_mps / rule_speed
+        return float(raw_delta_speed_mps), float(raw_assist_ratio)
 
     def _get_preview_curvature_abs(self, nearest_idx: int, preview_m, fallback_points: int) -> float:
         """Get max abs curvature using metre preview when available, else point count."""
