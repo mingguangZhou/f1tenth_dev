@@ -1,0 +1,3 @@
+name,executed_steps,total_reward,average_target_speed,lap_completed,crashed,timeout,final_progress_idx,final_progress_m,final_lap_progress_ratio,start_centerline_idx,final_nearest_idx
+rule,9531,1764.4782433133066,3.601815337140756,True,False,False,11339.0,340.1767333363128,0.9950855638437911,3909,3853
+model,9436,1760.6352402054374,3.6412587022745035,True,False,False,11339.0,340.1767333363128,0.9950855638437911,3909,3853

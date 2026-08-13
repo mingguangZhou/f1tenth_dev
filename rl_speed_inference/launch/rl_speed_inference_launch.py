@@ -8,7 +8,7 @@ import os
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('rl_speed_inference')
-    default_params_file = os.path.join(pkg_share, 'config', 'rl_speed_inference_sim.yaml')
+    default_params_file = os.path.join(pkg_share, 'config', 'rl_speed_inference.yaml')
     params_file = LaunchConfiguration('params_file')
 
     return LaunchDescription([

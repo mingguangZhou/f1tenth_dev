@@ -1,108 +1,121 @@
 # rl_speed_inference
 
-ROS 2 Foxy runtime wrapper for the trained PPO residual speed model.
-
-This package intentionally publishes only the **RL residual speed**. It does not publish the final speed command and does not implement fallback arbitration. The path follower combines:
+ROS 2 Foxy node that runs a trained PPO speed policy and publishes a speed residual:
 
 ```text
-final_speed = rule_speed + fresh_rl_residual
+/rl_speed_inference/speed_residual_mps   std_msgs/Float64
 ```
 
-or uses rule speed only if the residual is absent/stale.
+`path_following_v2` remains responsible for composing the final speed, checking residual freshness, and falling back to the rule-based speed when the residual is unavailable.
 
-## Runtime flow
+## Two supported model interfaces
+
+### Recommended: `speed_ratio`
+
+Use this for the newest ratio-assist models trained from `rl_training/configs/ratio_assist/V1_reward_ratio_spielberg_master.yaml`.
+
+Observation expected by the model:
 
 ```text
-/ego_racecar/odom
-raceline CSV
-        ↓
-ppo_speed_node
-        ↓
-/rl_speed_inference/speed_residual_mps
+[current_speed_ratio, rule_speed_ratio, cross_track_error_m, heading_error_rad,
+ curv_short_abs, curv_mid_abs, curv_long_abs, previous_assist_ratio]
 ```
 
-The path follower consumes this residual together with `/path_following_v2/rule_speed_index`.
-
-## Observation and action alignment with training
-
-The node builds the same 8-feature observation used by the current speed-training environment:
+Action conversion:
 
 ```text
-[
-  current_speed_mps,
-  rule_speed_mps,
-  cross_track_error,
-  heading_error,
-  curv_short_abs,
-  curv_mid_abs,
-  curv_long_abs,
-  previous_delta_speed_mps,
-]
+if action >= 0:
+  assist_ratio = action * positive_assist_ratio * assist_gain
+else:
+  assist_ratio = action * negative_assist_ratio * assist_gain
+
+residual_mps = assist_ratio * rule_speed_mps
 ```
 
-The PPO action is interpreted as a residual:
+`assist_gain` is the practical safety/faster knob:
 
 ```text
-action ∈ [-1, 1]
-raw_delta_speed_mps = max_delta_speed_mps * action
-published_residual_mps = gate_scale * raw_delta_speed_mps
+0.10  very cautious first onboard test
+0.25  cautious
+0.50  moderate, validate in sim before any onboard use
+1.00  full learned trend, sim only unless extensively validated
 ```
 
-The residual gate matches the training environment operating-domain gate. It fades the residual toward zero when tracking error is outside the trained/reasonable range.
+### Legacy: `physical_mps`
 
-## Speed range setup
+Use only for old physical residual models.
 
-Simulator defaults:
+```text
+[current_speed_mps, rule_speed_mps, cross_track_error_m, heading_error_rad,
+ curv_short_abs, curv_mid_abs, curv_long_abs, previous_delta_speed_mps]
+
+delta_speed_mps = action * max_delta_speed_mps
+```
+
+A legacy example is kept at:
+
+```text
+config/legacy_physical_mps.yaml
+```
+
+## Config files
+
+```text
+config/rl_speed_inference.yaml      onboard/reserved ratio-assist template
+config/rl_speed_inference_sim.yaml  highspeed simulator ratio-assist template
+config/legacy_physical_mps.yaml     old physical-residual model template
+```
+
+The most important onboard parameters are:
 
 ```yaml
-speed_min: 1.0
-speed_max: 10.0
-rule_min_speed_mps: 1.0
-rule_max_speed_mps: 6.0
-max_delta_speed_mps: 4.0
+residual_output_mode: "speed_ratio"
+model_path: "/absolute/path/to/model.zip"
+centerline_csv: "/absolute/path/to/raceline_points_smooth.csv"
+odom_topic: "/pf/pose/odom"
+assist_gain: 0.10
+command_speed_min_mps: 0.5
+command_speed_max_mps: 2.0
+rule_curve_min_speed_mps: 0.5
+rule_straight_speed_mps: 1.5
+rule_speed_curvature_preview_m: 0.50
 ```
 
-Meaning:
+## Copy model to onboard
 
-```text
-speed_min/speed_max:
-  final physical command envelope used by the path follower
-
-rule_min_speed_mps/rule_max_speed_mps:
-  rule-based baseline speed envelope, used to build the observation
-
-max_delta_speed_mps:
-  maximum absolute residual before gate scaling
-```
-
-The final command rate limit is handled in `path_following_v2`, not here.
-
-## Usage
-
-Build:
+From the dev laptop:
 
 ```bash
-cd /sim_ws
+scp /path/to/V1_reward_ratio_ppo_speed_spielberg_500k_20260812.zip \
+  <jetson_user>@<jetson_ip>:~/f1tenth_dev/rl_training/models/
+```
+
+Copy the exact raceline CSV used by the path follower:
+
+```bash
+scp /path/to/raceline_points_smooth.csv \
+  <jetson_user>@<jetson_ip>:~/f1tenth_dev/centerline_tools/centerline_output/
+```
+
+Then edit `config/rl_speed_inference.yaml` to point to those absolute onboard paths.
+
+## Build and run onboard
+
+```bash
+cd ~/f1tenth_dev
 source /opt/ros/foxy/setup.bash
 colcon build --packages-select rl_speed_inference
 source install/setup.bash
+
+ros2 launch rl_speed_inference rl_speed_inference_launch.py \
+  params_file:=/absolute/path/to/rl_speed_inference.yaml
 ```
 
-Run:
+Before driving, check the input and output topics:
 
 ```bash
-ros2 launch rl_speed_inference rl_speed_inference_sim_launch.py
+ros2 topic hz /pf/pose/odom
+ros2 topic echo /rl_speed_inference/speed_residual_mps
 ```
 
-Check:
-
-```bash
-ros2 topic echo /rl_speed_inference/speed_residual_mps --once
-```
-
-Make sure the configured model and raceline paths exist:
-
-```yaml
-model_path: "/sim_ws/src/rl_training/models/V0_reward_ppo_speed_spielberg_1000k_20260612.zip"
-centerline_csv: "/sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv"
-```
+Start with `assist_gain: 0.10`. Increase only after simulator and static topic checks look correct.
