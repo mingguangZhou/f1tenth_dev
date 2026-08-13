@@ -13,9 +13,10 @@ The user manually:
   2. selects a point without moving it;
   3. explicitly enters Centerline Ref Move mode to change longitudinal index;
   4. explicitly enters Lateral Move mode to change signed lateral offset;
-  5. previews the raceline using the same raceline-generation/smoothing backend
+  5. optionally flips the driving direction in-memory and shows it in the UI;
+  6. previews the raceline using the same raceline-generation/smoothing backend
      as raceline_generator.py;
-  6. saves the standard raceline output files.
+  7. saves the standard raceline output files.
 
 When run standalone, the script resumes the most recent compatible manual
 session by default. Use --fresh to deliberately start with no manual corners.
@@ -438,10 +439,18 @@ def load_manual_session_if_available(
         # lateral-offset session.
         return None
 
+    selected_direction = str(meta.get("selected_direction", "normal")).lower()
+    if selected_direction not in ("normal", "reverse"):
+        selected_direction = "normal"
+
     if MANUAL_RESUME_IF_NEWER_THAN_CENTERLINE and os.path.exists(centerline_csv_path):
         if os.path.getmtime(edited_path) + 1e-6 < os.path.getmtime(centerline_csv_path):
             print("Manual UI resume: previous manual session is older than the current centerline; starting fresh.")
             return None
+
+    active_centerline_rows = centerline_rows
+    if selected_direction == "reverse":
+        active_centerline_rows = rg.reverse_centerline_rows_for_raceline_editor(centerline_rows)
 
     try:
         corners = rg.load_corner_keypoints_csv(edited_path)
@@ -477,11 +486,11 @@ def load_manual_session_if_available(
                         break
             if c is None:
                 continue
-            _, _, center, normal = _point_center_and_normal(centerline_rows, c, role)
+            _, _, center, normal = _point_center_and_normal(active_centerline_rows, c, role)
             moved = np.array([float(row["x"]), float(row["y"])], dtype=np.float64)
             offset = float(np.dot(moved - center, normal))
             offset, _ = _clamp_point_offset(
-                centerline_rows, c, role,
+                active_centerline_rows, c, role,
                 drivable_mask, safety_mask, yaml_data,
                 offset,
             )
@@ -491,7 +500,7 @@ def load_manual_session_if_available(
 
     _refresh_corner_ids(corners)
     moved_keypoints = build_manual_moved_keypoints(
-        centerline_rows,
+        active_centerline_rows,
         corners,
         drivable_mask,
         safety_mask,
@@ -519,9 +528,10 @@ def load_manual_session_if_available(
         }
 
     print(f"Manual UI resume: restored {len(corners)} manual corners from the previous session.")
+    print(f"Manual UI resume: restored driving direction: {selected_direction}")
     if preview is not None:
         print(f"Manual UI resume: loaded existing raceline preview: {raceline_path}")
-    return corners, preview
+    return active_centerline_rows, corners, preview, selected_direction
 
 def show_manual_raceline_editor(
     img,
@@ -531,6 +541,7 @@ def show_manual_raceline_editor(
     output_dir,
     initial_corners=None,
     initial_preview=None,
+    initial_direction="normal",
 ):
     """
     Manual E/A/X raceline editor with explicit editing modes.
@@ -564,6 +575,11 @@ def show_manual_raceline_editor(
         "dragging": False,
         "preview": initial_preview,
         "preview_dirty": False if initial_preview is not None else True,
+        "selected_direction": (
+            str(initial_direction).lower()
+            if str(initial_direction).lower() in ("normal", "reverse")
+            else "normal"
+        ),
         "saved": False,
         "view_initialized": False,
     }
@@ -635,6 +651,7 @@ def show_manual_raceline_editor(
             "Manual raceline editor",
             "",
             f"Corners: {len(state['corners'])}",
+            f"Direction: {state['selected_direction'].upper()}",
             f"Mode: {mode_short()}",
             f"Safety margin: {rg.RACELINE_SAFETY_REGION_MARGIN_M:.2f} m",
             "",
@@ -703,6 +720,7 @@ def show_manual_raceline_editor(
         lines += [
             "",
             "Other controls:",
+            "  Flip Direction = reverse CSV driving order",
             "  Reset Lateral = selected offset 0",
             "  Delete/d = clear selected corner",
             "  Enter = Preview Raceline",
@@ -791,6 +809,7 @@ def show_manual_raceline_editor(
 
         ax.set_title(
             "Manual Raceline Generator\n"
+            f"Direction={state['selected_direction'].upper()} | "
             f"Mode={mode_short()} | Preview={'stale' if state['preview_dirty'] else 'current'}"
         )
         ax.set_xlabel("X (meters)")
@@ -1028,6 +1047,86 @@ def show_manual_raceline_editor(
         print("Manual UI: LATERAL MOVE. Drag along the shown line or use Left/Right; right-click to finish.")
         draw()
 
+    def flip_direction():
+        """
+        Flip the in-memory driving direction while preserving the manually
+        positioned geometry as closely as possible.
+
+        E/X swap roles because entrance and exit reverse with driving direction.
+        Signed lateral offsets also change sign because the left normal reverses.
+        The Phase 9 centerline CSV on disk is never modified.
+        """
+        set_mode(MODE_NORMAL, keep_selection=True)
+
+        selected_corner = None
+        selected_role = None
+        item = selected_item()
+        if item is not None:
+            _, selected_role, selected_corner = item
+
+        # Preserve each role's centerline-reference world point and signed
+        # offset before reversing the centerline order.
+        saved = []
+        for c in state["corners"]:
+            role_data = {}
+            for role in ROLE_ORDER:
+                _, row, _, _ = _point_center_and_normal(centerline_rows, c, role)
+                role_data[role] = {
+                    "center_xy": (float(row["x"]), float(row["y"])),
+                    "offset": float(c.get(_offset_key(role), 0.0)),
+                }
+            saved.append((c, role_data))
+
+        reversed_rows = rg.reverse_centerline_rows_for_raceline_editor(centerline_rows)
+        centerline_rows[:] = [dict(r) for r in reversed_rows]
+
+        # In the reversed driving direction:
+        #   new entrance = old exit
+        #   new apex     = old apex
+        #   new exit     = old entrance
+        # and +left/-right changes sign because yaw reverses by pi.
+        source_role_for_new = {"E": "X", "A": "A", "X": "E"}
+        for c, role_data in saved:
+            for new_role in ROLE_ORDER:
+                old_role = source_role_for_new[new_role]
+                ref_x, ref_y = role_data[old_role]["center_xy"]
+                new_idx = rg.nearest_centerline_index(centerline_rows, ref_x, ref_y)
+                _set_corner_role_index(
+                    c, new_role, new_idx, centerline_rows, preserve_offset=False
+                )
+                requested = -float(role_data[old_role]["offset"])
+                clamped, _ = _clamp_point_offset(
+                    centerline_rows, c, new_role,
+                    drivable_mask, safety_mask, yaml_data,
+                    requested,
+                )
+                c[_offset_key(new_role)] = clamped
+
+        _refresh_corner_ids(state["corners"])
+
+        # Keep the same physical selected point selected. E and X swap roles.
+        if selected_corner is not None:
+            new_selected_role = {"E": "X", "A": "A", "X": "E"}[selected_role]
+            state["selected"] = None
+            for ci, c in enumerate(state["corners"]):
+                if c is selected_corner:
+                    state["selected"] = (ci, new_selected_role)
+                    break
+
+        state["selected_direction"] = (
+            "reverse" if state["selected_direction"] == "normal" else "normal"
+        )
+
+        # A preview generated in the old direction is no longer current.
+        state["preview"] = None
+        mark_dirty()
+        print(
+            f"Manual UI: driving direction flipped to "
+            f"{state['selected_direction'].upper()}. "
+            "E/X roles and lateral offset signs were remapped."
+        )
+        draw()
+
     def reset_lateral():
         item = selected_item()
         if item is None:
@@ -1094,7 +1193,7 @@ def show_manual_raceline_editor(
             centerline_rows,
             state["corners"],
             state["preview"],
-            selected_direction="normal",
+            selected_direction=state["selected_direction"],
         )
 
         try:
@@ -1106,7 +1205,7 @@ def show_manual_raceline_editor(
                 state["preview"]["points"],
                 safety_mask,
                 os.path.join(output_dir, MANUAL_PREVIEW_PNG),
-                selected_direction="normal",
+                selected_direction=state["selected_direction"],
             )
             rg.plot_raceline_curvature(
                 state["preview"]["points"],
@@ -1128,26 +1227,28 @@ def show_manual_raceline_editor(
     fig.canvas.mpl_connect("key_press_event", on_key)
     fig.canvas.mpl_connect("scroll_event", on_scroll)
 
-    # Group labels and buttons: corner editing | point movement | raceline/output.
-    fig.text(0.175, 0.125, "Corner editing", ha="center", va="bottom", fontsize=9, weight="bold")
-    fig.text(0.535, 0.125, "Selected point movement", ha="center", va="bottom", fontsize=9, weight="bold")
-    fig.text(0.865, 0.125, "Raceline / output", ha="center", va="bottom", fontsize=9, weight="bold")
+    # Group labels and buttons: corner/direction | point movement | raceline/output.
+    fig.text(0.180, 0.125, "Corner / direction", ha="center", va="bottom", fontsize=9, weight="bold")
+    fig.text(0.555, 0.125, "Selected point movement", ha="center", va="bottom", fontsize=9, weight="bold")
+    fig.text(0.875, 0.125, "Raceline / output", ha="center", va="bottom", fontsize=9, weight="bold")
 
-    ax_add = plt.axes([0.030, 0.050, 0.090, 0.055])
-    ax_clear = plt.axes([0.125, 0.050, 0.095, 0.055])
-    ax_clearall = plt.axes([0.225, 0.050, 0.085, 0.055])
+    ax_add = plt.axes([0.020, 0.050, 0.075, 0.055])
+    ax_clear = plt.axes([0.100, 0.050, 0.080, 0.055])
+    ax_clearall = plt.axes([0.185, 0.050, 0.070, 0.055])
+    ax_flip = plt.axes([0.260, 0.050, 0.100, 0.055])
 
-    ax_centerline = plt.axes([0.340, 0.050, 0.145, 0.055])
-    ax_lateral = plt.axes([0.490, 0.050, 0.105, 0.055])
-    ax_reset = plt.axes([0.600, 0.050, 0.135, 0.055])
+    ax_centerline = plt.axes([0.375, 0.050, 0.145, 0.055])
+    ax_lateral = plt.axes([0.525, 0.050, 0.105, 0.055])
+    ax_reset = plt.axes([0.635, 0.050, 0.120, 0.055])
 
-    ax_preview = plt.axes([0.760, 0.050, 0.120, 0.055])
-    ax_save = plt.axes([0.885, 0.050, 0.050, 0.055])
-    ax_cancel = plt.axes([0.940, 0.050, 0.055, 0.055])
+    ax_preview = plt.axes([0.775, 0.050, 0.115, 0.055])
+    ax_save = plt.axes([0.895, 0.050, 0.045, 0.055])
+    ax_cancel = plt.axes([0.945, 0.050, 0.050, 0.055])
 
     b_add = Button(ax_add, "Add Corner")
     b_clear = Button(ax_clear, "Clear Corner")
     b_clearall = Button(ax_clearall, "Clear All")
+    b_flip = Button(ax_flip, "Flip Direction")
     b_centerline = Button(ax_centerline, "Centerline Ref Move")
     b_lateral = Button(ax_lateral, "Lateral Move")
     b_reset = Button(ax_reset, "Reset Lateral")
@@ -1158,6 +1259,7 @@ def show_manual_raceline_editor(
     b_add.on_clicked(lambda event: toggle_add())
     b_clear.on_clicked(lambda event: clear_selected_corner())
     b_clearall.on_clicked(lambda event: clear_all())
+    b_flip.on_clicked(lambda event: flip_direction())
     b_centerline.on_clicked(lambda event: start_centerline_move())
     b_lateral.on_clicked(lambda event: start_lateral_move())
     b_reset.on_clicked(lambda event: reset_lateral())
@@ -1165,7 +1267,7 @@ def show_manual_raceline_editor(
     b_save.on_clicked(lambda event: save_and_close())
     b_cancel.on_clicked(lambda event: cancel())
     state["buttons"] = [
-        b_add, b_clear, b_clearall,
+        b_add, b_clear, b_clearall, b_flip,
         b_centerline, b_lateral, b_reset,
         b_preview, b_save, b_cancel,
     ]
@@ -1173,6 +1275,8 @@ def show_manual_raceline_editor(
     print("Manual raceline editor")
     print(f"  Centerline points:       {len(centerline_rows)}")
     print(f"  Raceline safety margin:  {rg.RACELINE_SAFETY_REGION_MARGIN_M:.3f} m ({safety_radius_px} px erosion)")
+    print(f"  Driving direction:       {state['selected_direction'].upper()} (relative to centerline CSV order)")
+    print("  Flip Direction reverses the in-memory centerline; the Phase 9 CSV is unchanged.")
     print("  NORMAL: click E/A/X to select only; no accidental point movement.")
     print("  Centerline Ref Move: drag selected point or Up/Down; lateral offset is preserved.")
     print("  Lateral Move: drag along local normal or Left/Right; Reset Lateral returns offset to zero.")
@@ -1241,6 +1345,7 @@ def main():
 
     initial_corners = []
     initial_preview = None
+    initial_direction = "normal"
     if resume_existing:
         resumed = load_manual_session_if_available(
             rg.OUTPUT_DIR,
@@ -1251,7 +1356,7 @@ def main():
             meta,
         )
         if resumed is not None:
-            initial_corners, initial_preview = resumed
+            centerline_rows, initial_corners, initial_preview, initial_direction = resumed
         else:
             print("Manual UI resume: no compatible recent manual session found; starting fresh.")
     else:
@@ -1265,6 +1370,7 @@ def main():
         rg.OUTPUT_DIR,
         initial_corners=initial_corners,
         initial_preview=initial_preview,
+        initial_direction=initial_direction,
     )
 
     if saved:

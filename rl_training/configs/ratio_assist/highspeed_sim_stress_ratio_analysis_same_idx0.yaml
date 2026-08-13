@@ -69,8 +69,8 @@ termination:
 map:
   map_path: ../f1tenth_gym_ros/maps/Spielberg_map
   map_ext: .png
-  centerline_csv: ../centerline_tools/centerline_output/raceline_points_smooth.csv
-  corner_csv: ../centerline_tools/centerline_output/corner_key_points_edited.csv
+  centerline_csv: ../centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
+  corner_csv: ../centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/corner_key_points_edited.csv
 gate:
   enable_rl_gate: false
   rl_gate_enable_cte: 0.25

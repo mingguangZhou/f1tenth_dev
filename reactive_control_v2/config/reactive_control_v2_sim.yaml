@@ -56,7 +56,7 @@ upper_corridor_follower:
     # ADVANCED: smaller slice/sample steps cost more CPU.
     # ========================================================
     forward_start_m: 0.30
-    forward_max_m: 6.0
+    forward_max_m: 3.0
     forward_slice_step_m: 0.20
     lateral_limit_m: 2.0
     lateral_sample_step_m: 0.05

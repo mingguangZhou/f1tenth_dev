@@ -24,6 +24,9 @@ INFLATION_RADIUS_M = 0.10
 
 # Phase 5
 SPUR_DILATION_RADIUS = 1
+# Conservative retry used only if primary spur-mask dilation opens the loop.
+# 0 removes only the detected endpoint-touching spur segments themselves.
+SPUR_FALLBACK_DILATION_RADIUS = 0
 
 # Phase 8
 RESAMPLE_SPACING_M = 0.05
@@ -1079,7 +1082,8 @@ def save_metadata_yaml(
     region_info,
     raw_loop,
     smooth_loop,
-    centerline_rows
+    centerline_rows,
+    spur_dilation_radius_used=None
 ):
     """
     Save pipeline metadata for reproducibility and later ROS integration.
@@ -1099,6 +1103,10 @@ def save_metadata_yaml(
         "pipeline_parameters": {
             "inflation_radius_m": float(INFLATION_RADIUS_M),
             "spur_dilation_radius": int(SPUR_DILATION_RADIUS),
+            "spur_fallback_dilation_radius": int(SPUR_FALLBACK_DILATION_RADIUS),
+            "spur_dilation_radius_used": int(
+                SPUR_DILATION_RADIUS if spur_dilation_radius_used is None else spur_dilation_radius_used
+            ),
             "resample_spacing_m": float(RESAMPLE_SPACING_M),
             "smoothing_window": int(SMOOTHING_WINDOW),
             "smoothing_passes": int(SMOOTHING_PASSES),
@@ -1280,17 +1288,72 @@ def main():
             f"touches_endpoint={seg['touches_endpoint']}"
         )
 
-    pruned = remove_spurs(skeleton, labels, segments, SPUR_DILATION_RADIUS)
+    # Primary spur pruning keeps the existing behavior.  On some scans a
+    # one-pixel dilation of the spur mask can also erase a genuine loop pixel
+    # near the branch attachment and turn a closed loop into an open chain.
+    # In that specific case, retry conservatively with dilation=0 before
+    # declaring the map invalid.
+    used_spur_dilation_radius = int(SPUR_DILATION_RADIUS)
+    pruned = remove_spurs(skeleton, labels, segments, used_spur_dilation_radius)
     main_loop = keep_largest_component(pruned)
+    loop_metrics = validate_main_loop(main_loop)
+
+    print("Main loop primary pruning:")
+    print(f"  Spur dilation:        {used_spur_dilation_radius}")
+    print(f"  Connected components: {loop_metrics['connected_components']}")
+    print(f"  Endpoint count:       {loop_metrics['endpoint_count']}")
+    print(f"  Junction count:       {loop_metrics['junction_count']}")
+    print(f"  Loop pixels:          {loop_metrics['loop_pixels']}")
+
+    primary_closed = (
+        loop_metrics["connected_components"] == 1
+        and loop_metrics["endpoint_count"] == 0
+    )
+
+    if not primary_closed and int(SPUR_FALLBACK_DILATION_RADIUS) != used_spur_dilation_radius:
+        print("Primary spur pruning did not preserve a closed loop.")
+        print(
+            "Retrying conservative spur pruning with "
+            f"dilation={int(SPUR_FALLBACK_DILATION_RADIUS)}..."
+        )
+
+        fallback_radius = int(SPUR_FALLBACK_DILATION_RADIUS)
+        fallback_pruned = remove_spurs(skeleton, labels, segments, fallback_radius)
+        fallback_loop = keep_largest_component(fallback_pruned)
+        fallback_metrics = validate_main_loop(fallback_loop)
+
+        print("Main loop fallback pruning:")
+        print(f"  Spur dilation:        {fallback_radius}")
+        print(f"  Connected components: {fallback_metrics['connected_components']}")
+        print(f"  Endpoint count:       {fallback_metrics['endpoint_count']}")
+        print(f"  Junction count:       {fallback_metrics['junction_count']}")
+        print(f"  Loop pixels:          {fallback_metrics['loop_pixels']}")
+
+        fallback_closed = (
+            fallback_metrics["connected_components"] == 1
+            and fallback_metrics["endpoint_count"] == 0
+        )
+
+        if fallback_closed:
+            print("Using conservative spur-pruning fallback.")
+            used_spur_dilation_radius = fallback_radius
+            pruned = fallback_pruned
+            main_loop = fallback_loop
+            loop_metrics = fallback_metrics
+        else:
+            print("Conservative spur-pruning fallback also failed to produce a closed loop.")
+
     print(f"Main loop pixels: {int(np.sum(main_loop))}")
 
-    # Validation before traversal
-    loop_metrics = validate_main_loop(main_loop)
+    # Final structural validation before traversal.  Junctions are warned but
+    # not rejected here because the existing ordered-loop validation below
+    # checks closure, coverage and traversal step size explicitly.
     print("Main loop validation:")
     print(f"  Connected components: {loop_metrics['connected_components']}")
     print(f"  Endpoint count:       {loop_metrics['endpoint_count']}")
     print(f"  Junction count:       {loop_metrics['junction_count']}")
     print(f"  Loop pixels:          {loop_metrics['loop_pixels']}")
+    print(f"  Spur dilation used:   {used_spur_dilation_radius}")
 
     if loop_metrics["connected_components"] != 1:
         raise RuntimeError("Main loop validation failed: expected exactly 1 connected component.")
@@ -1397,7 +1460,8 @@ def main():
         region_info=region_info,
         raw_loop=world_loop_raw,
         smooth_loop=world_loop_final_xy,
-        centerline_rows=centerline_rows
+        centerline_rows=centerline_rows,
+        spur_dilation_radius_used=used_spur_dilation_radius
     )
 
     print("Phase 9: final export package")

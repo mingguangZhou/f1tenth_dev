@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Phase 1-9 centerline generation, then a fresh manual raceline editor."""
+"""Run Phase 1-9 centerline generation, then the manual raceline editor."""
 
 import subprocess
 import sys
@@ -20,10 +20,10 @@ def main():
     map_path = sys.argv[1]
     yaml_path = sys.argv[2]
 
-    # A full run is normally used for a new/regenerated map, so explicitly
-    # start the manual editor fresh. Running manual_raceline_generator.py by
-    # itself resumes the most recent compatible manual session by default.
     run([sys.executable, str(here / "centerline_reference_generator.py"), map_path, yaml_path])
+    # A full run has just regenerated Phase 9 centerline data, so always start
+    # a fresh manual-raceline session. Standalone manual_raceline_generator.py
+    # still resumes the last compatible manual session by default.
     run([sys.executable, str(here / "manual_raceline_generator.py"), map_path, yaml_path, "--fresh"])
 
 
