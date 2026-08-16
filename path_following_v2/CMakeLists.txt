@@ -25,6 +25,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 add_executable(path_following_v2_node src/path_following_v2_node.cpp)
 add_executable(path_generator_node src/path_generator_node.cpp)
 add_executable(local_trajectory_planner_node src/local_trajectory_planner_node.cpp)
+target_include_directories(local_trajectory_planner_node PRIVATE include)
 
 ament_target_dependencies(path_following_v2_node
   rclcpp
@@ -74,8 +75,30 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY include/
+  DESTINATION include
+)
+
 install(FILES README.md
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(lightweight_frenet_lattice_test
+    test/lightweight_frenet_lattice_test.cpp
+  )
+  target_include_directories(lightweight_frenet_lattice_test PRIVATE include)
+
+  ament_add_gtest(bounded_corridor_smoother_test
+    test/bounded_corridor_smoother_test.cpp
+  )
+  target_include_directories(bounded_corridor_smoother_test PRIVATE include)
+
+  ament_add_gtest(candidate_selection_test
+    test/candidate_selection_test.cpp
+  )
+  target_include_directories(candidate_selection_test PRIVATE include)
+endif()
 
 ament_package()

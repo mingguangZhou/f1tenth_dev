@@ -175,8 +175,9 @@ need a compatibility-breaking change.
 | State | Meaning |
 |---|---|
 | `READY`, `trajectory_mode=RACELINE` | Raw raceline is clear; unchanged final path and normal cap published. |
-| `READY`, `trajectory_mode=AVOIDING` | Executing a persistent obstacle-passing trajectory. |
-| `READY`, `trajectory_mode=REJOINING` | Executing its stored return to the raceline. |
+| `READY`, `trajectory_mode=AVOIDANCE_DEPARTING` | Moving into the persistent obstacle-passing corridor. |
+| `READY`, `trajectory_mode=AVOIDANCE_PASSING` | Holding the selected side through the pass anchor. |
+| `READY`, `trajectory_mode=AVOIDANCE_RETURNING` | Executing the stored, aligned return to the raceline. |
 | `READY`, `trajectory_mode=RECOVERING_TO_RACELINE` | Converging from lateral displacement. |
 | `READY`, `trajectory_mode=REPLAN_PENDING` | Slowed while a material update/failure is confirmed. |
 | `NO_SAFE_PATH_CONFIRMED` | Repeated fresh scans found no safe local trajectory. |

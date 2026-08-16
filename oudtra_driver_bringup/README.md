@@ -26,7 +26,10 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
 Both launches preserve the direction stored in the CSV by default
-(`raceline_direction:=csv`). To traverse the selected raceline in reverse:
+(`raceline_direction:=csv`). The centerline uses
+`centerline_direction:=auto`, which matches its local direction to the
+published raceline even when the two generated CSV files have opposite point
+order. To traverse the selected raceline in reverse:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
@@ -77,9 +80,10 @@ ros2 topic info /drive --verbose
 ```
 
 The actually authorized local trajectory marker is dark blue during ordinary
-raceline tracking, light blue while `AVOIDING`, `REJOINING`,
-`RECOVERING_TO_RACELINE`, or `REPLAN_PENDING` is being executed, and orange in
-Reactive mode. Inspect `plan_id` in `/path_following_v2/path_status`: it should
+raceline tracking, light blue while `AVOIDANCE_DEPARTING`,
+`AVOIDANCE_PASSING`, `AVOIDANCE_RETURNING`, `RECOVERING_TO_RACELINE`, or
+`REPLAN_PENDING` is being executed, and orange in Reactive mode. Inspect
+`plan_id` in `/path_following_v2/path_status`: it should
 remain unchanged while one map-anchored plan is trimmed and executed, and only
 change after a material replan request.
 

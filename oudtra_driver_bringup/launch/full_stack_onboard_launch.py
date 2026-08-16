@@ -44,6 +44,20 @@ def generate_launch_description():
             description="Raceline traversal direction: csv/normal or reverse.",
         ),
         DeclareLaunchArgument(
+            "centerline_csv_path",
+            default_value=os.path.join(
+                centerline_share,
+                "centerline_output",
+                "centerline_points_smooth.csv",
+            ),
+            description="Centerline CSV used as the lightweight planning frame.",
+        ),
+        DeclareLaunchArgument(
+            "centerline_direction",
+            default_value="auto",
+            description="Centerline traversal: auto-align, csv/normal, or reverse.",
+        ),
+        DeclareLaunchArgument(
             "path_config",
             default_value=os.path.join(
                 path_share, "config", "path_following_v2.yaml"
@@ -128,7 +142,17 @@ def generate_launch_description():
             executable="local_trajectory_planner_node",
             name="local_trajectory_planner",
             output="screen",
-            parameters=[path_config],
+            parameters=[
+                path_config,
+                {
+                    "centerline_csv_path": LaunchConfiguration(
+                        "centerline_csv_path"
+                    ),
+                    "centerline_direction": LaunchConfiguration(
+                        "centerline_direction"
+                    ),
+                },
+            ],
             arguments=[
                 "--ros-args",
                 "--log-level",

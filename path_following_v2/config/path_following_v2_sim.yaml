@@ -37,11 +37,11 @@ path_generator:
     # --------------------------------------------------------
     # LOCAL PATH WINDOW
     # Physical length is primary. Point count is only a computation ceiling.
-    # Ten metres normally need about 334 points at the current ~0.03 m spacing.
+    # Fourteen metres normally need about 467 points at the current ~0.03 m spacing.
     # The legacy point-count fallback remains internal and is used only if the
     # metric target is set <= 0.
     # --------------------------------------------------------
-    local_path_target_length_m: 10.0
+    local_path_target_length_m: 14.0
     local_path_max_points: 600
 
     # --------------------------------------------------------
@@ -81,15 +81,17 @@ local_trajectory_planner:
     # the minimum smooth return would not fit in the available local path.
     # --------------------------------------------------------
     scan_range_cap_m: 10.0
-    planning_distance_m: 10.0
+    planning_distance_m: 14.0
 
     # --------------------------------------------------------
     # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
-    # Effective half-width = vehicle_width / 2 + lateral margin = 0.24 m.
+    # Physical half-width is 0.24 m. Candidate planning adds another 0.06 m
+    # reserve so normal scan variation does not immediately block the plan.
     # blocked_min_points and beam-gap settings are intentionally count based.
     # --------------------------------------------------------
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
+    planning_clearance_reserve_m: 0.06
     min_valid_beam_ratio: 0.35
     blocked_min_points: 3
     cluster_max_beam_gap: 2
@@ -103,9 +105,10 @@ local_trajectory_planner:
     # Advanced: candidate count remains discrete to bound computation.
     # --------------------------------------------------------
     detour_longitudinal_buffer_m: 0.20
+    detour_post_obstacle_hold_m: 0.80
     detour_extra_clearance_m: 0.0
-    detour_return_min_length_m: 1.50
-    detour_return_max_length_m: 5.00
+    detour_return_min_length_m: 4.00
+    detour_return_max_length_m: 6.00
     candidate_lateral_step_m: 0.08
     max_candidates_per_side: 6
     max_lateral_shift_m: 0.80
@@ -114,10 +117,51 @@ local_trajectory_planner:
     curvature_safety_factor: 0.95
 
     # --------------------------------------------------------
+    # LIGHTWEIGHT CENTERLINE-FRAME LATTICE
+    # The launch file supplies the centerline CSV and direction. Search is
+    # discrete and explicitly bounded; the existing geometric validator is
+    # still the final authority. Legacy curves are allowed only while opening
+    # a new maneuver, never during a latched-side replan.
+    # --------------------------------------------------------
+    centerline_frame: "map"
+    centerline_closed_loop: true
+    require_centerline_reference: true
+    enable_frenet_lattice_planner: true
+    lattice_fallback_to_legacy_planner: true
+    lattice_station_step_m: 0.30
+    lattice_lateral_step_m: 0.05
+    lattice_max_abs_slope: 0.55
+    lattice_beam_width: 90
+    lattice_max_final_candidates: 4
+    lattice_max_compute_time_ms: 8.0
+    lattice_reference_weight: 4.0
+    lattice_slope_weight: 1.0
+    lattice_curvature_weight: 8.0
+    lattice_curvature_rate_weight: 5.0
+    lattice_continuity_weight: 12.0
+    lattice_clearance_weight: 2.0
+    lattice_preferred_clearance_m: 0.45
+    lattice_terminal_distance_m: 1.0
+    lattice_terminal_weight_multiplier: 5.0
+    # Follow the raceline exactly for this final distance before handing the
+    # stored plan back to the continuously refreshed raceline path.
+    lattice_rejoin_alignment_length_m: 1.20
+    # Prefer a materially wider passage. Objective cost breaks the tie only
+    # when the two bottleneck clearances differ by no more than this amount.
+    side_clearance_tie_m: 0.03
+    corridor_smoothing_iterations: 12
+    corridor_smoothing_relaxation: 0.85
+    corridor_reference_weight: 1.0
+    corridor_continuity_weight: 12.0
+    corridor_slope_weight: 0.5
+    corridor_curvature_weight: 12.0
+    corridor_curvature_rate_weight: 5.0
+
+    # --------------------------------------------------------
     # TEMPORARY LOCAL-TRAJECTORY SPEED CAPS
     # Ordinary raceline cap = shared command_speed_max_mps.
     # --------------------------------------------------------
-    avoidance_speed_cap_mps: 1.5
+    avoidance_speed_cap_mps: 1.2
     recovery_speed_cap_mps: 1.5
     replan_pending_speed_cap_mps: 1.0
 
@@ -133,15 +177,9 @@ local_trajectory_planner:
     minimum_plan_hold_sec: 0.50
     maximum_plan_hold_sec: 12.0
     plan_deviation_replan_m: 0.35
-    side_switch_clearance_advantage_m: 0.10
-    side_commit_obstacle_distance_m: 3.0
-    side_commit_lateral_progress_m: 0.08
-    precommit_max_sec: 0.75
-    precommit_refine_interval_scans: 2
-    side_switch_confirmation_evaluations: 2
     rejoin_confirmation_scans: 4
-    active_path_blocked_confirmation_scans: 3
-    no_safe_path_confirmation_scans: 3
+    active_path_blocked_confirmation_scans: 4
+    no_safe_path_confirmation_scans: 5
     enable_detour_planning: true
     publish_markers: true
 

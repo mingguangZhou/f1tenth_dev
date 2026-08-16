@@ -510,6 +510,19 @@ private:
     return "STOP";
   }
 
+  bool localReplanExecuting(const std::string & trajectory_mode) const
+  {
+    // Accept the original coarse mode names and the planner's newer explicit
+    // departure/passing/returning phases. Keeping this predicate centralized
+    // prevents safety behavior and RViz color from classifying the same path
+    // differently.
+    return trajectory_mode == "AVOIDING" ||
+           trajectory_mode == "REJOINING" ||
+           trajectory_mode.rfind("AVOIDANCE_", 0) == 0 ||
+           trajectory_mode == "RECOVERING_TO_RACELINE" ||
+           trajectory_mode == "REPLAN_PENDING";
+  }
+
   std::string racelineUnavailableReason(
     const Snapshot & input, const rclcpp::Time & current_time) const
   {
@@ -569,11 +582,8 @@ private:
     }
     if (input.guard.state == "BLOCKED") {
       const bool critical_guard = input.guard.reason.find("critical") != std::string::npos;
-      const bool local_replan_executing =
-        input.path.trajectory_mode == "AVOIDING" ||
-        input.path.trajectory_mode == "REJOINING" ||
-        input.path.trajectory_mode == "RECOVERING_TO_RACELINE" ||
-        input.path.trajectory_mode == "REPLAN_PENDING";
+      const bool local_replan_executing = localReplanExecuting(
+        input.path.trajectory_mode);
       if (local_replan_executing && !critical_guard && !reactive_latched_) {
         // The local planner applies the same widened-band test and confirms a
         // blocked active plan over fresh scans.  Let it slow/replan instead of
@@ -872,10 +882,7 @@ private:
     marker.scale.x = ultimate_trajectory_line_width_m_;
     marker.color.a = 1.0F;
     const bool show_local_replan = show_raceline &&
-      (input.path.trajectory_mode == "AVOIDING" ||
-      input.path.trajectory_mode == "REJOINING" ||
-      input.path.trajectory_mode == "RECOVERING_TO_RACELINE" ||
-      input.path.trajectory_mode == "REPLAN_PENDING");
+      localReplanExecuting(input.path.trajectory_mode);
     if (show_local_replan) {
       // Light blue means this is the localization-based local replan that is
       // actually authorized through the lower controller right now.

@@ -51,7 +51,8 @@ The arbitrator publishes a single RViz `visualization_msgs/msg/Marker` on:
 
 - dark blue: the raceline local path while arbitration is `RACELINE` and the lower
   controller confirms `NOMINAL` for that mode;
-- light blue: an `AVOIDING`, `REJOINING`, `RECOVERING_TO_RACELINE`, or
+- light blue: any active avoidance phase (`AVOIDANCE_DEPARTING`,
+  `AVOIDANCE_PASSING`, or `AVOIDANCE_RETURNING`), a recovery trajectory, or a
   `REPLAN_PENDING` trajectory actually authorized under the same conditions;
 - orange: the upper corridor path while arbitration is `REACTIVE` and the lower
   controller confirms `NOMINAL` for that mode;
