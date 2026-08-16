@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+
+# ROS Foxy's generated setup scripts probe optional unset variables, so this
+# command intentionally uses errexit/pipefail without Bash nounset.
+set -eo pipefail
+
+SIM_PACKAGES=(
+  f1tenth_gym_ros
+)
+
+AUTO_PACKAGES=(
+  particle_filter
+  centerline_tools
+  path_following_v2
+  reactive_control_v2
+  drive_arbitration_v2
+  rl_speed_inference
+  oudtra_driver_bringup
+)
+
+usage() {
+  cat <<'EOF'
+Usage: f1 <command>
+
+Build:
+  build sim       Install dependencies and build simulator package.
+  build auto      Install dependencies and build autonomy packages.
+  build all       Install dependencies and build both groups.
+
+Run:
+  sim [ARGS...]   Launch simulator + RViz.
+  auto [ARGS...]  Launch autonomy stack only.
+
+Inspect:
+  status          List ROS nodes and launch processes.
+  help            Show this help.
+
+Each run command accepts normal ROS launch arguments. Press Ctrl+C to stop a
+launch and return to the same container shell. Rendering mode comes from the
+host-side dk.sh command: GPU by default, or --cpu for software/noVNC.
+EOF
+}
+
+require_container() {
+  if [[ ! -d /sim_ws || ! -f /opt/ros/foxy/setup.bash ]]; then
+    echo "The f1 command must be run inside the F1TENTH ROS container." >&2
+    echo "Enter it from the host with: ./dk.sh start" >&2
+    exit 1
+  fi
+}
+
+source_ros() {
+  cd /sim_ws
+  source /opt/ros/foxy/setup.bash
+}
+
+source_workspace() {
+  source_ros
+  if [[ ! -f /sim_ws/install/local_setup.bash ]]; then
+    echo "The ROS workspace has not been built yet." >&2
+    echo "Run one or both of: f1 build sim, f1 build auto" >&2
+    exit 1
+  fi
+  source /sim_ws/install/local_setup.bash
+}
+
+group_packages() {
+  case "$1" in
+    sim)
+      printf '%s\n' "${SIM_PACKAGES[@]}"
+      ;;
+    auto)
+      printf '%s\n' "${AUTO_PACKAGES[@]}"
+      ;;
+    all)
+      printf '%s\n' "${SIM_PACKAGES[@]}" "${AUTO_PACKAGES[@]}"
+      ;;
+    *)
+      echo "Unknown build group: $1 (expected sim, auto, or all)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+build_group() {
+  local group="$1"
+  local -a packages=()
+  local -a package_paths=()
+  local package
+
+  while IFS= read -r package; do
+    packages+=("${package}")
+    package_paths+=("src/${package}")
+  done < <(group_packages "${group}")
+
+  source_ros
+
+  echo "Installing resolvable ROS dependencies for: ${packages[*]}"
+  rosdep install -q -y -r \
+    --from-paths "${package_paths[@]}" \
+    --ignore-src \
+    --skip-keys "ament_python f1tenth_gym_ros"
+
+  echo "Building: ${packages[*]}"
+  colcon build --symlink-install --packages-select "${packages[@]}"
+
+  echo
+  echo "Build complete. Run with: f1 ${group}"
+}
+
+run_sim() {
+  source_workspace
+  configure_rendering
+  ros2 launch f1tenth_gym_ros gym_bridge_launch.py "$@"
+}
+
+run_auto() {
+  source_workspace
+  ros2 launch oudtra_driver_bringup full_stack_sim_launch.py "$@"
+}
+
+configure_rendering() {
+  case "${F1TENTH_RENDER_MODE:-gpu}" in
+    gpu)
+      unset LIBGL_ALWAYS_SOFTWARE
+      ;;
+    cpu)
+      export LIBGL_ALWAYS_SOFTWARE=1
+      ;;
+    *)
+      echo "Unknown F1TENTH_RENDER_MODE: ${F1TENTH_RENDER_MODE}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+show_status() {
+  source_workspace
+  echo "ROS nodes:"
+  ros2 node list 2>/dev/null || true
+  echo
+  echo "ROS launch processes:"
+  pgrep -af 'ros2 launch' || true
+}
+
+main() {
+  require_container
+
+  case "${1:-help}" in
+    build)
+      build_group "${2:-all}"
+      ;;
+    sim)
+      shift
+      run_sim "$@"
+      ;;
+    auto)
+      shift
+      run_auto "$@"
+      ;;
+    status | ps)
+      show_status
+      ;;
+    help | -h | --help)
+      usage
+      ;;
+    *)
+      echo "Unknown command: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

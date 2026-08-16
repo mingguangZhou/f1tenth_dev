@@ -1,0 +1,14 @@
+services:
+  sim:
+    gpus: all
+    environment:
+      DISPLAY: ${DISPLAY}
+      F1TENTH_RENDER_MODE: gpu
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics,display
+      QT_X11_NO_MITSHM: "1"
+      __NV_PRIME_RENDER_OFFLOAD: "1"
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
+      __VK_LAYER_NV_optimus: NVIDIA_only
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw

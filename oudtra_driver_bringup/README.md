@@ -2,6 +2,17 @@
 
 Master launch package for the integrated raceline-to-Reactive V2 stack.
 
+With the atomic development commands, start/enter Docker from the repository
+root and launch the stack inside the container:
+
+```bash
+./dk.sh start
+f1 build auto
+f1 auto
+```
+
+Run `f1 sim` in a separate container terminal for the simulator and RViz.
+
 Onboard:
 
 ```bash

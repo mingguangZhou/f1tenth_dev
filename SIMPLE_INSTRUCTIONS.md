@@ -1,8 +1,64 @@
 # SIMPLE_INSTRUCTIONS.md
 
-Last Edit: 2026.06.14
+Last Edit: 2026.08.17
 
 These are the simple daily-use instructions for the current RoboRacer/F1TENTH development setup.
+
+## Recommended atomic workflow
+
+Docker lifecycle is managed from the host with `dk.sh`. ROS packages and
+launches are managed inside the container with `f1`. NVIDIA GPU rendering with
+a host X11 RViz window is the default.
+
+Build the Docker image only when Docker dependencies change:
+
+```bash
+./dk.sh image
+```
+
+Start Docker and enter the ROS container:
+
+```bash
+./dk.sh start
+```
+
+For CPU software rendering and browser/noVNC instead:
+
+```bash
+./dk.sh start --cpu
+```
+
+Build each ROS group independently inside the container:
+
+```bash
+f1 build sim
+f1 build auto
+```
+
+Run the simulator and RViz in the first container terminal:
+
+```bash
+f1 sim
+```
+
+Open another host terminal, enter the same container, and run autonomy:
+
+```bash
+./dk.sh enter
+f1 auto
+```
+
+Press `Ctrl+C` in either terminal to stop that ROS launch and remain inside the
+container. In GPU mode RViz is a host window. In `--cpu` mode, open
+`http://localhost:8080/vnc.html` for RViz. Useful host commands:
+
+```bash
+./dk.sh up       # Start Docker in default GPU mode without entering it.
+./dk.sh up --cpu # Start CPU/noVNC mode without entering it.
+./dk.sh enter    # Open another shell in the running container.
+./dk.sh status   # Inspect containers and ROS launches.
+./dk.sh stop     # Stop containers but preserve ROS build volumes.
+```
 
 The expected local checkout is:
 

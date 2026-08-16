@@ -14,11 +14,12 @@
 # Enter:
 #   docker exec -it f1tenth_gym_ros_loc /bin/bash
 
-version: "3"
-
 services:
   sim:
     image: f1tenth_gym_ros_localization_ready:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: f1tenth_gym_ros_loc
     volumes:
       - .:/sim_ws/src/f1tenth_gym_ros
@@ -36,9 +37,14 @@ services:
       - ../oudtra_driver_bringup:/sim_ws/src/oudtra_driver_bringup
       - ../rl_training:/sim_ws/src/rl_training
       - ../rl_speed_inference:/sim_ws/src/rl_speed_inference
+      - ../f1:/usr/local/bin/f1:ro
       - ./install_localization_env.sh:/sim_ws/install_localization_env.sh
+      - f1tenth_build:/sim_ws/build
+      - f1tenth_install:/sim_ws/install
+      - f1tenth_log:/sim_ws/log
     environment:
       - DISPLAY=novnc:0.0
+      - F1TENTH_RENDER_MODE=cpu
     networks:
       - x11
     working_dir: /sim_ws
@@ -61,3 +67,8 @@ services:
 
 networks:
   x11:
+
+volumes:
+  f1tenth_build:
+  f1tenth_install:
+  f1tenth_log:

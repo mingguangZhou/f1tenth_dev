@@ -1,6 +1,55 @@
 # F1TENTH gym environment ROS2 communication bridge
 This is a containerized ROS communication bridge for the F1TENTH gym environment that turns it into a simulation in ROS2.
 
+## Atomic Docker, simulator, and autonomy workflow
+
+The development commands deliberately separate container lifecycle from ROS
+builds and launches. GPU rendering through NVIDIA and host X11 is the default.
+Build the image when Docker dependencies change, then start and enter the
+development container:
+
+```bash
+./dk.sh image
+./dk.sh start
+```
+
+Inside the container, build each ROS group independently:
+
+```bash
+f1 build sim
+f1 build auto
+```
+
+Use one container terminal for the simulator and RViz:
+
+```bash
+f1 sim
+```
+
+Use a second host terminal to enter the same container and launch autonomy:
+
+```bash
+./dk.sh enter
+f1 auto
+```
+
+In default GPU mode, RViz opens as a normal host X11 window. To use CPU
+software rendering in a browser instead, add `--cpu` before or after the
+Docker command:
+
+```bash
+./dk.sh start --cpu
+```
+
+Then open [http://localhost:8080/vnc.html](http://localhost:8080/vnc.html).
+`--gpu` is also accepted explicitly, but is not required. Press `Ctrl+C` to
+stop either ROS launch and return to that container shell. Exiting a shell
+leaves Docker running. Stop the containers explicitly from the host with:
+
+```bash
+./dk.sh stop
+```
+
 ## Without an NVIDIA gpu:
 
 **Install the following dependencies:**
