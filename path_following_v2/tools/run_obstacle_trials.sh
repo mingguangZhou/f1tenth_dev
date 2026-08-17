@@ -3,7 +3,7 @@
 # Run repeatable Spielberg obstacle trials while keeping the simulator alive.
 set -eo pipefail
 
-LOCK_FILE="/tmp/f1tenth_obstacle_trials.lock"
+LOCK_FILE="/tmp/f1tenth_runtime_trials.lock"
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
   echo "Another obstacle trial run is already active (${LOCK_FILE})." >&2

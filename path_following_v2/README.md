@@ -518,6 +518,18 @@ state-change JSONL, and JSON summary for each trial. The summary reports side
 choice, arbitration/failure counts, planning-margin versus physical-blockage
 counters, and speed statistics for every planner mode.
 
+To verify complete laps rather than a single obstacle approach, run:
+
+```bash
+/sim_ws/src/path_following_v2/tools/run_multi_lap_test.sh \
+  --laps 3 --timeout 600
+```
+
+This resets the car to the configured Spielberg start, unwraps progress around
+the closed active raceline, records cross-track error and all existing planner,
+guard, arbitrator, Reactive, scan, command, and safety diagnostics, and exits
+with failure if the requested lap count is not completed before the timeout.
+
 First confirm `plan_id` stays constant through `AVOIDANCE_DEPARTING`,
 `AVOIDANCE_PASSING`, and `AVOIDANCE_RETURNING`, the
 stored modified section advances without changing shape, the fresh raceline

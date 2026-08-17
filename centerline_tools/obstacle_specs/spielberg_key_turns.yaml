@@ -1,0 +1,60 @@
+# Reproducible Spielberg obstacle set in lap order.
+#
+# Four entries retain existing obstacle locations. Two are placed on the side
+# occupied by the active raceline. Five additional entries cover major turns.
+# Every placement must pass the boundary-clearance checks and block the active
+# raceline's 0.24 m vehicle envelope.
+obstacles:
+  - label: key_turn_northwest_hairpin
+    centerline_index: 140
+    side: left
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: key_turn_south_hairpin
+    centerline_index: 1629
+    side: left
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: retained_north_entry
+    centerline_index: 3003
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: retained_north_straight
+    centerline_index: 3449
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: retained_northwest_straight
+    centerline_index: 3967
+    side: left
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: key_turn_west_chicane_entry
+    centerline_index: 4419
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: retained_west_straight
+    centerline_index: 4661
+    side: left
+    requested_gap_m: 0.65
+    size_m: 0.30
+
+  - label: key_turn_west_chicane_exit
+    centerline_index: 4917
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: key_turn_north_infield_hairpin
+    centerline_index: 5719
+    side: left
+    requested_gap_m: 0.50
+    size_m: 0.40

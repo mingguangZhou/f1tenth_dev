@@ -10,6 +10,7 @@ import statistics
 import time
 from collections import Counter
 
+import numpy as np
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
 from diagnostic_msgs.msg import DiagnosticArray
@@ -132,8 +133,35 @@ def finite_float(value):
     return number if math.isfinite(number) else None
 
 
+def load_closed_path_geometry(path):
+    with open(path, "r", newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames is None or not {"x", "y"}.issubset(reader.fieldnames):
+            raise RuntimeError(f"Raceline CSV must contain x and y columns: {path}")
+        points = np.asarray(
+            [[float(row["x"]), float(row["y"])] for row in reader],
+            dtype=np.float64,
+        )
+    if len(points) < 3:
+        raise RuntimeError(f"Raceline CSV has too few points: {path}")
+    segment_lengths = np.linalg.norm(np.roll(points, -1, axis=0) - points, axis=1)
+    cumulative = np.concatenate(([0.0], np.cumsum(segment_lengths[:-1])))
+    lap_length = float(np.sum(segment_lengths))
+    if not math.isfinite(lap_length) or lap_length <= 0.0:
+        raise RuntimeError(f"Raceline CSV has invalid closed-loop length: {path}")
+    return points, cumulative, lap_length
+
+
 class TrialLogger(Node):
-    def __init__(self, output_path, trial_name, sample_hz, reset_pose=None):
+    def __init__(
+        self,
+        output_path,
+        trial_name,
+        sample_hz,
+        reset_pose=None,
+        raceline_csv=None,
+        target_laps=0,
+    ):
         super().__init__("obstacle_trial_logger")
         self.output_path = output_path
         self.event_path = os.path.splitext(output_path)[0] + ".events.jsonl"
@@ -156,6 +184,22 @@ class TrialLogger(Node):
         self.events = []
         self.last_event_signature = None
         self.reset_pose = reset_pose
+        self.target_laps = max(0, int(target_laps))
+        self.raceline_points = None
+        self.raceline_cumulative_m = None
+        self.raceline_lap_length_m = 0.0
+        self.nearest_raceline_index = None
+        self.cross_track_error_m = None
+        self.last_raceline_progress_m = None
+        self.accumulated_lap_distance_m = 0.0
+        self.completed_laps = 0
+        self.lap_completion_times_sec = []
+        if raceline_csv:
+            (
+                self.raceline_points,
+                self.raceline_cumulative_m,
+                self.raceline_lap_length_m,
+            ) = load_closed_path_geometry(raceline_csv)
 
         self.create_subscription(
             Odometry, "/ego_racecar/odom", self.odom_callback, qos_profile_sensor_data
@@ -270,7 +314,48 @@ class TrialLogger(Node):
         self.rows.clear()
         self.events.clear()
         self.last_event_signature = None
+        self.reset_lap_progress()
         self.started = time.monotonic()
+
+    def reset_lap_progress(self):
+        self.nearest_raceline_index = None
+        self.cross_track_error_m = None
+        self.last_raceline_progress_m = None
+        self.accumulated_lap_distance_m = 0.0
+        self.completed_laps = 0
+        self.lap_completion_times_sec = []
+
+    def update_lap_progress(self, x, y):
+        if self.raceline_points is None:
+            return
+        position = np.asarray([x, y], dtype=np.float64)
+        squared_distances = np.sum(
+            (self.raceline_points - position) ** 2, axis=1
+        )
+        nearest = int(np.argmin(squared_distances))
+        progress = float(self.raceline_cumulative_m[nearest])
+        self.nearest_raceline_index = nearest
+        self.cross_track_error_m = math.sqrt(float(squared_distances[nearest]))
+        if self.last_raceline_progress_m is not None:
+            delta = progress - self.last_raceline_progress_m
+            half_lap = 0.5 * self.raceline_lap_length_m
+            if delta < -half_lap:
+                delta += self.raceline_lap_length_m
+            elif delta > half_lap:
+                delta -= self.raceline_lap_length_m
+            # Reject localization teleports while accepting any physically
+            # plausible update interval in this simulator.
+            if abs(delta) <= 20.0:
+                self.accumulated_lap_distance_m += delta
+        self.last_raceline_progress_m = progress
+
+        completed = max(
+            0,
+            int(self.accumulated_lap_distance_m // self.raceline_lap_length_m),
+        )
+        while completed > self.completed_laps:
+            self.completed_laps += 1
+            self.lap_completion_times_sec.append(self.elapsed())
 
     def odom_callback(self, message):
         orientation = message.pose.pose.orientation
@@ -288,6 +373,7 @@ class TrialLogger(Node):
                 message.twist.twist.linear.x, message.twist.twist.linear.y
             ),
         }
+        self.update_lap_progress(self.pose["x"], self.pose["y"])
 
     def scan_callback(self, message):
         valid = [
@@ -374,6 +460,14 @@ class TrialLogger(Node):
             "scan_valid_ratio": self.scan["valid_ratio"],
             "speed_cap_topic_mps": self.speed_cap,
             "selected_mode_code": self.selected_mode,
+            "nearest_raceline_index": (
+                "" if self.nearest_raceline_index is None else self.nearest_raceline_index
+            ),
+            "cross_track_error_m": (
+                "" if self.cross_track_error_m is None else self.cross_track_error_m
+            ),
+            "accumulated_lap_distance_m": self.accumulated_lap_distance_m,
+            "completed_laps": self.completed_laps,
         }
         groups = (
             ("planner", PLANNER_FIELDS),
@@ -474,6 +568,22 @@ class TrialLogger(Node):
             "duration_sec": self.elapsed(),
             "samples": len(self.rows),
             "events": len(self.events),
+            "target_laps": self.target_laps,
+            "completed_laps": self.completed_laps,
+            "target_laps_reached": (
+                self.target_laps > 0 and self.completed_laps >= self.target_laps
+            ),
+            "raceline_lap_length_m": (
+                self.raceline_lap_length_m if self.raceline_points is not None else None
+            ),
+            "accumulated_lap_distance_m": self.accumulated_lap_distance_m,
+            "lap_completion_times_sec": self.lap_completion_times_sec,
+            "lap_durations_sec": [
+                completion - (
+                    self.lap_completion_times_sec[index - 1] if index > 0 else 0.0
+                )
+                for index, completion in enumerate(self.lap_completion_times_sec)
+            ],
             "planner_states": planner_states,
             "planner_modes": planner_modes,
             "chosen_sides": sides,
@@ -524,6 +634,16 @@ def parse_args():
     parser.add_argument("--trial", default="trial", help="Trial label")
     parser.add_argument("--duration", type=float, default=20.0)
     parser.add_argument("--sample-hz", type=float, default=20.0)
+    parser.add_argument(
+        "--target-laps",
+        type=int,
+        default=0,
+        help="Stop after this many complete laps; --duration remains the timeout",
+    )
+    parser.add_argument(
+        "--raceline-csv",
+        help="Closed raceline x/y CSV used for lap progress and cross-track error",
+    )
     parser.add_argument("--reset-x", type=float)
     parser.add_argument("--reset-y", type=float)
     parser.add_argument("--reset-yaw", type=float)
@@ -538,12 +658,29 @@ def main():
     ):
         raise SystemExit("--reset-x, --reset-y, and --reset-yaw must be used together")
     reset_pose = reset_values if all(value is not None for value in reset_values) else None
+    if args.target_laps < 0:
+        raise SystemExit("--target-laps must be >= 0")
+    if args.target_laps > 0 and not args.raceline_csv:
+        raise SystemExit("--target-laps requires --raceline-csv")
     rclpy.init()
-    node = TrialLogger(args.output, args.trial, args.sample_hz, reset_pose)
+    node = TrialLogger(
+        args.output,
+        args.trial,
+        args.sample_hz,
+        reset_pose,
+        args.raceline_csv,
+        args.target_laps,
+    )
     try:
         node.prepare_trial()
         deadline = time.monotonic() + args.duration
-        while rclpy.ok() and time.monotonic() < deadline:
+        while (
+            rclpy.ok()
+            and time.monotonic() < deadline
+            and not (
+                args.target_laps > 0 and node.completed_laps >= args.target_laps
+            )
+        ):
             rclpy.spin_once(node, timeout_sec=0.1)
     finally:
         summary = node.finish()

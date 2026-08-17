@@ -11,6 +11,13 @@ Optional explicit centerline/output paths:
         --centerline centerline_output/centerline_points_smooth.csv \
         --output-dir obstacle_output
 
+Reproducible batch placement with raceline validation:
+    python3 obstacle_creation_tool.py Spielberg_map.png Spielberg_map.yaml \
+        --centerline output_backup/<spielberg-run>/centerline_points_smooth.csv \
+        --raceline output_backup/<spielberg-run>/raceline_points_smooth.csv \
+        --batch-spec obstacle_specs/spielberg_key_turns.yaml \
+        --output-dir obstacle_output/spielberg_key_turns
+
 UI model:
   1. Set requested boundary gap [m].
   2. Set square obstacle size [m].
@@ -118,6 +125,23 @@ def load_centerline_csv(csv_path):
     if len(rows) < 3:
         raise RuntimeError(f"Centerline CSV has too few rows: {csv_path}")
     return rows
+
+
+def load_path_xy_csv(csv_path):
+    """Load an x/y path CSV used to prove that placed obstacles block it."""
+    points = []
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"x", "y"}
+        if reader.fieldnames is None or not required.issubset(set(reader.fieldnames)):
+            raise RuntimeError(
+                f"Path CSV must contain columns {sorted(required)}; got {reader.fieldnames}"
+            )
+        for row in reader:
+            points.append([float(row["x"]), float(row["y"])])
+    if len(points) < 2:
+        raise RuntimeError(f"Path CSV has too few rows: {csv_path}")
+    return np.asarray(points, dtype=np.float64)
 
 
 def get_world_extent(img_shape, meta):
@@ -447,6 +471,121 @@ def try_place_obstacle(
     return None, msg
 
 
+def build_clearance_map_m(drivable_mask, meta):
+    """Return each drivable pixel's distance to the nearest boundary in metres."""
+    clearance_px = cv2.distanceTransform(
+        (drivable_mask * 255).astype(np.uint8), cv2.DIST_L2, 5
+    )
+    return clearance_px * float(meta["resolution"])
+
+
+def minimum_path_clearance_to_obstacle(path_xy, obstacle):
+    """Return the minimum sampled path-point distance to an oriented square."""
+    center = np.asarray(
+        [obstacle["center_x"], obstacle["center_y"]], dtype=np.float64
+    )
+    tangent, left_normal = local_frame_from_row(obstacle)
+    relative = np.asarray(path_xy, dtype=np.float64) - center
+    longitudinal = relative @ tangent
+    lateral = relative @ left_normal
+    half = 0.5 * float(obstacle["size_m"])
+    outside_longitudinal = np.maximum(np.abs(longitudinal) - half, 0.0)
+    outside_lateral = np.maximum(np.abs(lateral) - half, 0.0)
+    distances = np.hypot(outside_longitudinal, outside_lateral)
+    return float(np.min(distances))
+
+
+def load_batch_spec(path):
+    with open(path, "r") as f:
+        document = yaml.safe_load(f)
+    entries = document.get("obstacles") if isinstance(document, dict) else document
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError(
+            "Batch specification must be a non-empty list or contain an 'obstacles' list."
+        )
+    return entries
+
+
+def place_batch_obstacles(
+    entries,
+    centerline_rows,
+    drivable_mask,
+    clearance_map_m,
+    meta,
+    raceline_xy=None,
+    raceline_blocking_clearance_m=0.24,
+):
+    """Apply the same placement checks as the UI to a reproducible specification."""
+    rows_by_index = {int(row["index"]): row for row in centerline_rows}
+    if len(rows_by_index) != len(centerline_rows):
+        raise RuntimeError("Centerline CSV contains duplicate index values.")
+
+    obstacles = []
+    occupied_mask = np.zeros(drivable_mask.shape, dtype=np.uint8)
+    for position, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Batch obstacle {position} must be a mapping.")
+        missing = {
+            "centerline_index", "side", "requested_gap_m", "size_m"
+        } - set(entry)
+        if missing:
+            raise RuntimeError(
+                f"Batch obstacle {position} is missing fields: {sorted(missing)}"
+            )
+        centerline_index = int(entry["centerline_index"])
+        if centerline_index not in rows_by_index:
+            raise RuntimeError(
+                f"Batch obstacle {position} uses unknown centerline index "
+                f"{centerline_index}."
+            )
+        label = str(entry.get("label", f"obstacle_{position}"))
+        requested_gap_m = float(entry["requested_gap_m"])
+        size_m = float(entry["size_m"])
+        obstacle, reason = try_place_obstacle(
+            rows_by_index[centerline_index],
+            str(entry["side"]),
+            requested_gap_m,
+            size_m,
+            drivable_mask,
+            clearance_map_m,
+            occupied_mask,
+            meta,
+        )
+        if obstacle is None:
+            raise RuntimeError(
+                f"Batch obstacle {position} ({label}) failed placement: {reason}"
+            )
+        obstacle["label"] = label
+        if raceline_xy is not None:
+            clearance = minimum_path_clearance_to_obstacle(raceline_xy, obstacle)
+            obstacle["raceline_min_clearance_m"] = clearance
+            obstacle["raceline_blocked"] = (
+                clearance <= float(raceline_blocking_clearance_m) + 1e-9
+            )
+            if not obstacle["raceline_blocked"]:
+                raise RuntimeError(
+                    f"Batch obstacle {position} ({label}) does not block the raceline: "
+                    f"clearance {clearance:.3f} m exceeds the configured physical "
+                    f"envelope {raceline_blocking_clearance_m:.3f} m."
+                )
+        else:
+            obstacle["raceline_min_clearance_m"] = None
+            obstacle["raceline_blocked"] = None
+        obstacles.append(obstacle)
+        occupied_mask = np.maximum(occupied_mask, obstacle["mask"])
+        raceline_text = ""
+        if obstacle["raceline_min_clearance_m"] is not None:
+            raceline_text = (
+                f", raceline clearance={obstacle['raceline_min_clearance_m']:.3f} m"
+            )
+        print(
+            f"Placed O{position} {label}: index={centerline_index}, "
+            f"L={obstacle['left_gap_m']:.2f} m, "
+            f"R={obstacle['right_gap_m']:.2f} m{raceline_text}"
+        )
+    return obstacles
+
+
 # =============================================================================
 # OUTPUT
 # =============================================================================
@@ -478,6 +617,7 @@ def write_obstacle_outputs(
     obstacles,
     map_path,
     output_dir,
+    raceline_xy=None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     paths = build_output_paths(map_path, output_dir)
@@ -504,6 +644,7 @@ def write_obstacle_outputs(
 
     fieldnames = [
         "obstacle_id",
+        "label",
         "centerline_index",
         "side",
         "requested_gap_m",
@@ -516,13 +657,16 @@ def write_obstacle_outputs(
         "center_x",
         "center_y",
         "yaw",
+        "raceline_min_clearance_m",
+        "raceline_blocked",
     ]
     with open(paths["summary_csv"], "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for i, obs in enumerate(obstacles, start=1):
             writer.writerow({
                 "obstacle_id": i,
+                "label": obs.get("label", f"obstacle_{i}"),
                 "centerline_index": obs["centerline_index"],
                 "side": obs["side"],
                 "requested_gap_m": obs["requested_gap_m"],
@@ -535,6 +679,8 @@ def write_obstacle_outputs(
                 "center_x": obs["center_x"],
                 "center_y": obs["center_y"],
                 "yaw": obs["yaw"],
+                "raceline_min_clearance_m": obs.get("raceline_min_clearance_m"),
+                "raceline_blocked": obs.get("raceline_blocked"),
             })
 
     save_debug_overlay(
@@ -543,6 +689,7 @@ def write_obstacle_outputs(
         centerline_xy,
         obstacles,
         paths["debug_png"],
+        raceline_xy,
     )
 
     print("\nObstacle map saved:")
@@ -554,7 +701,9 @@ def write_obstacle_outputs(
     return paths
 
 
-def save_debug_overlay(img_ros, meta, centerline_xy, obstacles, path):
+def save_debug_overlay(
+    img_ros, meta, centerline_xy, obstacles, path, raceline_xy=None
+):
     if img_ros.ndim == 3:
         base = cv2.cvtColor(img_ros, cv2.COLOR_BGR2GRAY)
     else:
@@ -566,15 +715,43 @@ def save_debug_overlay(img_ros, meta, centerline_xy, obstacles, path):
     extent = get_world_extent(base.shape, meta)
     fig, ax = plt.subplots(figsize=(11, 8))
     ax.imshow(base, cmap="gray", origin="lower", extent=extent)
-    ax.plot(centerline_xy[:, 0], centerline_xy[:, 1], linewidth=1.0, label="smoothed centerline")
+    ax.plot(
+        centerline_xy[:, 0],
+        centerline_xy[:, 1],
+        linewidth=0.9,
+        linestyle="--",
+        color="tab:gray",
+        label="smoothed centerline",
+    )
+    if raceline_xy is not None:
+        ax.plot(
+            raceline_xy[:, 0],
+            raceline_xy[:, 1],
+            linewidth=1.0,
+            color="tab:blue",
+            label="active raceline",
+        )
 
     for i, obs in enumerate(obstacles, start=1):
-        patch = Polygon(obs["corners"], closed=True, alpha=0.45)
+        patch = Polygon(
+            obs["corners"],
+            closed=True,
+            alpha=0.75,
+            facecolor="tab:red",
+            edgecolor="darkred",
+            linewidth=0.8,
+        )
         ax.add_patch(patch)
+        raceline_clearance = obs.get("raceline_min_clearance_m")
+        raceline_clearance_text = (
+            "n/a" if raceline_clearance is None else f"{raceline_clearance:.2f} m"
+        )
         ax.text(
             obs["center_x"],
             obs["center_y"],
-            f"O{i}\nL {obs['left_gap_m']:.2f} m\nR {obs['right_gap_m']:.2f} m",
+            f"O{i} {obs.get('label', '')}\n"
+            f"L {obs['left_gap_m']:.2f} m | R {obs['right_gap_m']:.2f} m\n"
+            f"race {raceline_clearance_text}",
             fontsize=8,
             ha="center",
             va="center",
@@ -629,10 +806,7 @@ def run_editor_ui(
     base = gray_ros.astype(np.float32) / 255.0
 
     # Distance to nearest non-drivable pixel, used for global clearance validation.
-    clearance_px = cv2.distanceTransform(
-        (drivable_mask * 255).astype(np.uint8), cv2.DIST_L2, 5
-    )
-    clearance_map_m = clearance_px * float(meta["resolution"])
+    clearance_map_m = build_clearance_map_m(drivable_mask, meta)
 
     state = {
         "obstacles": [],
@@ -973,15 +1147,50 @@ def parse_args():
         default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
+    parser.add_argument(
+        "--batch-spec",
+        help=(
+            "YAML obstacle list for non-interactive, reproducible placement. "
+            "Without this option the graphical editor opens."
+        ),
+    )
+    parser.add_argument(
+        "--raceline",
+        help=(
+            "Raceline x/y CSV. In batch mode every obstacle must intersect its "
+            "configured physical envelope."
+        ),
+    )
+    parser.add_argument(
+        "--raceline-blocking-clearance-m",
+        type=float,
+        default=0.24,
+        help=(
+            "Maximum obstacle-to-raceline clearance that counts as blocked "
+            "(default: 0.24 m, the planner's physical half-width)."
+        ),
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    for path in (args.map_image, args.map_yaml, args.centerline):
+    required_paths = [args.map_image, args.map_yaml, args.centerline]
+    if args.batch_spec:
+        required_paths.append(args.batch_spec)
+        if not args.raceline:
+            raise RuntimeError(
+                "--batch-spec requires --raceline so every placement is proven "
+                "to block the active racing trajectory."
+            )
+    if args.raceline:
+        required_paths.append(args.raceline)
+    for path in required_paths:
         if not os.path.exists(path):
             raise RuntimeError(f"Required input does not exist: {path}")
+    if args.raceline_blocking_clearance_m < 0.0:
+        raise RuntimeError("--raceline-blocking-clearance-m must be >= 0.")
 
     img_ros, gray_ros, meta = load_map(args.map_image, args.map_yaml)
     centerline_rows = load_centerline_csv(args.centerline)
@@ -1002,6 +1211,13 @@ def main():
     print(f"  Drivable label:     {label_id}")
     print(f"  Centerline coverage:{centerline_coverage:.1%}")
     print(f"  Output directory:   {args.output_dir}")
+    if args.batch_spec:
+        print(f"  Batch specification:{args.batch_spec}")
+        print(f"  Raceline CSV:       {args.raceline}")
+        print(
+            "  Blocking envelope:  "
+            f"{args.raceline_blocking_clearance_m:.3f} m"
+        )
 
     # Basic coordinate consistency check.
     extent = get_world_extent(gray_ros.shape, meta)
@@ -1016,6 +1232,30 @@ def main():
             "Centerline/map coordinate consistency check failed: fewer than 99% "
             "of centerline points lie inside the map extent."
         )
+
+    if args.batch_spec:
+        raceline_xy = load_path_xy_csv(args.raceline)
+        clearance_map_m = build_clearance_map_m(drivable_mask, meta)
+        obstacles = place_batch_obstacles(
+            load_batch_spec(args.batch_spec),
+            centerline_rows,
+            drivable_mask,
+            clearance_map_m,
+            meta,
+            raceline_xy,
+            args.raceline_blocking_clearance_m,
+        )
+        write_obstacle_outputs(
+            img_ros,
+            gray_ros,
+            meta,
+            centerline_xy,
+            obstacles,
+            args.map_image,
+            args.output_dir,
+            raceline_xy,
+        )
+        return
 
     run_editor_ui(
         img_ros,

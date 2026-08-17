@@ -64,6 +64,36 @@ The header should be:
 index,x,y,yaw,curvature,curvature_abs
 ```
 
+## Reproducible obstacle maps
+
+`obstacle_creation_tool.py` supports both its graphical editor and a batch
+workflow. Batch mode applies the same track-boundary, obstacle-size, raster,
+overlap, and global-clearance checks as the editor. It additionally requires a
+raceline and rejects any obstacle that does not block the configured physical
+vehicle envelope.
+
+Generate the nine-obstacle Spielberg key-turn map from the same
+centerline/raceline pair used by the simulator autonomy launch:
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 obstacle_creation_tool.py Spielberg_map.png Spielberg_map.yaml \
+  --centerline output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/centerline_points_smooth.csv \
+  --raceline output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv \
+  --raceline-blocking-clearance-m 0.24 \
+  --batch-spec obstacle_specs/spielberg_key_turns.yaml \
+  --output-dir obstacle_output/spielberg_key_turns
+```
+
+The output includes the ROS map image and YAML, a clearance CSV, and a debug
+overlay showing the centerline, active raceline, obstacle labels, boundary
+gaps, and obstacle-to-raceline clearance. The batch command fails instead of
+silently saving if any placement is invalid or does not block the raceline
+envelope.
+
+To place obstacles manually, omit `--batch-spec` and `--raceline`; the existing
+graphical workflow opens and the original input map remains unchanged.
+
 ## Build
 
 ```bash
