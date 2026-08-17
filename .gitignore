@@ -6,3 +6,8 @@
 /log/
 
 /ingest/
+
+# Local Python and repeatable simulator-test artifacts
+**/__pycache__/
+*.py[cod]
+/path_following_v2/trial_logs/

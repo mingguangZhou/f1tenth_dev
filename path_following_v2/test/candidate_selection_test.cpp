@@ -47,11 +47,36 @@ TEST(CandidateSelection, ObjectiveBreaksAComparableClearanceTie)
   left.valid = true;
   left.minimum_clearance = 0.40;
   left.objective_cost = 2.0;
+  left.objective_domain = selection::ObjectiveDomain::LATTICE;
 
   selection::Metrics right;
   right.valid = true;
   right.minimum_clearance = 0.42;
   right.objective_cost = 3.0;
+  right.objective_domain = selection::ObjectiveDomain::LATTICE;
+
+  EXPECT_EQ(
+    selection::chooseSaferCandidate(left, right, 0.03),
+    selection::Choice::LEFT);
+}
+
+TEST(CandidateSelection, DoesNotCompareCostsFromDifferentPlanningBackends)
+{
+  selection::Metrics left;
+  left.valid = true;
+  left.minimum_clearance = 0.30;
+  left.objective_cost = std::numeric_limits<double>::infinity();
+  left.maximum_curvature = 0.50;
+  left.peak_offset = 0.15;
+  left.objective_domain = selection::ObjectiveDomain::NONE;
+
+  selection::Metrics right;
+  right.valid = true;
+  right.minimum_clearance = 0.31;
+  right.objective_cost = 1.0;
+  right.maximum_curvature = 0.80;
+  right.peak_offset = -0.80;
+  right.objective_domain = selection::ObjectiveDomain::LATTICE;
 
   EXPECT_EQ(
     selection::chooseSaferCandidate(left, right, 0.03),

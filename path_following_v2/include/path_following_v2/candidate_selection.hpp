@@ -15,6 +15,12 @@ enum class Choice
   RIGHT
 };
 
+enum class ObjectiveDomain
+{
+  NONE,
+  LATTICE,
+};
+
 struct Metrics
 {
   bool valid{false};
@@ -22,6 +28,7 @@ struct Metrics
   double objective_cost{0.0};
   double maximum_curvature{0.0};
   double peak_offset{0.0};
+  ObjectiveDomain objective_domain{ObjectiveDomain::NONE};
 };
 
 inline Choice chooseSaferCandidate(
@@ -51,10 +58,16 @@ inline Choice chooseSaferCandidate(
 
   const bool left_cost_finite = std::isfinite(left.objective_cost);
   const bool right_cost_finite = std::isfinite(right.objective_cost);
-  if (left_cost_finite != right_cost_finite) {
-    return left_cost_finite ? Choice::LEFT : Choice::RIGHT;
-  }
-  if (left_cost_finite && std::abs(left.objective_cost - right.objective_cost) > 1e-9) {
+  // Solver objectives have meaning only inside the solver that produced them.
+  // When one side used the bounded fallback, compare physical geometry below
+  // instead of treating a missing backend-specific cost as a bad trajectory.
+  const bool costs_are_comparable =
+    left.objective_domain != ObjectiveDomain::NONE &&
+    left.objective_domain == right.objective_domain &&
+    left_cost_finite && right_cost_finite;
+  if (costs_are_comparable &&
+    std::abs(left.objective_cost - right.objective_cost) > 1e-9)
+  {
     return left.objective_cost < right.objective_cost ? Choice::LEFT : Choice::RIGHT;
   }
   if (std::abs(left.maximum_curvature - right.maximum_curvature) > 1e-3) {

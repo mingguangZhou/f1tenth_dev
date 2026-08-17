@@ -21,6 +21,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2/LinearMath/Quaternion.h"
@@ -31,12 +32,16 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
+#include "path_following_v2/active_path_safety.hpp"
 #include "path_following_v2/bounded_corridor_smoother.hpp"
 #include "path_following_v2/candidate_selection.hpp"
 #include "path_following_v2/lightweight_frenet_lattice.hpp"
+#include "path_following_v2/maneuver_speed_policy.hpp"
 
 using std::placeholders::_1;
 namespace selection = path_following_v2::selection;
+namespace active_path_safety = path_following_v2::active_path_safety;
+namespace maneuver_speed = path_following_v2::maneuver_speed;
 
 namespace
 {
@@ -109,6 +114,9 @@ public:
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
       std::bind(&LocalTrajectoryPlannerNode::scanCallback, this, _1));
+    reset_sub_ = create_subscription<std_msgs::msg::Bool>(
+      reset_topic_, 10,
+      std::bind(&LocalTrajectoryPlannerNode::resetCallback, this, _1));
 
     final_path_pub_ = create_publisher<nav_msgs::msg::Path>(
       final_path_topic_, rclcpp::QoS(1).reliable().transient_local());
@@ -186,6 +194,7 @@ private:
     double min_clearance{std::numeric_limits<double>::infinity()};
     double max_curvature{0.0};
     double objective_cost{std::numeric_limits<double>::infinity()};
+    selection::ObjectiveDomain objective_domain{selection::ObjectiveDomain::NONE};
     double rejoin_s{0.0};
     double start_lateral_offset{0.0};
     std::size_t pass_start_index{0};
@@ -196,6 +205,19 @@ private:
     std::string trajectory_mode{"NONE"};
     std::string planning_reference{"raceline"};
     nav_msgs::msg::Path path;
+  };
+
+  struct CandidateSummary
+  {
+    bool evaluated{false};
+    bool valid{false};
+    std::string reason{"not evaluated"};
+    double minimum_clearance{std::numeric_limits<double>::infinity()};
+    double objective_cost{std::numeric_limits<double>::infinity()};
+    selection::ObjectiveDomain objective_domain{selection::ObjectiveDomain::NONE};
+    double maximum_curvature{0.0};
+    double peak_offset{0.0};
+    int maximum_connected_interference{0};
   };
 
   enum class ManeuverPhase
@@ -244,6 +266,7 @@ private:
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr reset_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr final_path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_cap_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
@@ -267,6 +290,7 @@ private:
   std::string speed_cap_topic_;
   std::string status_topic_;
   std::string marker_topic_;
+  std::string reset_topic_;
   std::string robot_frame_;
 
   double control_rate_hz_{20.0};
@@ -332,6 +356,7 @@ private:
   double avoidance_speed_cap_mps_{1.0};
   double recovery_speed_cap_mps_{1.0};
   double replan_pending_speed_cap_mps_{0.4};
+  double maneuver_lateral_acceleration_limit_mps2_{2.0};
   double recovery_enter_lateral_error_m_{0.18};
   double recovery_exit_lateral_error_m_{0.08};
   double recovery_exit_heading_error_deg_{10.0};
@@ -351,6 +376,7 @@ private:
   unsigned long next_plan_id_{1};
   int rejoin_stable_cycles_{0};
   int active_blocked_cycles_{0};
+  int active_physical_blocked_cycles_{0};
   int no_safe_path_cycles_{0};
   double last_effective_detection_distance_m_{0.0};
   rclcpp::Time last_processed_scan_time_{0, 0, RCL_STEADY_TIME};
@@ -360,6 +386,11 @@ private:
   std::size_t last_lattice_evaluated_transitions_{0};
   double last_lattice_compute_time_ms_{0.0};
   std::string last_lattice_reason_{"not run"};
+  unsigned long candidate_decision_id_{0};
+  std::string candidate_decision_context_{"none"};
+  int candidate_decision_selected_side_{0};
+  CandidateSummary last_left_candidate_;
+  CandidateSummary last_right_candidate_;
 
   void declareParameters()
   {
@@ -371,6 +402,7 @@ private:
       "speed_cap_topic", "/path_following_v2/trajectory_speed_cap_mps");
     declare_parameter<std::string>("status_topic", "/path_following_v2/path_status");
     declare_parameter<std::string>("marker_topic", "/path_following_v2/detour_markers");
+    declare_parameter<std::string>("reset_topic", "/path_following_v2/reset");
     declare_parameter<std::string>("robot_frame", "base_link");
 
     declare_parameter<double>("control_rate_hz", 20.0);
@@ -454,6 +486,7 @@ private:
     declare_parameter<double>("avoidance_speed_cap_mps", 1.0);
     declare_parameter<double>("recovery_speed_cap_mps", 1.0);
     declare_parameter<double>("replan_pending_speed_cap_mps", 0.4);
+    declare_parameter<double>("maneuver_lateral_acceleration_limit_mps2", 2.0);
 
     // Enter/exit hysteresis for localization-based convergence to the global
     // raceline.  A local plan is not released merely because an obstacle
@@ -486,6 +519,7 @@ private:
     speed_cap_topic_ = get_parameter("speed_cap_topic").as_string();
     status_topic_ = get_parameter("status_topic").as_string();
     marker_topic_ = get_parameter("marker_topic").as_string();
+    reset_topic_ = get_parameter("reset_topic").as_string();
     robot_frame_ = get_parameter("robot_frame").as_string();
     control_rate_hz_ = std::max(1.0, get_parameter("control_rate_hz").as_double());
     raw_path_timeout_sec_ = std::max(0.01, get_parameter("raw_path_timeout_sec").as_double());
@@ -592,12 +626,15 @@ private:
       0.0, get_parameter("corridor_curvature_rate_weight").as_double());
     command_speed_max_mps_ = std::max(
       0.0, get_parameter("command_speed_max_mps").as_double());
-    avoidance_speed_cap_mps_ = std::max(
-      0.0, get_parameter("avoidance_speed_cap_mps").as_double());
-    recovery_speed_cap_mps_ = std::max(
-      0.0, get_parameter("recovery_speed_cap_mps").as_double());
-    replan_pending_speed_cap_mps_ = std::max(
-      0.0, get_parameter("replan_pending_speed_cap_mps").as_double());
+    avoidance_speed_cap_mps_ = std::clamp(
+      get_parameter("avoidance_speed_cap_mps").as_double(), 0.0, command_speed_max_mps_);
+    recovery_speed_cap_mps_ = std::clamp(
+      get_parameter("recovery_speed_cap_mps").as_double(), 0.0, command_speed_max_mps_);
+    replan_pending_speed_cap_mps_ = std::clamp(
+      get_parameter("replan_pending_speed_cap_mps").as_double(),
+      0.0, command_speed_max_mps_);
+    maneuver_lateral_acceleration_limit_mps2_ = std::max(
+      0.1, get_parameter("maneuver_lateral_acceleration_limit_mps2").as_double());
     recovery_enter_lateral_error_m_ = std::max(
       0.01, get_parameter("recovery_enter_lateral_error_m").as_double());
     recovery_exit_lateral_error_m_ = std::clamp(
@@ -865,6 +902,24 @@ private:
     latest_scan_ = scan;
     scan_time_ = steady_clock_.now();
     scan_received_ = true;
+  }
+
+  void resetCallback(const std_msgs::msg::Bool::SharedPtr message)
+  {
+    if (!message->data) {
+      return;
+    }
+    releaseActivePlan("explicit planner reset");
+    rejoin_stable_cycles_ = 0;
+    active_blocked_cycles_ = 0;
+    active_physical_blocked_cycles_ = 0;
+    no_safe_path_cycles_ = 0;
+    last_processed_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+    candidate_decision_context_ = "reset";
+    candidate_decision_selected_side_ = 0;
+    last_left_candidate_ = CandidateSummary();
+    last_right_candidate_ = CandidateSummary();
+    RCLCPP_INFO(get_logger(), "planner state reset from %s", reset_topic_.c_str());
   }
 
   bool buildPathModel(const nav_msgs::msg::Path & path, PathModel & model) const
@@ -1816,6 +1871,7 @@ private:
           candidate.planning_reference = planning_reference;
           candidate.start_lateral_offset = raw_car_lateral_offset;
           candidate.objective_cost = solution.cost;
+          candidate.objective_domain = selection::ObjectiveDomain::LATTICE;
           candidate.pass_start_index = indexAtOrAfter(reference, pass_start_s);
           candidate.pass_end_index = indexAtOrAfter(reference, pass_end_s);
           candidate.rejoin_index = plan_end_index;
@@ -2125,6 +2181,7 @@ private:
     left_metrics.objective_cost = left.objective_cost;
     left_metrics.maximum_curvature = left.max_curvature;
     left_metrics.peak_offset = left.peak_offset;
+    left_metrics.objective_domain = left.objective_domain;
 
     selection::Metrics right_metrics;
     right_metrics.valid = right.valid;
@@ -2132,6 +2189,7 @@ private:
     right_metrics.objective_cost = right.objective_cost;
     right_metrics.maximum_curvature = right.max_curvature;
     right_metrics.peak_offset = right.peak_offset;
+    right_metrics.objective_domain = right.objective_domain;
 
     switch (selection::chooseSaferCandidate(
         left_metrics, right_metrics, side_clearance_tie_m_))
@@ -2144,6 +2202,33 @@ private:
       default:
         return nullptr;
     }
+  }
+
+  CandidateSummary summarizeCandidate(const Candidate & candidate) const
+  {
+    CandidateSummary summary;
+    summary.evaluated = candidate.side != 0;
+    summary.valid = candidate.valid;
+    summary.reason = candidate.reason;
+    summary.minimum_clearance = candidate.min_clearance;
+    summary.objective_cost = candidate.objective_cost;
+    summary.objective_domain = candidate.objective_domain;
+    summary.maximum_curvature = candidate.max_curvature;
+    summary.peak_offset = candidate.peak_offset;
+    summary.maximum_connected_interference =
+      candidate.maximum_connected_interference;
+    return summary;
+  }
+
+  void recordCandidateDecision(
+    const Candidate & left, const Candidate & right,
+    const Candidate * selected, const std::string & context)
+  {
+    ++candidate_decision_id_;
+    candidate_decision_context_ = context;
+    candidate_decision_selected_side_ = selected ? selected->side : 0;
+    last_left_candidate_ = summarizeCandidate(left);
+    last_right_candidate_ = summarizeCandidate(right);
   }
 
   void activatePlan(const Candidate & candidate, const std::string & reason)
@@ -2173,6 +2258,7 @@ private:
     active_plan_.created_at = steady_clock_.now();
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
+    active_physical_blocked_cycles_ = 0;
     no_safe_path_cycles_ = 0;
     RCLCPP_INFO(
       get_logger(),
@@ -2191,6 +2277,7 @@ private:
     active_plan_ = ActivePlan();
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
+    active_physical_blocked_cycles_ = 0;
   }
 
   double updateActiveProgress(const Point2 & robot_position)
@@ -2347,7 +2434,8 @@ private:
     }
   }
 
-  bool activePathBlocked(const std::vector<ScanHit> & hits) const
+  bool activePathBlocked(
+    const std::vector<ScanHit> & hits, const double clearance_threshold) const
   {
     if (!active_plan_.valid || active_plan_.path.poses.size() < 2) {
       return true;
@@ -2374,7 +2462,7 @@ private:
           active_plan_.path.poses[i + 1].pose.position.y};
         clearance = std::min(clearance, pointToSegmentDistance(hit.point, a, b));
       }
-      const bool interfered = clearance <= planningClearance();
+      const bool interfered = clearance <= clearance_threshold;
       if (interfered) {
         const bool connected_to_previous = previous_interfered &&
           hit.beam_index <= previous_beam + static_cast<std::size_t>(cluster_max_beam_gap_) &&
@@ -2392,9 +2480,52 @@ private:
     return maximum_connected >= blocked_min_points_;
   }
 
+  double remainingActiveMaximumCurvature() const
+  {
+    if (!active_plan_.valid || active_plan_.path.poses.size() < 3) {
+      return 0.0;
+    }
+    const std::size_t begin = std::max<std::size_t>(
+      1, active_plan_.progress_index > 0 ? active_plan_.progress_index - 1 : 1);
+    const std::size_t end = std::min(
+      active_plan_.rejoin_index,
+      active_plan_.path.poses.size() - static_cast<std::size_t>(1));
+    double maximum_curvature = 0.0;
+    for (std::size_t index = begin; index < end; ++index) {
+      const auto & previous_position = active_plan_.path.poses[index - 1].pose.position;
+      const auto & current_position = active_plan_.path.poses[index].pose.position;
+      const auto & next_position = active_plan_.path.poses[index + 1].pose.position;
+      const Point2 previous{previous_position.x, previous_position.y};
+      const Point2 current{current_position.x, current_position.y};
+      const Point2 next{next_position.x, next_position.y};
+      const double a = distance(previous, current);
+      const double b = distance(current, next);
+      const double c = distance(previous, next);
+      if (a <= 1e-6 || b <= 1e-6 || c <= 1e-6) {
+        continue;
+      }
+      const double cross = std::abs(
+        (current.x - previous.x) * (next.y - previous.y) -
+        (current.y - previous.y) * (next.x - previous.x));
+      maximum_curvature = std::max(maximum_curvature, 2.0 * cross / (a * b * c));
+    }
+    return maximum_curvature;
+  }
+
   double activeSpeedCap() const
   {
-    return active_plan_.side == 0 ? recovery_speed_cap_mps_ : avoidance_speed_cap_mps_;
+    const double configured_ceiling = active_plan_.side == 0 ?
+      recovery_speed_cap_mps_ : avoidance_speed_cap_mps_;
+    return maneuver_speed::curvatureLimitedSpeed(
+      configured_ceiling, command_speed_max_mps_,
+      maneuver_lateral_acceleration_limit_mps2_, remainingActiveMaximumCurvature());
+  }
+
+  double activeReplanPendingSpeedCap() const
+  {
+    return active_plan_.valid ?
+      std::min(replan_pending_speed_cap_mps_, activeSpeedCap()) :
+      replan_pending_speed_cap_mps_;
   }
 
   void publishSpeedCap(const double cap)
@@ -2474,12 +2605,18 @@ private:
       if (trajectory_mode == "RACELINE") {
         reported_speed_cap = command_speed_max_mps_;
       } else if (trajectory_mode == "REPLAN_PENDING") {
-        reported_speed_cap = replan_pending_speed_cap_mps_;
+        reported_speed_cap = activeReplanPendingSpeedCap();
       } else {
         reported_speed_cap = activeSpeedCap();
       }
     }
     add("speed_cap_mps", std::to_string(reported_speed_cap));
+    add(
+      "remaining_maximum_curvature_inv_m",
+      active_plan_.valid ? std::to_string(remainingActiveMaximumCurvature()) : "0.0");
+    add(
+      "maneuver_lateral_acceleration_limit_mps2",
+      std::to_string(maneuver_lateral_acceleration_limit_mps2_));
     add("local_plan_active", active_plan_.valid ? "true" : "false");
     add(
       "side_committed",
@@ -2499,7 +2636,36 @@ private:
       active_plan_.valid ? std::to_string(active_plan_.rejoin_index) : "0");
     add("rejoin_stable_cycles", std::to_string(rejoin_stable_cycles_));
     add("active_blocked_cycles", std::to_string(active_blocked_cycles_));
+    add("active_margin_blocked_cycles", std::to_string(active_blocked_cycles_));
+    add(
+      "active_physical_blocked_cycles",
+      std::to_string(active_physical_blocked_cycles_));
     add("no_safe_path_cycles", std::to_string(no_safe_path_cycles_));
+    add("candidate_decision_id", std::to_string(candidate_decision_id_));
+    add("candidate_decision_context", candidate_decision_context_);
+    add(
+      "candidate_selected_side",
+      candidate_decision_selected_side_ > 0 ? "LEFT" :
+      (candidate_decision_selected_side_ < 0 ? "RIGHT" : "NONE"));
+    const auto add_candidate_summary = [&add](
+        const std::string & prefix, const CandidateSummary & summary) {
+        add(prefix + "_evaluated", summary.evaluated ? "true" : "false");
+        add(prefix + "_valid", summary.valid ? "true" : "false");
+        add(prefix + "_reason", summary.reason);
+        add(prefix + "_minimum_clearance_m", std::to_string(summary.minimum_clearance));
+        add(prefix + "_objective_cost", std::to_string(summary.objective_cost));
+        add(
+          prefix + "_objective_domain",
+          summary.objective_domain == selection::ObjectiveDomain::LATTICE ?
+          "LATTICE" : "NONE");
+        add(prefix + "_maximum_curvature_inv_m", std::to_string(summary.maximum_curvature));
+        add(prefix + "_peak_offset_m", std::to_string(summary.peak_offset));
+        add(
+          prefix + "_maximum_connected_interference",
+          std::to_string(summary.maximum_connected_interference));
+      };
+    add_candidate_summary("left_candidate", last_left_candidate_);
+    add_candidate_summary("right_candidate", last_right_candidate_);
     add(
       "hold_rule",
       "until rejoin anchor + lateral/heading convergence; time only bounds stale plans");
@@ -2763,9 +2929,12 @@ private:
       }
 
       if (active_plan_.valid) {
-        const bool blocked_now = activePathBlocked(hits);
+        const bool margin_blocked_now = activePathBlocked(hits, planningClearance());
+        const bool physical_blocked_now = activePathBlocked(hits, safety_half_width_m_);
         if (new_scan) {
-          active_blocked_cycles_ = blocked_now ? active_blocked_cycles_ + 1 : 0;
+          active_blocked_cycles_ = margin_blocked_now ? active_blocked_cycles_ + 1 : 0;
+          active_physical_blocked_cycles_ = physical_blocked_now ?
+            active_physical_blocked_cycles_ + 1 : 0;
         }
         const bool stale_plan = plan_age >= maximum_plan_hold_sec_;
         const bool excessive_deviation = deviation > plan_deviation_replan_m_;
@@ -2774,6 +2943,8 @@ private:
           !rejoin_geometry_reached;
         const bool blocked_confirmed =
           active_blocked_cycles_ >= active_path_blocked_confirmation_scans_;
+        const bool physical_blocked_confirmed =
+          active_physical_blocked_cycles_ >= active_path_blocked_confirmation_scans_;
         const bool update_requested = blocked_confirmed || stale_plan ||
           excessive_deviation || end_without_rejoin;
 
@@ -2781,10 +2952,13 @@ private:
           no_safe_path_cycles_ = 0;
           const auto continuous_path = continuousActivePath(*raw_message);
           publishPath(continuous_path);
-          if (blocked_now) {
-            publishSpeedCap(replan_pending_speed_cap_mps_);
+          if (margin_blocked_now) {
+            publishSpeedCap(activeReplanPendingSpeedCap());
             publishStatus(
-              "READY", "active-path blockage awaiting fresh-scan confirmation",
+              "READY",
+              physical_blocked_now ?
+              "physical active-path blockage awaiting fresh-scan confirmation" :
+              "planning reserve encroachment awaiting fresh-scan confirmation",
               "REPLAN_PENDING", active_plan_.side,
               raw_age, scan_age, valid_beam_ratio,
               obstacle_found ? &obstacle : nullptr);
@@ -2830,6 +3004,8 @@ private:
               -1, false);
             selected = chooseCandidate(left, right);
           }
+          recordCandidateDecision(
+            left, right, selected, "active obstacle-path replan");
           publishMarkers(
             obstacle, left, right,
             selected ? selected->side : active_plan_.side, raw.frame);
@@ -2861,8 +3037,12 @@ private:
           return;
         }
 
+        const auto failure_disposition =
+          active_path_safety::replacementFailureDisposition(
+            physical_blocked_confirmed, end_without_rejoin);
         const bool update_failure_confirmable =
-          blocked_confirmed || end_without_rejoin;
+          failure_disposition ==
+          active_path_safety::ReplacementFailureDisposition::CONFIRM_PRIMARY_FAILURE;
         if (new_scan) {
           no_safe_path_cycles_ = update_failure_confirmable ?
             std::min(no_safe_path_cycles_ + 1, no_safe_path_confirmation_scans_) : 0;
@@ -2878,9 +3058,12 @@ private:
         }
 
         publishPath(continuousActivePath(*raw_message));
-        publishSpeedCap(replan_pending_speed_cap_mps_);
+        publishSpeedCap(activeReplanPendingSpeedCap());
         publishStatus(
-          "READY", "active-plan update pending multi-scan confirmation",
+          "READY",
+          blocked_confirmed && !physical_blocked_confirmed ?
+          "planning reserve encroached; holding physically clear active path at reduced speed" :
+          "active-plan update pending multi-scan confirmation",
           "REPLAN_PENDING", active_plan_.side,
           raw_age, scan_age, valid_beam_ratio, obstacle_found ? &obstacle : nullptr);
         return;
@@ -2905,6 +3088,8 @@ private:
           getCenterlineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error, -1);
         selected = chooseCandidate(left, right);
+        recordCandidateDecision(
+          left, right, selected, "new obstacle-path decision");
         publishMarkers(obstacle, left, right, selected ? selected->side : 0, raw.frame);
         failure_reason = "no valid local passage (left: " + left.reason +
           "; right: " + right.reason + ")";
@@ -2960,6 +3145,7 @@ private:
 
     no_safe_path_cycles_ = 0;
     active_blocked_cycles_ = 0;
+    active_physical_blocked_cycles_ = 0;
     publishPath(*raw_message);
     publishSpeedCap(command_speed_max_mps_);
     publishStatus(

@@ -4,7 +4,8 @@
 #   Normal speed:      rule_straight_speed_mps, rule_curve_min_speed_mps,
 #                      rule_speed_curvature_gain, rule_speed_curvature_preview_m
 #   Absolute limit:    command_speed_min_mps, command_speed_max_mps (defined once)
-#   Maneuver limits:   avoidance/recovery/replan_pending_speed_cap_mps
+#   Maneuver limits:   avoidance/recovery/replan_pending_speed_cap_mps,
+#                      maneuver_lateral_acceleration_limit_mps2
 #   Steering response: steering_*_lookahead_m and steering_lookahead_speed_gain
 #   Local window:      local_path_target_length_m (primary physical target)
 
@@ -161,9 +162,14 @@ local_trajectory_planner:
     # TEMPORARY LOCAL-TRAJECTORY SPEED CAPS
     # Ordinary raceline cap = shared command_speed_max_mps.
     # --------------------------------------------------------
-    avoidance_speed_cap_mps: 1.2
-    recovery_speed_cap_mps: 1.5
-    replan_pending_speed_cap_mps: 1.0
+    # These are upper ceilings. The planner lowers them automatically so that
+    # speed^2 * remaining-path curvature stays within the lateral-acceleration
+    # limit. Gentle detours can therefore approach normal raceline speed while
+    # sharp geometry remains slower.
+    avoidance_speed_cap_mps: 4.5
+    recovery_speed_cap_mps: 4.5
+    replan_pending_speed_cap_mps: 2.0
+    maneuver_lateral_acceleration_limit_mps2: 3.5
 
     # --------------------------------------------------------
     # RECOVERY AND PERSISTENT-PLAN STATE

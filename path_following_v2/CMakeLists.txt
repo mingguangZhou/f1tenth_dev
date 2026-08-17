@@ -99,6 +99,16 @@ if(BUILD_TESTING)
     test/candidate_selection_test.cpp
   )
   target_include_directories(candidate_selection_test PRIVATE include)
+
+  ament_add_gtest(active_path_safety_test
+    test/active_path_safety_test.cpp
+  )
+  target_include_directories(active_path_safety_test PRIVATE include)
+
+  ament_add_gtest(maneuver_speed_policy_test
+    test/maneuver_speed_policy_test.cpp
+  )
+  target_include_directories(maneuver_speed_policy_test PRIVATE include)
 endif()
 
 ament_package()

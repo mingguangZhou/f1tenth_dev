@@ -247,13 +247,15 @@ as new scan space becomes visible.
 
 When no maneuver is active, the direction decision is open: both sides are
 evaluated. A side whose minimum clearance is more than
-`side_clearance_tie_m: 0.03` wider wins; the bounded objective chooses only when
-the clearances are comparable. Publishing that path closes the decision
-immediately. The selected left/right side stays latched for the whole pass. A
-material replan searches only that same side and is attracted to the remaining
-accepted path. It never silently substitutes the geometrically different
-legacy generator. This open/closed rule prevents scan noise from flipping the
-avoidance direction.
+`side_clearance_tie_m: 0.03` wider wins. When the clearances are comparable,
+objective costs are compared only if both candidates came from the same
+planning backend; otherwise the planner compares physical curvature and
+lateral offset. Publishing that path closes the decision immediately. The
+selected left/right side stays latched for the whole pass. A material replan
+searches only that same side and is attracted to the remaining accepted path.
+It never silently substitutes the geometrically different legacy generator.
+This open/closed rule prevents scan noise or incomparable solver scores from
+flipping the avoidance direction.
 
 For a brand-new maneuver only, `lattice_fallback_to_legacy_planner` still lets
 the bounded quintic generator make one deterministic attempt if centerline
@@ -318,14 +320,16 @@ material condition occurs:
 During an avoidance maneuver, replacement search is restricted to the latched
 side. After the stored pass anchor, a recovery update may optimize the return
 from the current pose. If a valid replacement is not yet available, the planner
-keeps the stored path, publishes `REPLAN_PENDING`, applies a low cap, and
-confirms an actual blockage/end failure over fresh scan messages:
+keeps the stored path, publishes `REPLAN_PENDING`, applies a reduced cap, and
+confirms an actual physical blockage or exhausted path over fresh scan
+messages. Entering the extra planning-clearance reserve requests a replan, but
+does not by itself declare the physically clear path unsafe:
 
 ```yaml
 plan_deviation_replan_m: 0.35
 active_path_blocked_confirmation_scans: 4
 no_safe_path_confirmation_scans: 5
-replan_pending_speed_cap_mps: 0.8   # onboard; 1.0 simulator
+replan_pending_speed_cap_mps: 1.5   # onboard; 2.0 simulator
 ```
 
 Only `NO_SAFE_PATH_CONFIRMED` or an immediate `CRITICAL_OBSTACLE` requests
@@ -347,9 +351,10 @@ Reactive.
 | input/TF/scan failures | `NONE` | Fail closed to Reactive or STOP |
 
 Diagnostics include `plan_id`, `plan_age_sec`, `plan_progress_index`,
-`plan_rejoin_index`, confirmation counters, side, obstacle geometry, clearance,
-curvature, `side_committed`, `maneuver_phase`, effective detection distance,
-and speed cap.
+`plan_rejoin_index`, separate planning-margin and physical-blockage confirmation
+counters, side, obstacle geometry, clearance, candidate objective domain,
+curvature, remaining-path maximum curvature, `side_committed`,
+`maneuver_phase`, effective detection distance, and speed cap.
 
 ## Bounded computation
 
@@ -395,13 +400,31 @@ rule_speed_curvature_preview_m: 0.50
 
 The curvature preview is physical distance, not waypoint count.
 
-The planner exposes only temporary maneuver caps:
+The simulator maneuver settings are:
 
 ```yaml
-avoidance_speed_cap_mps: 1.2
-recovery_speed_cap_mps: 1.5
-replan_pending_speed_cap_mps: 1.0
+avoidance_speed_cap_mps: 4.5
+recovery_speed_cap_mps: 4.5
+replan_pending_speed_cap_mps: 2.0
+maneuver_lateral_acceleration_limit_mps2: 3.5
 ```
+
+The avoidance and recovery values are ceilings, not fixed maneuver speeds. On
+each cycle the planner measures the maximum curvature still ahead in the held
+local plan and computes:
+
+```text
+curvature_cap = sqrt(lateral_acceleration_limit / remaining_maximum_curvature)
+maneuver_cap = min(configured ceiling, command maximum, curvature_cap)
+```
+
+This lets a gentle detour approach the normal raceline demand while slowing a
+tight detour enough to keep estimated lateral acceleration bounded. As the car
+passes the curved part, only the remaining geometry is considered, so the cap
+rises progressively during a smooth return. The follower's existing command
+rate limiter controls the actual acceleration. Lower-power onboard defaults
+use `2.2 m/s` avoidance/recovery ceilings, a `1.5 m/s` pending cap, and a
+`2.0 m/s^2` lateral-acceleration limit.
 
 `speed_policy_mode` selects rule-only (`0`) or rule plus a fresh RL speed
 residual (`1`). The established future RL structure is unchanged: bounded
@@ -412,7 +435,7 @@ policy.
 The follower applies the planner cap after rule/RL speed calculation:
 
 ```text
-final_speed = min(rate_limited_rule_plus_RL_speed, fresh planner cap)
+final_speed = min(rate_limited_rule_plus_RL_speed, fresh dynamic planner cap)
 ```
 
 The final authorized trajectory marker uses:
@@ -481,6 +504,19 @@ ros2 topic echo /path_following_v2/trajectory_speed_cap_mps
 ros2 topic echo /path_following_v2/local_path --once
 ros2 topic echo /drive_arbitration_v2/selected_mode
 ```
+
+For repeatable fixed-pose obstacle trials, keep the simulator and autonomy
+stack running and execute this inside the container:
+
+```bash
+/sim_ws/src/path_following_v2/tools/run_obstacle_trials.sh \
+  --reuse-stack --obstacle 4 --trials 5 --duration 18
+```
+
+The ignored `path_following_v2/trial_logs/` directory receives a sampled CSV,
+state-change JSONL, and JSON summary for each trial. The summary reports side
+choice, arbitration/failure counts, planning-margin versus physical-blockage
+counters, and speed statistics for every planner mode.
 
 First confirm `plan_id` stays constant through `AVOIDANCE_DEPARTING`,
 `AVOIDANCE_PASSING`, and `AVOIDANCE_RETURNING`, the
