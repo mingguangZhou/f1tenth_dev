@@ -1,0 +1,23 @@
+inputs:
+  centerline: centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/centerline_points_smooth.csv
+  obstacles: centerline_tools/obstacle_output/spielberg_key_turns/Spielberg_map_obstacles_clearance.csv
+  map_image: centerline_tools/obstacle_output/spielberg_key_turns/Spielberg_map_obstacles.png
+  map_yaml: centerline_tools/obstacle_output/spielberg_key_turns/Spielberg_map_obstacles.yaml
+parameters:
+  passing_offset_m: 0.48
+  hold_half_length_m: 0.55
+  transition_length_m: 3.5
+  minimum_map_clearance_m: 0.45
+  maximum_curvature_inv_m: 0.95
+metrics:
+  point_count: 6846
+  lap_length_m: 346.367380238929
+  minimum_map_clearance_m: 0.5093292593955994
+  maximum_abs_curvature_inv_m: 0.8244220413037411
+  maximum_abs_offset_m: 0.48
+  validated: true
+spawn:
+  index: 3126
+  x: 20.810496388313787
+  y: 20.67235055941259
+  yaw: 1.850140460509907

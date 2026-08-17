@@ -11,3 +11,4 @@
 **/__pycache__/
 *.py[cod]
 /path_following_v2/trial_logs/
+/centerline_tools/moving_agent_output/**/*_debug.png

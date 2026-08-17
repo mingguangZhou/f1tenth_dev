@@ -50,6 +50,23 @@ leaves Docker running. Stop the containers explicitly from the host with:
 ./dk.sh stop
 ```
 
+### Two-agent planner validation
+
+The bundled moving-agent scenario exercises overtaking on the current
+Spielberg test map. After building `sim` and `auto`, run these in separate
+container shells:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_moving_agent_launch.py
+f1 auto
+```
+
+Optionally record a 90-second acceptance run:
+
+```bash
+python3 /sim_ws/src/f1tenth_gym_ros/tools/validate_moving_agent.py
+```
+
 ## Without an NVIDIA gpu:
 
 **Install the following dependencies:**

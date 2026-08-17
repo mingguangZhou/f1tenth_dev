@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'gym_bridge = f1tenth_gym_ros.gym_bridge:main',
             'gym_bridge_slam = f1tenth_gym_ros.gym_bridge_slam:main',
+            'slow_agent_controller = f1tenth_gym_ros.slow_agent_controller:main',
         ],
     },
 )

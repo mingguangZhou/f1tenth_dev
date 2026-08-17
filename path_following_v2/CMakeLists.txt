@@ -109,6 +109,11 @@ if(BUILD_TESTING)
     test/maneuver_speed_policy_test.cpp
   )
   target_include_directories(maneuver_speed_policy_test PRIVATE include)
+
+  ament_add_gtest(path_splice_test
+    test/path_splice_test.cpp
+  )
+  target_include_directories(path_splice_test PRIVATE include)
 endif()
 
 ament_package()

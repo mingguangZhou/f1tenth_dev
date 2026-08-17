@@ -269,7 +269,10 @@ private:
 
     if (blocked_latched_) {
       state_ = State::BLOCKED;
-    } else if (clear_cycles_ >= clear_confirmation_scans_) {
+    } else if (!raw_blocked &&
+      (previous_state == State::CLEAR || clear_cycles_ >= clear_confirmation_scans_))
+    {
+      // Keep confirmed CLEAR through one unconfirmed blocked scan.
       state_ = State::CLEAR;
     } else if (raw_blocked && previous_state == State::CLEAR) {
       // Preserve a previously confirmed CLEAR state while an ordinary single

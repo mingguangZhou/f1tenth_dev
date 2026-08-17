@@ -384,12 +384,16 @@ private:
   bool findLookaheadPointInBaseFrame(
     const tf2::Transform & tf_map_to_base,
     const double active_lookahead_distance,
-    geometry_msgs::msg::Point & lookahead_point_base)
+    geometry_msgs::msg::Point & lookahead_point_base,
+    bool & using_path_endpoint)
   {
     const tf2::Transform tf_base_to_map = tf_map_to_base.inverse();
 
     bool found = false;
+    bool endpoint_found = false;
     double best_dist_error = std::numeric_limits<double>::max();
+    double endpoint_distance = 0.0;
+    geometry_msgs::msg::Point endpoint;
 
     for (const auto & pose_stamped : latest_path_.poses) {
       tf2::Vector3 p_map(
@@ -407,6 +411,13 @@ private:
 
       const double dist = std::hypot(x, y);
       if (dist < active_lookahead_distance) {
+        if (!endpoint_found || dist > endpoint_distance) {
+          endpoint.x = x;
+          endpoint.y = y;
+          endpoint.z = 0.0;
+          endpoint_distance = dist;
+          endpoint_found = true;
+        }
         continue;
       }
 
@@ -420,6 +431,12 @@ private:
       }
     }
 
+    using_path_endpoint = !found && endpoint_found;
+    if (using_path_endpoint) {
+      // Follow a safe endpoint when the path is shorter than the lookahead.
+      lookahead_point_base = endpoint;
+      return true;
+    }
     return found;
   }
 
@@ -636,12 +653,24 @@ private:
         : fixed_steering_lookahead_m_;
 
     geometry_msgs::msg::Point lookahead_point_base;
+    bool using_path_endpoint = false;
     const bool found = findLookaheadPointInBaseFrame(
       tf_map_to_base,
       active_lookahead_distance,
-      lookahead_point_base);
+      lookahead_point_base,
+      using_path_endpoint);
 
     if (!found) {
+      if (active_speed_cap <= 1e-3) {
+        // A zero cap at a safe endpoint is a valid hold.
+        publishStop();
+        geometry_msgs::msg::Point p;
+        publishMarkers(p, 0.0, false);
+        publishStatus(
+          "DRIVING", "controlled trajectory endpoint reached; holding stop",
+          true, 0.0, 0.0);
+        return;
+      }
       RCLCPP_WARN_THROTTLE(
         get_logger(), steady_clock_, 2000,
         "No valid forward lookahead point found.");
@@ -684,7 +713,10 @@ private:
     publishDrive(commanded_speed, steering_angle);
     publishMarkers(lookahead_point_base, steering_angle, true);
     publishStatus(
-      "DRIVING", "fresh raceline path, speed input, transform, and lookahead",
+      "DRIVING",
+      using_path_endpoint ?
+      "following the safe endpoint of a shortened trajectory" :
+      "fresh raceline path, speed input, transform, and lookahead",
       true, commanded_speed, steering_angle);
 
     RCLCPP_DEBUG_THROTTLE(

@@ -49,6 +49,13 @@ PLANNER_FIELDS = (
     "speed_cap_mps",
     "remaining_maximum_curvature_inv_m",
     "maneuver_lateral_acceleration_limit_mps2",
+    "rolling_pass_active",
+    "obstacle_track_valid",
+    "obstacle_track_moving",
+    "obstacle_track_longitudinal_speed_mps",
+    "obstacle_track_observations",
+    "obstacle_track_missing_scans",
+    "rolling_pass_clear_cycles",
     "candidate_decision_id",
     "candidate_decision_context",
     "candidate_selected_side",
@@ -202,7 +209,7 @@ class TrialLogger(Node):
             ) = load_closed_path_geometry(raceline_csv)
 
         self.create_subscription(
-            Odometry, "/ego_racecar/odom", self.odom_callback, qos_profile_sensor_data
+            Odometry, "/ego_racecar/odom", self.odom_callback, 10
         )
         self.create_subscription(
             LaserScan, "/scan", self.scan_callback, qos_profile_sensor_data

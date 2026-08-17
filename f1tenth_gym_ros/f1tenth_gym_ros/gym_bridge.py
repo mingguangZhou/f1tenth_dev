@@ -20,6 +20,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import math
+
 import rclpy
 from rclpy.node import Node
 
@@ -32,6 +34,9 @@ from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from ackermann_msgs.msg import AckermannDriveStamped
+from diagnostic_msgs.msg import DiagnosticArray
+from diagnostic_msgs.msg import DiagnosticStatus
+from diagnostic_msgs.msg import KeyValue
 from tf2_ros import TransformBroadcaster
 
 import gym
@@ -138,6 +143,8 @@ class GymBridge(Node):
         # publishers
         self.ego_scan_pub = self.create_publisher(LaserScan, ego_scan_topic, 10)
         self.ego_odom_pub = self.create_publisher(Odometry, ego_odom_topic, 10)
+        self.agent_status_pub = self.create_publisher(
+            DiagnosticArray, '/simulator/agent_status', 10)
         self.ego_drive_published = False
         if num_agents == 2:
             self.opp_scan_pub = self.create_publisher(LaserScan, opp_scan_topic, 10)
@@ -266,9 +273,12 @@ class GymBridge(Node):
         self._publish_transforms(ts)
         self._publish_laser_transforms(ts)
         self._publish_wheel_transforms(ts)
+        self._publish_agent_status(ts)
 
     def _update_sim_state(self):
         self.ego_scan = list(self.obs['scans'][0])
+        collisions = self.obs.get('collisions', [])
+        self.ego_collision = bool(collisions[0]) if len(collisions) > 0 else False
         if self.has_opp:
             self.opp_scan = list(self.obs['scans'][1])
             self.opp_pose[0] = self.obs['poses_x'][1]
@@ -277,6 +287,8 @@ class GymBridge(Node):
             self.opp_speed[0] = self.obs['linear_vels_x'][1]
             self.opp_speed[1] = self.obs['linear_vels_y'][1]
             self.opp_speed[2] = self.obs['ang_vels_z'][1]
+            self.opp_collision = (
+                bool(collisions[1]) if len(collisions) > 1 else False)
 
         self.ego_pose[0] = self.obs['poses_x'][0]
         self.ego_pose[1] = self.obs['poses_y'][0]
@@ -284,6 +296,43 @@ class GymBridge(Node):
         self.ego_speed[0] = self.obs['linear_vels_x'][0]
         self.ego_speed[1] = self.obs['linear_vels_y'][0]
         self.ego_speed[2] = self.obs['ang_vels_z'][0]
+
+    def _publish_agent_status(self, stamp):
+        message = DiagnosticArray()
+        message.header.stamp = stamp
+        statuses = []
+        agents = [
+            ('ego', self.ego_pose, self.ego_speed, self.ego_collision),
+        ]
+        if self.has_opp:
+            agents.append(
+                ('slow_agent', self.opp_pose, self.opp_speed, self.opp_collision))
+        separation = (
+            math.hypot(
+                self.ego_pose[0] - self.opp_pose[0],
+                self.ego_pose[1] - self.opp_pose[1])
+            if self.has_opp else math.inf)
+        for name, pose, speed, collision in agents:
+            status = DiagnosticStatus()
+            status.name = f'simulator/{name}'
+            status.hardware_id = 'f1tenth_gym'
+            status.level = (
+                DiagnosticStatus.ERROR if collision else DiagnosticStatus.OK)
+            status.message = 'COLLISION' if collision else 'DRIVING'
+            values = {
+                'collision': collision,
+                'x_m': pose[0],
+                'y_m': pose[1],
+                'yaw_rad': pose[2],
+                'speed_mps': math.hypot(speed[0], speed[1]),
+                'agent_separation_m': separation,
+            }
+            status.values = [
+                KeyValue(key=str(key), value=str(value))
+                for key, value in values.items()]
+            statuses.append(status)
+        message.status = statuses
+        self.agent_status_pub.publish(message)
 
         
 

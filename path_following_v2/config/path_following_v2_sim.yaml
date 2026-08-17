@@ -70,6 +70,7 @@ local_trajectory_planner:
     speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
     status_topic: "/path_following_v2/path_status"
     marker_topic: "/path_following_v2/detour_markers"
+    map_topic: "/map"
     robot_frame: "ego_racecar/base_link"
     control_rate_hz: 20.0
     raw_path_timeout_sec: 0.30
@@ -93,6 +94,9 @@ local_trajectory_planner:
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
     planning_clearance_reserve_m: 0.06
+    # Require a short, smooth splice to the refreshed raceline.
+    raceline_splice_max_gap_m: 0.15
+    raceline_splice_max_heading_error_deg: 15.0
     min_valid_beam_ratio: 0.35
     blocked_min_points: 3
     cluster_max_beam_gap: 2
@@ -100,6 +104,14 @@ local_trajectory_planner:
     max_obstacle_size_m: 0.50
     obstacle_size_tolerance_m: 0.15
     critical_obstacle_distance_m: 0.80
+    # Confirm motion across several map-frame observations.
+    obstacle_track_match_distance_m: 0.80
+    obstacle_velocity_filter_gain: 0.25
+    moving_obstacle_min_speed_mps: 0.55
+    moving_obstacle_confirmation_scans: 4
+    obstacle_track_drop_scans: 12
+    require_map_clearance: true
+    map_occupied_threshold: 50
 
     # --------------------------------------------------------
     # DETOUR GEOMETRY AND CURVATURE FEASIBILITY
@@ -170,6 +182,12 @@ local_trajectory_planner:
     recovery_speed_cap_mps: 4.5
     replan_pending_speed_cap_mps: 2.0
     maneuver_lateral_acceleration_limit_mps2: 3.5
+    # Stop safely and retry when neither overtake corridor is available.
+    enable_primary_safe_yield: true
+    yield_standoff_m: 1.00
+    yield_min_path_length_m: 0.50
+    yield_max_speed_mps: 2.0
+    yield_deceleration_mps2: 3.0
 
     # --------------------------------------------------------
     # RECOVERY AND PERSISTENT-PLAN STATE
@@ -186,6 +204,10 @@ local_trajectory_planner:
     rejoin_confirmation_scans: 4
     active_path_blocked_confirmation_scans: 4
     no_safe_path_confirmation_scans: 5
+    # Keep the chosen side until the target is confirmed behind.
+    rolling_pass_refresh_remaining_m: 4.0
+    rolling_pass_rear_clearance_m: 0.60
+    rolling_pass_completion_scans: 4
     enable_detour_planning: true
     publish_markers: true
 

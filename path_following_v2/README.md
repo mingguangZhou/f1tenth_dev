@@ -373,6 +373,19 @@ fixed iterations in simulation and 8 onboard. The simulator search allows
 The normal held-plan loop only advances progress, appends the current raceline
 tail, and validates the stored path. It does not rerun candidate generation.
 
+## Moving obstacles and safe waiting
+
+The planner tracks the selected obstacle in the map frame. A confirmed moving
+target keeps the chosen passing side open to the end of the current horizon;
+the return begins only after the target is confirmed behind the car. Candidate
+paths must remain inside the occupancy-map corridor.
+
+If the committed side is temporarily blocked, the planner publishes a safe
+path prefix and slows to a stop while retrying that side. This remains a primary
+planner state (`FOLLOWING_OBSTACLE`) and avoids a reactive steering handoff.
+Refreshed raceline tails are appended only through a gap-, heading-, and
+curvature-continuous splice.
+
 ## Speed and visualization
 
 The physical command envelope is configured once at the top of each YAML:

@@ -520,6 +520,7 @@ private:
            trajectory_mode == "REJOINING" ||
            trajectory_mode.rfind("AVOIDANCE_", 0) == 0 ||
            trajectory_mode == "RECOVERING_TO_RACELINE" ||
+           trajectory_mode == "FOLLOWING_OBSTACLE" ||
            trajectory_mode == "REPLAN_PENDING";
   }
 
