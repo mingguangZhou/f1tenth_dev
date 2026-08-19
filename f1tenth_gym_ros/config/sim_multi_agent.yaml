@@ -1,0 +1,58 @@
+bridge:
+  ros__parameters:
+    ego_namespace: "ego_racecar"
+    ego_scan_topic: "scan"
+    ego_odom_topic: "odom"
+    ego_opp_odom_topic: "opp_odom"
+    ego_drive_topic: "drive"
+
+    # Legacy opponent names remain compatible with the two-car scenario.
+    opp_namespace: "opp_racecar"
+    opp_scan_topic: "opp_scan"
+    opp_odom_topic: "odom"
+    opp_ego_odom_topic: "opp_odom"
+    opp_drive_topic: "opp_drive"
+
+    scan_distance_to_base_link: 0.27
+    scan_fov: 4.7
+    scan_beams: 1080
+
+    map_path: "/sim_ws/src/centerline_tools/obstacle_output/spielberg_key_turns/Spielberg_map_obstacles"
+    map_img_ext: ".png"
+
+    # One autonomous ego car and ten independently simulated traffic cars.
+    num_agent: 11
+    sx: 17.0
+    sy: 4.5
+    stheta: 0.7
+
+    traffic_namespaces:
+      ["opp_racecar", "traffic_2", "traffic_3", "traffic_4", "traffic_5",
+       "traffic_6", "traffic_7", "traffic_8", "traffic_9", "traffic_10"]
+    traffic_scan_topics:
+      ["opp_scan", "traffic_2/scan", "traffic_3/scan", "traffic_4/scan",
+       "traffic_5/scan", "traffic_6/scan", "traffic_7/scan", "traffic_8/scan",
+       "traffic_9/scan", "traffic_10/scan"]
+    traffic_drive_topics:
+      ["opp_drive", "traffic_2/drive", "traffic_3/drive", "traffic_4/drive",
+       "traffic_5/drive", "traffic_6/drive", "traffic_7/drive", "traffic_8/drive",
+       "traffic_9/drive", "traffic_10/drive"]
+
+    # Ten exact, equal arc-length phases around the validated closed route.
+    traffic_start_x:
+      [21.307471501906, -11.094586122190, -41.509617975976,
+       -34.332287240026, -18.103384571461, -52.511246900847,
+       -69.978050783807, -51.610917495936, -30.270746123030,
+       3.331882473806]
+    traffic_start_y:
+      [20.858021378203, 24.963264313259, 17.874405971878,
+       36.970191962819, 48.664372812587, 53.194754298561,
+       44.579662183137, 15.434729380551, -8.723034110816,
+       0.266099881040]
+    traffic_start_theta:
+      [1.928340653244, -3.097567066218, 2.239243103351,
+       -0.215547451138, 3.080172094358, 2.955120274786,
+       -0.778409774362, -1.087386343172, 0.174417564931,
+       0.263155706884]
+
+    kb_teleop: true

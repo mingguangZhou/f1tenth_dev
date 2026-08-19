@@ -1,0 +1,166 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.75
+      Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: Spielberg obstacle map
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /map
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: Ego LaserScan
+      Size (Pixels): 3
+      Style: Flat Squares
+      Topic:
+        Reliability Policy: Best Effort
+        Value: /scan
+      Value: true
+    - Alpha: 0.8
+      Class: rviz_default_plugins/Path
+      Color: 255; 170; 0
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.03
+      Name: Shared traffic route
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /moving_agent/reference_path
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /ego_robot_description
+      Enabled: true
+      Name: Ego
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /opp_robot_description
+      Enabled: true
+      Name: Traffic 1
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_2_robot_description
+      Enabled: true
+      Name: Traffic 2
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_3_robot_description
+      Enabled: true
+      Name: Traffic 3
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_4_robot_description
+      Enabled: true
+      Name: Traffic 4
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_5_robot_description
+      Enabled: true
+      Name: Traffic 5
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_6_robot_description
+      Enabled: true
+      Name: Traffic 6
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_7_robot_description
+      Enabled: true
+      Name: Traffic 7
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_8_robot_description
+      Enabled: true
+      Name: Traffic 8
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_9_robot_description
+      Enabled: true
+      Name: Traffic 9
+      Visual Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /traffic_10_robot_description
+      Enabled: true
+      Name: Traffic 10
+      Visual Enabled: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Spielberg overview
+      Scale: 16
+      Target Frame: map
+      Value: TopDownOrtho (rviz)
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1600
+  X: 40
+  Y: 30

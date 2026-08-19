@@ -67,6 +67,33 @@ Optionally record a 90-second acceptance run:
 python3 /sim_ws/src/f1tenth_gym_ros/tools/validate_moving_agent.py
 ```
 
+### Eleven-vehicle Spielberg fixture
+
+The multi-agent fixture launches ego plus ten independently simulated traffic
+cars. The traffic cars use one fixed, map-validated route derived from the ego
+raceline, with smooth local nudges around the nine fixed obstacles. Their
+starts are separated by exactly one tenth of the route's closed arc length.
+
+After building the simulator package, launch it with:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py
+```
+
+For a headless smoke test, disable only RViz; all eleven simulated identities
+and all ten traffic controllers still run:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py use_rviz:=false
+```
+
+With that launch running, verify that every simulator identity is present, all
+ten traffic cars move, and no collision is reported:
+
+```bash
+python3 /sim_ws/src/f1tenth_gym_ros/tools/validate_multi_agent_fixture.py
+```
+
 ## Without an NVIDIA gpu:
 
 **Install the following dependencies:**
@@ -147,7 +174,9 @@ You can then run another node by creating another bash session in `tmux`.
 - The configuration file for the simulation is at `f1tenth_gym_ros/config/sim.yaml`.
 - Topic names and namespaces can be configured but is recommended to leave uncahnged.
 - The map can be changed via the `map_path` parameter. You'll have to use the full path to the map file in the container. The map follows the ROS convention. It is assumed that the image file and the `yaml` file for the map are in the same directory with the same name. See the note below about mounting a volume to see where to put your map file.
-- The `num_agent` parameter can be changed to either 1 or 2 for single or two agent racing.
+- The `num_agent` parameter accepts any positive vehicle count. Counts above
+  two use the aligned `traffic_*` namespace, topic, and start-pose arrays; the
+  bundled Spielberg fixture provides a validated eleven-vehicle example.
 - The ego and opponent starting pose can also be changed via parameters, these are in the global map coordinate frame.
 
 The entire directory of the repo is mounted to a workspace `/sim_ws/src` as a package. All changes made in the repo on the host system will also reflect in the container. After changing the configuration, run `colcon build` again in the container workspace to make sure the changes are reflected. And run `colcon build --packages-select f1tenth_gym_ros` to only rebuild the simulator.

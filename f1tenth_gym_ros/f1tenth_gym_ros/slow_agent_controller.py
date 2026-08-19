@@ -27,10 +27,14 @@ class SlowAgentController(Node):
     def __init__(self):
         super().__init__("slow_agent_controller")
         self.declare_parameter("path_csv", "")
+        # An empty name preserves the original two-car identities. Multi-agent
+        # launches set this to each traffic namespace.
+        self.declare_parameter("agent_name", "")
         self.declare_parameter("odom_topic", "/opp_racecar/odom")
         self.declare_parameter("scan_topic", "/opp_scan")
         self.declare_parameter("drive_topic", "/opp_drive")
         self.declare_parameter("path_topic", "/moving_agent/reference_path")
+        self.declare_parameter("publish_reference_path", True)
         self.declare_parameter("status_topic", "/moving_agent/status")
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("lookahead_m", 1.20)
@@ -48,6 +52,17 @@ class SlowAgentController(Node):
         if not path_csv:
             raise RuntimeError("path_csv must name a validated closed path.")
         self.path, self.path_yaw = self.load_path(path_csv)
+        configured_agent_name = str(self.get_parameter("agent_name").value).strip()
+        if configured_agent_name:
+            self.agent_name = configured_agent_name.strip("/")
+            if not self.agent_name:
+                raise RuntimeError("agent_name must contain a namespace name.")
+            self.command_frame = self.agent_name + "/base_link"
+            self.status_name = f"moving_agent/{self.agent_name}_path_follower"
+        else:
+            self.agent_name = "slow_agent"
+            self.command_frame = "opp_racecar/base_link"
+            self.status_name = "moving_agent/slow_path_follower"
         self.segment_lengths = np.linalg.norm(
             np.roll(self.path, -1, axis=0) - self.path, axis=1
         )
@@ -97,9 +112,11 @@ class SlowAgentController(Node):
         path_qos = QoSProfile(depth=1)
         path_qos.reliability = ReliabilityPolicy.RELIABLE
         path_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        self.path_publisher = self.create_publisher(
-            Path, self.get_parameter("path_topic").value, path_qos
-        )
+        self.path_publisher = None
+        if bool(self.get_parameter("publish_reference_path").value):
+            self.path_publisher = self.create_publisher(
+                Path, self.get_parameter("path_topic").value, path_qos
+            )
         self.status_publisher = self.create_publisher(
             DiagnosticArray, self.get_parameter("status_topic").value, 10
         )
@@ -119,10 +136,11 @@ class SlowAgentController(Node):
             1.0, float(self.get_parameter("control_rate_hz").value)
         )
         self.create_timer(1.0 / control_rate_hz, self.control_callback)
-        self.create_timer(1.0, self.publish_reference_path)
-        self.publish_reference_path()
+        if self.path_publisher is not None:
+            self.create_timer(1.0, self.publish_reference_path)
+            self.publish_reference_path()
         self.get_logger().info(
-            f"slow agent ready: points={len(self.path)} "
+            f"{self.agent_name} ready: points={len(self.path)} "
             f"speed={self.maximum_speed_mps:.2f} m/s lookahead={self.lookahead_m:.2f} m"
         )
 
@@ -277,13 +295,15 @@ class SlowAgentController(Node):
     def publish_command(self, speed, steering):
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
-        message.header.frame_id = "opp_racecar/base_link"
+        message.header.frame_id = self.command_frame
         message.drive.speed = float(speed)
         message.drive.steering_angle = float(steering)
         self.drive_publisher.publish(message)
         self.last_command = (float(speed), float(steering))
 
     def publish_reference_path(self):
+        if self.path_publisher is None:
+            return
         message = Path()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "map"
@@ -302,7 +322,7 @@ class SlowAgentController(Node):
         array = DiagnosticArray()
         array.header.stamp = self.get_clock().now().to_msg()
         status = DiagnosticStatus()
-        status.name = "moving_agent/slow_path_follower"
+        status.name = self.status_name
         status.hardware_id = "simulator"
         status.level = (
             DiagnosticStatus.OK

@@ -26,6 +26,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -37,7 +38,7 @@ def launch_nodes(context):
     with open(config, "r", encoding="utf-8") as stream:
         config_dict = yaml.safe_load(stream)
     parameters = config_dict["bridge"]["ros__parameters"]
-    has_opponent = int(parameters["num_agent"]) > 1
+    num_agents = int(parameters["num_agent"])
 
     nodes = [
         Node(
@@ -45,6 +46,7 @@ def launch_nodes(context):
             executable="rviz2",
             name="rviz",
             arguments=["-d", rviz_config],
+            condition=IfCondition(LaunchConfiguration("use_rviz")),
         ),
         Node(
             package="f1tenth_gym_ros",
@@ -88,25 +90,60 @@ def launch_nodes(context):
             remappings=[("/robot_description", "ego_robot_description")],
         ),
     ]
-    if has_opponent:
-        nodes.append(
-            Node(
-                package="robot_state_publisher",
-                executable="robot_state_publisher",
-                name="opp_robot_state_publisher",
-                parameters=[
-                    {
-                        "robot_description": Command(
-                            [
-                                "xacro ",
-                                os.path.join(package_share, "launch", "opp_racecar.xacro"),
-                            ]
-                        )
-                    }
-                ],
-                remappings=[("/robot_description", "opp_robot_description")],
+    if num_agents > 1:
+        if num_agents == 2:
+            traffic_namespaces = [parameters["opp_namespace"]]
+        else:
+            traffic_namespaces = parameters["traffic_namespaces"]
+            if len(traffic_namespaces) != num_agents - 1:
+                raise RuntimeError(
+                    "traffic_namespaces must contain one name per traffic agent."
+                )
+
+        normalized_namespaces = [
+            str(namespace).strip().strip("/") for namespace in traffic_namespaces
+        ]
+        if len(set(normalized_namespaces)) != len(normalized_namespaces):
+            raise RuntimeError("Traffic namespaces must be unique.")
+
+        for namespace in normalized_namespaces:
+            if not namespace:
+                raise RuntimeError("Traffic namespaces cannot be blank.")
+            if "/" in namespace:
+                raise RuntimeError(
+                    "Traffic namespaces cannot contain internal slashes."
+                )
+            if namespace == "ego":
+                raise RuntimeError(
+                    "Traffic namespace 'ego' is reserved for diagnostics."
+                )
+            description_topic = (
+                "opp_robot_description"
+                if namespace == "opp_racecar"
+                else f"{namespace}_robot_description"
             )
-        )
+            nodes.append(
+                Node(
+                    package="robot_state_publisher",
+                    executable="robot_state_publisher",
+                    name=f"{namespace}_robot_state_publisher",
+                    parameters=[
+                        {
+                            "robot_description": Command(
+                                [
+                                    "xacro ",
+                                    os.path.join(
+                                        package_share, "launch", "opp_racecar.xacro"
+                                    ),
+                                    " car_name:=",
+                                    namespace,
+                                ]
+                            )
+                        }
+                    ],
+                    remappings=[("/robot_description", description_topic)],
+                )
+            )
     return nodes
 
 
@@ -123,6 +160,11 @@ def generate_launch_description():
                 "rviz_config",
                 default_value=os.path.join(package_share, "launch", "gym_bridge.rviz"),
                 description="RViz display configuration.",
+            ),
+            DeclareLaunchArgument(
+                "use_rviz",
+                default_value="true",
+                description="Start RViz with the simulator bridge.",
             ),
             OpaqueFunction(function=launch_nodes),
         ]
