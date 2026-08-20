@@ -54,7 +54,7 @@ The arbitrator publishes a single RViz `visualization_msgs/msg/Marker` on:
 - light blue: any active avoidance phase (`AVOIDANCE_DEPARTING`,
   `AVOIDANCE_PASSING`, or `AVOIDANCE_RETURNING`), a recovery trajectory, or a
   `REPLAN_PENDING` trajectory actually authorized under the same conditions;
-- orange: the upper corridor path while arbitration is `REACTIVE` and the lower
+- red: the upper corridor path while arbitration is `REACTIVE` and the lower
   controller confirms `NOMINAL` for that mode;
 - hidden: lower FTG, reverse, emergency stop, recovery settle, waiting, stop,
   stale status, or stale/invalid path.

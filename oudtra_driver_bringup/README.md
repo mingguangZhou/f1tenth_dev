@@ -82,7 +82,7 @@ ros2 topic info /drive --verbose
 The actually authorized local trajectory marker is dark blue during ordinary
 raceline tracking, light blue while `AVOIDANCE_DEPARTING`,
 `AVOIDANCE_PASSING`, `AVOIDANCE_RETURNING`, `RECOVERING_TO_RACELINE`, or
-`REPLAN_PENDING` is being executed, and orange in Reactive mode. Inspect
+`REPLAN_PENDING` is being executed, and red in Reactive mode. Inspect
 `plan_id` in `/path_following_v2/path_status`: it should
 remain unchanged while one map-anchored plan is trimmed and executed, and only
 change after a material replan request.

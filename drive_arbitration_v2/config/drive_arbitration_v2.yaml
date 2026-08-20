@@ -43,7 +43,7 @@ drive_arbitrator:
 
     # Visualization only: show the local path that is actually authorized
     # through the lower controller. Dark blue=raceline, light blue=executed
-    # local replan, orange=reactive upper.
+    # local replan, red=reactive upper.
     raceline_local_path_topic: "/path_following_v2/local_path"
     reactive_local_path_topic: "/reactive_control_v2/local_path"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"

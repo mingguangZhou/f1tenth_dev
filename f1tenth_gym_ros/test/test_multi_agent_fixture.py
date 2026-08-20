@@ -54,6 +54,35 @@ def test_eleven_vehicle_fixture_builds_ten_independent_specs():
     assert len({spec.namespace for spec in specs}) == 10
 
 
+def test_multi_agent_rviz_shows_raceline_and_selected_trajectory():
+    """Verify raceline and selected-trajectory displays in the RViz config."""
+    repository = Path(__file__).resolve().parents[2]
+    rviz_path = (
+        repository
+        / "f1tenth_gym_ros/launch/gym_bridge_multi_agent.rviz"
+    )
+    with rviz_path.open("r", encoding="utf-8") as stream:
+        rviz = yaml.safe_load(stream)
+
+    displays = {
+        display["Name"]: display
+        for display in rviz["Visualization Manager"]["Displays"]
+    }
+
+    raceline = displays["Raceline Markers"]
+    assert raceline["Enabled"] is True
+    assert raceline["Class"] == "rviz_default_plugins/MarkerArray"
+    assert raceline["Topic"]["Value"] == "/raceline_markers"
+    assert raceline["Topic"]["Durability Policy"] == "Transient Local"
+
+    selected = displays["Ultimate Chosen Local Trajectory"]
+    assert selected["Enabled"] is True
+    assert selected["Class"] == "rviz_default_plugins/Marker"
+    assert selected["Topic"]["Value"] == (
+        "/drive_arbitration_v2/ultimate_chosen_local_trajectory"
+    )
+
+
 def test_array_length_mismatch_is_rejected():
     """Index-aligned bridge arrays may not silently truncate with zip()."""
     parameters = fixture_parameters()

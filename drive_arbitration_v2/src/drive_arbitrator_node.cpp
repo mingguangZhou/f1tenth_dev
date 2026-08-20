@@ -896,7 +896,7 @@ private:
       marker.color.b = 0.75F;
     } else {
       marker.color.r = 1.0F;
-      marker.color.g = 0.5F;
+      marker.color.g = 0.0F;
       marker.color.b = 0.0F;
     }
     marker.points.reserve(selected_path->poses.size());

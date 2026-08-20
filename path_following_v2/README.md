@@ -456,7 +456,7 @@ The final authorized trajectory marker uses:
 - dark blue: ordinary raceline;
 - light blue (`0.20, 0.80, 1.00`): a local replan currently selected by the
   arbitrator and passed through the lower controller;
-- orange: Reactive upper trajectory.
+- red: Reactive upper trajectory.
 
 Candidate debug markers use light blue for the selected local candidate, grey
 for the alternative, and red for obstacle-cluster returns.
