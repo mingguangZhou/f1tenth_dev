@@ -42,6 +42,7 @@ ament_target_dependencies(upper_corridor_follower
 )
 
 add_executable(lower_safety_controller src/lower_safety_controller.cpp)
+target_include_directories(lower_safety_controller PRIVATE include)
 ament_target_dependencies(lower_safety_controller
   ackermann_msgs
   diagnostic_msgs
@@ -59,8 +60,20 @@ install(DIRECTORY config launch rviz
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY include/
+  DESTINATION include
+)
+
 install(FILES README.md LICENSE
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(raceline_stall_handoff_test
+    test/raceline_stall_handoff_test.cpp
+  )
+  target_include_directories(raceline_stall_handoff_test PRIVATE include)
+endif()
 
 ament_package()

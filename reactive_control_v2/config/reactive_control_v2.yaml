@@ -199,6 +199,9 @@ lower_safety_controller:
     # VESC odometry is required for entry, distance and complete-stop handoff.
     # ========================================================
     enable_reverse_recovery: true
+    # Onboard behavior is unchanged until this handoff is validated with the
+    # real drivetrain and odometry. The simulator enables it explicitly.
+    enable_raceline_stall_handoff: false
     stationary_speed_threshold_mps: 0.05
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20

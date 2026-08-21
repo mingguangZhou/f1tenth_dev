@@ -186,6 +186,9 @@ lower_safety_controller:
     # 6. REVERSE ENTRY DETECTION
     # ========================================================
     enable_reverse_recovery: true
+    # A sustained positive primary request with fresh stopped odometry first
+    # requests REACTIVE; reverse remains authorized only after that handoff.
+    enable_raceline_stall_handoff: true
     stationary_speed_threshold_mps: 0.05
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20
@@ -212,10 +215,11 @@ lower_safety_controller:
 
     # ========================================================
     # 9. REVERSE SIDE-CLEARANCE ABORT
-    # Simulator scan lacks reliable rear-side coverage, so this simulator-only
-    # check stays disabled. The onboard YAML keeps it enabled.
+    # Require the available rear-side scan sectors to remain clear. Directly
+    # rearward space is outside the sensor field of view, so reverse remains
+    # bounded by the distance, duration, and attempt limits above.
     # ========================================================
-    reverse_require_side_clearance: false
+    reverse_require_side_clearance: true
     reverse_side_sector_min_angle_deg: 100.0
     reverse_side_sector_max_angle_deg: 135.0
     reverse_min_side_clearance_m: 0.20

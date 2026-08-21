@@ -14,6 +14,7 @@
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "reactive_control_v2/raceline_stall_handoff.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/u_int8.hpp"
 
@@ -74,13 +75,15 @@ public:
       "selected=%s, scan=%s, odom=%s, safe=%s, "
       "upper_failure_status_fallback=%s, arbitration_mode_required=%s, "
       "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, "
-      "reverse_recovery=%s, low_speed_assist=%s, ftg_debug=%s",
+      "reverse_recovery=%s, raceline_stall_handoff=%s, "
+      "low_speed_assist=%s, ftg_debug=%s",
       selected_command_topic_.c_str(), scan_topic_.c_str(), odom_topic_.c_str(),
       safe_command_topic_.c_str(),
       enable_fallback_on_upper_failure_status_ ? "true" : "false",
       require_arbitration_mode_ ? "true" : "false",
       absolute_speed_limit_mps_, absolute_steering_limit_deg_,
       enable_reverse_recovery_ ? "true" : "false",
+      enable_raceline_stall_handoff_ ? "true" : "false",
       enable_low_speed_assist_ ? "true" : "false",
       fallback_terminal_debug_ ? "true" : "false");
   }
@@ -230,6 +233,7 @@ private:
   // feedback. The structure intentionally leaves room for a later independent
   // scan-motion confidence source without making it mandatory now.
   bool enable_reverse_recovery_{true};
+  bool enable_raceline_stall_handoff_{false};
   double stationary_speed_threshold_mps_{0.05};
   double dead_end_confirmation_sec_{1.0};
   double stuck_forward_command_threshold_mps_{0.20};
@@ -270,6 +274,11 @@ private:
   bool forward_motion_timer_active_{false};
   bool low_speed_assist_candidate_active_{false};
   bool low_speed_assist_active_{false};
+  bool control_arbitration_mode_valid_{false};
+  uint8_t last_control_arbitration_mode_{0};
+  bool raceline_stall_handoff_evidence_{false};
+  bool raceline_stall_handoff_active_{false};
+  bool raceline_stall_handoff_latched_{false};
   int low_speed_assist_direction_{0};
   double low_speed_assist_requested_mps_{0.0};
   double low_speed_assist_output_command_mps_{0.0};
@@ -342,6 +351,7 @@ private:
     declare_parameter<double>("low_speed_assist_exit_shortfall_mps", 0.20);
 
     declare_parameter<bool>("enable_reverse_recovery", true);
+    declare_parameter<bool>("enable_raceline_stall_handoff", false);
     declare_parameter<double>("stationary_speed_threshold_mps", 0.05);
     declare_parameter<double>("dead_end_confirmation_sec", 1.0);
     declare_parameter<double>("stuck_forward_command_threshold_mps", 0.20);
@@ -443,6 +453,8 @@ private:
       std::max(0.0, get_parameter("low_speed_assist_exit_shortfall_mps").as_double());
 
     enable_reverse_recovery_ = get_parameter("enable_reverse_recovery").as_bool();
+    enable_raceline_stall_handoff_ =
+      get_parameter("enable_raceline_stall_handoff").as_bool();
     stationary_speed_threshold_mps_ =
       std::max(0.0, get_parameter("stationary_speed_threshold_mps").as_double());
     dead_end_confirmation_sec_ =
@@ -1202,11 +1214,29 @@ private:
       std::to_string(low_speed_assist_actual_magnitude_mps_));
     add("low_speed_assist_shortfall_mps", std::to_string(low_speed_assist_shortfall_mps_));
     add("reverse_recovery_enabled", enable_reverse_recovery_ ? "true" : "false");
+    add(
+      "raceline_stall_handoff_enabled",
+      enable_raceline_stall_handoff_ ? "true" : "false");
+    add(
+      "raceline_stall_handoff_evidence",
+      raceline_stall_handoff_evidence_ ? "true" : "false");
+    add(
+      "raceline_stall_handoff_active",
+      raceline_stall_handoff_active_ ? "true" : "false");
+    add(
+      "raceline_stall_handoff_latched",
+      raceline_stall_handoff_latched_ ? "true" : "false");
     add("dead_end_timer_active", dead_end_timer_active_ ? "true" : "false");
     add(
       "dead_end_timer_sec",
       dead_end_timer_active_ ?
       std::to_string(std::max(0.0, (steady_now - dead_end_started_at_).seconds())) :
+      "0.000000");
+    add("stuck_timer_active", stuck_timer_active_ ? "true" : "false");
+    add(
+      "stuck_timer_sec",
+      stuck_timer_active_ ?
+      std::to_string(std::max(0.0, (steady_now - stuck_started_at_).seconds())) :
       "0.000000");
     add("reverse_attempt_count", std::to_string(reverse_attempt_count_));
     add("reverse_distance_m", std::to_string(reverse_distance_m_));
@@ -1301,6 +1331,22 @@ private:
       (arbitration_mode_healthy && arbitration_mode == 2);
     const bool selected_command_authorized = !require_arbitration_mode_ ||
       (arbitration_mode_healthy && (arbitration_mode == 1 || arbitration_mode == 2));
+
+    if (require_arbitration_mode_) {
+      const bool continuity_broken =
+        reactive_control_v2::raceline_stall_handoff::modeContinuityBroken(
+        control_arbitration_mode_valid_, last_control_arbitration_mode_,
+        arbitration_mode_healthy, arbitration_mode);
+      if (continuity_broken) {
+        stuck_timer_active_ = false;
+      }
+      control_arbitration_mode_valid_ = arbitration_mode_healthy;
+      if (arbitration_mode_healthy) {
+        last_control_arbitration_mode_ = arbitration_mode;
+      }
+    }
+    raceline_stall_handoff_evidence_ = false;
+    raceline_stall_handoff_active_ = false;
 
     if (!reactive_mode_authorized && (reverse_active_ || settle_active_)) {
       cancelReactiveRecovery();
@@ -1457,7 +1503,6 @@ private:
         mode = Mode::REVERSE_RECOVERY;
         reason = reverse_trigger_reason_;
         output = reverseCommand();
-        applyLowSpeedAssist(output, current_speed, reverse_safety.valid, current_time);
       }
     } else if (settle_active_) {
       mode = Mode::RECOVERY_SETTLE;
@@ -1494,10 +1539,31 @@ private:
         enable_reverse_recovery_ && scan_data.valid &&
         stationary && base_mode == Mode::EMERGENCY_STOP &&
         (front_emergency || !fallback.valid);
-      const bool stuck_evidence = reactive_mode_authorized &&
+      const bool reactive_stuck_evidence = reactive_mode_authorized &&
         enable_reverse_recovery_ && scan_data.valid &&
         odom_healthy && base_output.drive.speed >= stuck_forward_command_threshold_mps_ &&
         std::abs(current_speed) <= stuck_speed_threshold_mps_;
+      reactive_control_v2::raceline_stall_handoff::Evidence handoff_evidence;
+      handoff_evidence.enabled = enable_raceline_stall_handoff_;
+      handoff_evidence.arbitration_required = require_arbitration_mode_;
+      handoff_evidence.arbitration_mode_healthy = arbitration_mode_healthy;
+      handoff_evidence.arbitration_mode = arbitration_mode;
+      handoff_evidence.command_fresh = command_fresh;
+      handoff_evidence.command_valid = command_valid;
+      handoff_evidence.nominal_mode = base_mode == Mode::NOMINAL;
+      handoff_evidence.scan_valid = scan_data.valid;
+      handoff_evidence.odom_healthy = odom_healthy;
+      // Use the selected primary request before low-speed assistance. A tiny
+      // planned braking/yield command must not become strong-motion evidence
+      // merely because assistance temporarily raises the final command.
+      handoff_evidence.requested_forward_speed_mps = nominal_forward_speed;
+      handoff_evidence.measured_speed_mps = current_speed;
+      handoff_evidence.command_threshold_mps = stuck_forward_command_threshold_mps_;
+      handoff_evidence.stopped_speed_threshold_mps = stuck_speed_threshold_mps_;
+      raceline_stall_handoff_evidence_ =
+        reactive_control_v2::raceline_stall_handoff::present(handoff_evidence);
+      const bool stuck_evidence =
+        reactive_stuck_evidence || raceline_stall_handoff_evidence_;
 
       if (dead_end_evidence) {
         if (!dead_end_timer_active_) {
@@ -1527,25 +1593,46 @@ private:
 
       const bool dead_end_confirmed = dead_end_evidence && dead_end_timer_active_ &&
         (current_time - dead_end_started_at_).seconds() >= dead_end_confirmation_sec_;
-      const bool stuck_confirmed = stuck_timer_active_ &&
-        (current_time - stuck_started_at_).seconds() >= stuck_confirmation_sec_;
+      const double stuck_elapsed_sec = stuck_timer_active_ ?
+        std::max(0.0, (current_time - stuck_started_at_).seconds()) : 0.0;
+      const bool stuck_confirmed =
+        reactive_control_v2::raceline_stall_handoff::confirmationReached(
+        stuck_timer_active_, stuck_elapsed_sec, stuck_confirmation_sec_);
+      const bool raceline_stall_confirmed =
+        reactive_control_v2::raceline_stall_handoff::requestConfirmed(
+        handoff_evidence, stuck_timer_active_, stuck_elapsed_sec,
+        stuck_confirmation_sec_);
+      const bool reactive_stuck_confirmed = reactive_stuck_evidence && stuck_confirmed;
       const bool attempts_available = reverse_attempt_count_ < reverse_max_attempts_;
-      if ((stuck_confirmed || dead_end_confirmed) && attempts_available &&
+      if (raceline_stall_confirmed) {
+        // The lower layer owns the final command, so stop before asking the
+        // arbitrator to transfer ownership. Existing lower-status coordination
+        // recognizes EMERGENCY_STOP under mode 1 and selects REACTIVE. Reverse
+        // remains forbidden until mode 2 is observed on a later control cycle.
+        raceline_stall_handoff_active_ = true;
+        raceline_stall_handoff_latched_ =
+          reactive_control_v2::raceline_stall_handoff::updatePersistentLatch(
+          raceline_stall_handoff_latched_, true, false);
+        mode = Mode::EMERGENCY_STOP;
+        reason = "positive RACELINE command persisted while odometry stayed low; "
+          "requesting REACTIVE handoff";
+        output = stopCommand();
+        resetLowSpeedAssist();
+      } else if ((reactive_stuck_confirmed || dead_end_confirmed) && attempts_available &&
         reverse_safety.valid)
       {
-        const std::string trigger = stuck_confirmed ?
+        const std::string trigger = reactive_stuck_confirmed ?
           "forward command persisted while VESC speed stayed low" :
           "stationary forward dead end persisted";
         startReverse(current_time, trigger);
         mode = Mode::REVERSE_RECOVERY;
         reason = trigger;
         output = reverseCommand();
-        applyLowSpeedAssist(output, current_speed, reverse_safety.valid, current_time);
-      } else if ((stuck_confirmed || dead_end_confirmed) && !attempts_available) {
+      } else if ((reactive_stuck_confirmed || dead_end_confirmed) && !attempts_available) {
         mode = Mode::EMERGENCY_STOP;
         reason = "reverse recovery attempt limit reached";
         output = stopCommand();
-      } else if ((stuck_confirmed || dead_end_confirmed) && !reverse_safety.valid) {
+      } else if ((reactive_stuck_confirmed || dead_end_confirmed) && !reverse_safety.valid) {
         mode = Mode::EMERGENCY_STOP;
         reason = "reverse recovery blocked: " + reverse_safety.reason;
         output = stopCommand();
@@ -1566,6 +1653,9 @@ private:
       {
         reverse_attempt_count_ = 0;
         reverse_trigger_reason_.clear();
+        raceline_stall_handoff_latched_ =
+          reactive_control_v2::raceline_stall_handoff::updatePersistentLatch(
+          raceline_stall_handoff_latched_, false, true);
       }
     } else {
       forward_motion_timer_active_ = false;

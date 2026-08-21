@@ -417,6 +417,7 @@ private:
   double yield_min_path_length_m_{0.50};
   double yield_max_speed_mps_{1.0};
   double yield_deceleration_mps2_{3.0};
+  double safe_yield_terminal_speed_mps_{0.05};
   double recovery_enter_lateral_error_m_{0.18};
   double recovery_exit_lateral_error_m_{0.08};
   double recovery_exit_heading_error_deg_{10.0};
@@ -434,6 +435,7 @@ private:
   int rolling_pass_completion_scans_{4};
   bool enable_detour_planning_{true};
   bool publish_markers_{true};
+  double last_published_speed_cap_mps_{0.0};
 
   ActivePlan active_plan_;
   unsigned long next_plan_id_{1};
@@ -441,9 +443,11 @@ private:
   int active_blocked_cycles_{0};
   int active_physical_blocked_cycles_{0};
   int no_safe_path_cycles_{0};
+  int terminal_safe_yield_cycles_{0};
   int rolling_pass_clear_cycles_{0};
   double last_effective_detection_distance_m_{0.0};
   rclcpp::Time last_processed_scan_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_terminal_safe_yield_scan_time_{0, 0, RCL_STEADY_TIME};
   std::vector<Point2> centerline_points_;
   bool centerline_reference_valid_{false};
   std::string last_reference_source_{"raceline"};
@@ -569,6 +573,7 @@ private:
     declare_parameter<double>("yield_min_path_length_m", 0.50);
     declare_parameter<double>("yield_max_speed_mps", 1.0);
     declare_parameter<double>("yield_deceleration_mps2", 3.0);
+    declare_parameter<double>("safe_yield_terminal_speed_mps", 0.05);
 
     // Enter/exit hysteresis for localization-based convergence to the global
     // raceline.  A local plan is not released merely because an obstacle
@@ -748,6 +753,8 @@ private:
       get_parameter("yield_max_speed_mps").as_double(), 0.0, command_speed_max_mps_);
     yield_deceleration_mps2_ = std::max(
       0.1, get_parameter("yield_deceleration_mps2").as_double());
+    safe_yield_terminal_speed_mps_ = std::max(
+      0.0, get_parameter("safe_yield_terminal_speed_mps").as_double());
     recovery_enter_lateral_error_m_ = std::max(
       0.01, get_parameter("recovery_enter_lateral_error_m").as_double());
     recovery_exit_lateral_error_m_ = std::clamp(
@@ -1171,6 +1178,8 @@ private:
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
     no_safe_path_cycles_ = 0;
+    terminal_safe_yield_cycles_ = 0;
+    last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
     obstacle_track_ = ObstacleTrack();
     last_processed_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
@@ -2807,6 +2816,8 @@ private:
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
     no_safe_path_cycles_ = 0;
+    terminal_safe_yield_cycles_ = 0;
+    last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
     RCLCPP_INFO(
       get_logger(),
@@ -2826,6 +2837,8 @@ private:
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
+    terminal_safe_yield_cycles_ = 0;
+    last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
   }
 
@@ -3112,6 +3125,27 @@ private:
     return yield;
   }
 
+  bool terminalSafeYieldFailureConfirmed(
+    const SafeYieldPlan & safe_yield, const bool fresh_scan,
+    const rclcpp::Time & scan_time,
+    const rclcpp::Time & previous_processed_scan_time)
+  {
+    const bool follows_previous_processed_scan = terminal_safe_yield_cycles_ > 0 &&
+      last_terminal_safe_yield_scan_time_.nanoseconds() ==
+      previous_processed_scan_time.nanoseconds();
+    const auto update = active_path_safety::updateSafeYieldConfirmation(
+      follows_previous_processed_scan ? terminal_safe_yield_cycles_ : 0,
+      fresh_scan, safe_yield.speed_cap,
+      safe_yield_terminal_speed_mps_, no_safe_path_confirmation_scans_);
+    terminal_safe_yield_cycles_ = update.consecutive_terminal_scans;
+    if (fresh_scan && terminal_safe_yield_cycles_ > 0) {
+      last_terminal_safe_yield_scan_time_ = scan_time;
+    } else if (terminal_safe_yield_cycles_ == 0) {
+      last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+    }
+    return update.primary_failure_confirmed;
+  }
+
   void updateActivePhase()
   {
     if (!active_plan_.valid) {
@@ -3272,6 +3306,7 @@ private:
   {
     std_msgs::msg::Float64 message;
     message.data = std::max(0.0, cap);
+    last_published_speed_cap_mps_ = message.data;
     speed_cap_pub_->publish(message);
   }
 
@@ -3340,17 +3375,10 @@ private:
     add(
       "effective_obstacle_detection_distance_m",
       std::to_string(last_effective_detection_distance_m_));
-    double reported_speed_cap = 0.0;
-    if (state == "READY") {
-      if (trajectory_mode == "RACELINE") {
-        reported_speed_cap = command_speed_max_mps_;
-      } else if (trajectory_mode == "REPLAN_PENDING") {
-        reported_speed_cap = activeReplanPendingSpeedCap();
-      } else {
-        reported_speed_cap = activeSpeedCap();
-      }
-    }
-    add("speed_cap_mps", std::to_string(reported_speed_cap));
+    add("speed_cap_mps", std::to_string(last_published_speed_cap_mps_));
+    add(
+      "safe_yield_terminal_speed_mps",
+      std::to_string(safe_yield_terminal_speed_mps_));
     add(
       "remaining_maximum_curvature_inv_m",
       active_plan_.valid ? std::to_string(remainingActiveMaximumCurvature()) : "0.0");
@@ -3392,6 +3420,9 @@ private:
       "active_physical_blocked_cycles",
       std::to_string(active_physical_blocked_cycles_));
     add("no_safe_path_cycles", std::to_string(no_safe_path_cycles_));
+    add(
+      "terminal_safe_yield_cycles",
+      std::to_string(terminal_safe_yield_cycles_));
     add("candidate_decision_id", std::to_string(candidate_decision_id_));
     add("candidate_decision_context", candidate_decision_context_);
     add(
@@ -3621,6 +3652,7 @@ private:
     }
     const double car_heading_error = angleDifference(robot_yaw, robot_on_raw.yaw);
 
+    const rclcpp::Time previous_processed_scan_time = last_processed_scan_time_;
     const bool new_scan = current_scan_time.nanoseconds() !=
       last_processed_scan_time_.nanoseconds();
     if (new_scan) {
@@ -3866,7 +3898,16 @@ private:
             active_path, hits, robot_position, robot_yaw);
         }
         if (safe_yield.valid) {
-          no_safe_path_cycles_ = 0;
+          if (terminalSafeYieldFailureConfirmed(
+              safe_yield, new_scan, current_scan_time, previous_processed_scan_time))
+          {
+            failPrimary(
+              "NO_SAFE_PATH_CONFIRMED",
+              "active plan has only a terminal safe-yield prefix; transferring to Reactive",
+              raw_age, scan_age, valid_beam_ratio,
+              obstacle_found ? &obstacle : nullptr);
+            return;
+          }
           publishPath(safe_yield.path);
           publishSpeedCap(safe_yield.speed_cap);
           publishStatus(
@@ -3966,7 +4007,15 @@ private:
       const SafeYieldPlan safe_yield = buildSafeYieldPlan(
         *raw_message, hits, robot_position, robot_yaw);
       if (obstacle_found && safe_yield.valid) {
-        no_safe_path_cycles_ = 0;
+        if (terminalSafeYieldFailureConfirmed(
+            safe_yield, new_scan, current_scan_time, previous_processed_scan_time))
+        {
+          failPrimary(
+            "NO_SAFE_PATH_CONFIRMED",
+            failure_reason + "; terminal safe-yield persisted",
+            raw_age, scan_age, valid_beam_ratio, &obstacle);
+          return;
+        }
         publishPath(safe_yield.path);
         publishSpeedCap(safe_yield.speed_cap);
         publishStatus(
@@ -4001,6 +4050,8 @@ private:
     }
 
     no_safe_path_cycles_ = 0;
+    terminal_safe_yield_cycles_ = 0;
+    last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
     publishPath(*raw_message);

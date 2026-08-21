@@ -10,6 +10,7 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "drive_arbitration_v2/lower_recovery_coordination.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -106,6 +107,7 @@ private:
     std::string reason;
     std::string arbitration_mode;
     std::string trajectory_mode;
+    bool raceline_stall_handoff_latched{false};
     rclcpp::Time received_at{0, 0, RCL_STEADY_TIME};
   };
 
@@ -364,6 +366,7 @@ private:
       destination.reason.clear();
       destination.arbitration_mode.clear();
       destination.trajectory_mode.clear();
+      destination.raceline_stall_handoff_latched = false;
       for (const auto & value : status.values) {
         if (value.key == "state") {
           destination.state = value.value;
@@ -375,6 +378,8 @@ private:
           destination.arbitration_mode = value.value;
         } else if (value.key == "trajectory_mode") {
           destination.trajectory_mode = value.value;
+        } else if (value.key == "raceline_stall_handoff_latched") {
+          destination.raceline_stall_handoff_latched = value.value == "true";
         }
       }
       if (destination.state.empty()) {
@@ -660,22 +665,13 @@ private:
   std::string lowerRecoveryHoldReason(
     const Snapshot & input, const rclcpp::Time & current_time) const
   {
-    if (!enable_lower_safety_recovery_coordination_) {
-      return "";
-    }
-    if (!lowerStatusFresh(input, current_time)) {
-      return "lower safety status missing or stale";
-    }
     // The lower status reports the arbitrator's UInt8 mode as text.  Requiring
     // mode 2 prevents a delayed NOMINAL sample from another arbitration mode
     // from authorizing a raceline handover.
-    if (input.lower.arbitration_mode != "2") {
-      return "lower safety has not confirmed REACTIVE arbitration mode";
-    }
-    if (input.lower.state != "NOMINAL") {
-      return "lower safety mode=" + input.lower.state;
-    }
-    return "";
+    return drive_arbitration_v2::lower_recovery_coordination::holdReason(
+      enable_lower_safety_recovery_coordination_, lowerStatusFresh(input, current_time),
+      input.lower.arbitration_mode, input.lower.state,
+      input.lower.raceline_stall_handoff_latched);
   }
 
   bool lowerEmergencyUnderRaceline(
@@ -788,6 +784,9 @@ private:
       enable_lower_safety_recovery_coordination_ ? "true" : "false");
     add("lower_status_state", input.lower.state);
     add("lower_status_arbitration_mode", input.lower.arbitration_mode);
+    add(
+      "lower_status_raceline_stall_handoff_latched",
+      input.lower.raceline_stall_handoff_latched ? "true" : "false");
     add(
       "lower_status_age_sec",
       std::to_string(age(input.lower.received, input.lower.received_at, current_time)));

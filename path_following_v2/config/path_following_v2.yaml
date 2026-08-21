@@ -185,6 +185,7 @@ local_trajectory_planner:
     yield_min_path_length_m: 0.50
     yield_max_speed_mps: 1.0
     yield_deceleration_mps2: 2.0
+    safe_yield_terminal_speed_mps: 0.05
 
     # --------------------------------------------------------
     # RECOVERY AND PERSISTENT-PLAN STATE

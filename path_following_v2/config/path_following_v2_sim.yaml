@@ -87,13 +87,14 @@ local_trajectory_planner:
 
     # --------------------------------------------------------
     # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
-    # Physical half-width is 0.24 m. Candidate planning adds another 0.06 m
-    # reserve so normal scan variation does not immediately block the plan.
+    # Physical half-width remains 0.24 m. Candidate map/scan checks use a
+    # 0.03 m planning reserve, while the hard footprint and curvature limit
+    # remain unchanged.
     # blocked_min_points and beam-gap settings are intentionally count based.
     # --------------------------------------------------------
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
-    planning_clearance_reserve_m: 0.06
+    planning_clearance_reserve_m: 0.03
     # Require a short, smooth splice to the refreshed raceline.
     raceline_splice_max_gap_m: 0.15
     raceline_splice_max_heading_error_deg: 15.0
@@ -188,6 +189,8 @@ local_trajectory_planner:
     yield_min_path_length_m: 0.50
     yield_max_speed_mps: 2.0
     yield_deceleration_mps2: 3.0
+    # A near-zero yield is a bounded stop, not a permanently READY trajectory.
+    safe_yield_terminal_speed_mps: 0.05
 
     # --------------------------------------------------------
     # RECOVERY AND PERSISTENT-PLAN STATE

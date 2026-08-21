@@ -39,6 +39,7 @@ ament_target_dependencies(raceline_guard_node
 )
 
 add_executable(drive_arbitrator_node src/drive_arbitrator_node.cpp)
+target_include_directories(drive_arbitrator_node PRIVATE include)
 ament_target_dependencies(drive_arbitrator_node
   ackermann_msgs
   diagnostic_msgs
@@ -56,8 +57,20 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY include/
+  DESTINATION include
+)
+
 install(FILES README.md DESIGN.md
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(lower_recovery_coordination_test
+    test/lower_recovery_coordination_test.cpp
+  )
+  target_include_directories(lower_recovery_coordination_test PRIVATE include)
+endif()
 
 ament_package()
