@@ -23,6 +23,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            (
+                'global_raceline_optimizer = '
+                'centerline_tools.global_raceline_optimizer:main'
+            ),
             'raceline_publisher = centerline_tools.centerline_publisher_node:main',
         ],
     },

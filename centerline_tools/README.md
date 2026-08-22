@@ -1,9 +1,10 @@
 # centerline_tools ROS 2 Foxy package
 
-This package contains two parts:
+This package contains three parts:
 
 1. an offline Python generator, `generate_centerline.py`, which extracts a smoothed centerline and then generates a final smoothed raceline;
-2. a ROS 2 Foxy publisher, `raceline_publisher`, which loads and publishes the final smoothed raceline by default.
+2. a headless global optimizer, `optimize_global_raceline.py`, which generates a map-bounded minimum-curvature raceline without corner keypoints;
+3. a ROS 2 Foxy publisher, `raceline_publisher`, which loads and publishes the selected raceline.
 
 The package name is still `centerline_tools` because the offline pipeline still contains both centerline and raceline generation. The ROS-facing API now uses `raceline` names for the active published output.
 
@@ -63,6 +64,79 @@ The header should be:
 ```text
 index,x,y,yaw,curvature,curvature_abs
 ```
+
+## Global smoothness optimization
+
+The global optimizer consumes the Phase-9 centerline, selected drivable-region
+mask, and ROS map metadata. It optimizes one lateral offset at each uniformly
+sampled centerline station. The objective is solved in three deterministic
+stages: segment/length initialization, minimum curvature, and curvature-rate
+smoothing. All objective terms wrap across the lap seam.
+
+Legal lateral offsets are ray-cast from the centerline through an eroded
+drivable-region mask. Before saving, the tool densely validates the complete
+loop for corridor clearance, self-intersection, direction, finite geometry,
+and maximum curvature. A failed solve or validation does not replace the final
+CSV/report pair.
+
+Run the optimizer against the active Spielberg artifact set:
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 optimize_global_raceline.py \
+  --centerline output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/centerline_points_smooth.csv \
+  --drivable-mask output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/drivable_region.npy \
+  --map-yaml Spielberg_map.yaml \
+  --config config/global_raceline_optimizer.yaml \
+  --baseline-raceline output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv \
+  --output output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv \
+  --report output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized_validation.yaml
+```
+
+`--baseline-raceline` records a common-spacing comparison with the manually
+tuned line; it is not used as an optimization input. For another map, keep the
+centerline, mask, and map YAML from the same generation run.
+
+To also render the optional comparison plot, install the package dependencies
+with `rosdep` and add:
+
+```bash
+--debug-plot output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/debug_global_raceline_optimization.png
+```
+
+The default output name is `raceline_points_optimized.csv`. The optimizer never
+replaces its source centerline or a comparison raceline. This keeps the active
+vehicle path unchanged until the optimized CSV is explicitly selected.
+
+Generate a fresh centerline and optimized raceline in one command:
+
+```bash
+python3 run_centerline_and_optimized_raceline.py Spielberg_map.png Spielberg_map.yaml
+```
+
+The validation YAML records input hashes, resolved parameters, each solver
+stage, numerical-library versions, common-spacing before/after metrics, and
+dense safety results. Its clearance metric is a conservative nearest-grid-cell
+sample, not an exact Euclidean distance to the continuous wall boundary. The
+debug plot overlays the centerline, optional baseline, and optimized result.
+The shipped `1.082 1/m` curvature gate matches the runtime 20.6-degree steering
+limit, 0.33 m wheelbase, and 0.95 safety factor; change it only together with
+the vehicle/controller envelope.
+
+After reviewing the CSV, report, and plot, test it in the simulator with an
+explicit launch override:
+
+```bash
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
+  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv
+```
+
+This selection changes the global reference path used by the running stack;
+generating the file alone does not change runtime vehicle behavior.
+
+The current Phase-9 centerline generator assumes a zero map-origin yaw. The
+optimizer's coordinate conversion supports rotated maps, but a rotated-map
+centerline must come from a generator that applies the same origin rotation.
 
 ## Reproducible obstacle maps
 
