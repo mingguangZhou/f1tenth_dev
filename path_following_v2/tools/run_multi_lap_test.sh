@@ -14,7 +14,7 @@ TARGET_LAPS=3
 TIMEOUT_SEC=600
 SAMPLE_HZ=20
 OUTPUT_DIR="/sim_ws/src/path_following_v2/trial_logs/multi_lap"
-RACELINE_CSV="/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv"
+RACELINE_CSV="/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv"
 
 usage() {
   cat <<'EOF'

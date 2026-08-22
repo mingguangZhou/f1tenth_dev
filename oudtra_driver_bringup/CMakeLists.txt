@@ -11,4 +11,12 @@ install(FILES README.md
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(full_stack_sim_defaults_test
+    test/test_full_stack_sim_defaults.py
+    TIMEOUT 30
+  )
+endif()
+
 ament_package()

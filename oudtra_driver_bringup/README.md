@@ -13,6 +13,17 @@ f1 auto
 
 Run `f1 sim` in a separate container terminal for the simulator and RViz.
 
+In simulation, `f1 auto` follows the validated optimized Spielberg raceline by
+default. The original manually tuned line remains available as a rollback:
+
+```bash
+f1 auto \
+  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
+```
+
+This changes only the driven raceline. The smooth centerline remains the local
+planner's Frenet reference.
+
 Onboard:
 
 ```bash

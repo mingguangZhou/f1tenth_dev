@@ -107,8 +107,10 @@ with `rosdep` and add:
 ```
 
 The default output name is `raceline_points_optimized.csv`. The optimizer never
-replaces its source centerline or a comparison raceline. This keeps the active
-vehicle path unchanged until the optimized CSV is explicitly selected.
+replaces its source centerline or a comparison raceline. The reviewed Spielberg
+artifact under `output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/`
+is checked in and selected by the simulator autonomy launch; files generated at
+other paths remain inactive until selected explicitly.
 
 Generate a fresh centerline and optimized raceline in one command:
 
@@ -125,16 +127,18 @@ The shipped `1.082 1/m` curvature gate matches the runtime 20.6-degree steering
 limit, 0.33 m wheelbase, and 0.95 safety factor; change it only together with
 the vehicle/controller envelope.
 
-After reviewing the CSV, report, and plot, test it in the simulator with an
-explicit launch override:
+The checked-in optimized Spielberg CSV is the default global path for `f1 auto`
+and `full_stack_sim_launch.py`. To A/B test another generated CSV, pass an
+explicit launch override. To restore the retained manually tuned line:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
-  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv
+  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
 ```
 
-This selection changes the global reference path used by the running stack;
-generating the file alone does not change runtime vehicle behavior.
+The `centerline_csv_path` remains `centerline_points_smooth.csv`; it defines the
+planner's Frenet frame and is intentionally independent of the driven global
+raceline.
 
 The current Phase-9 centerline generator assumes a zero map-origin yaw. The
 optimizer's coordinate conversion supports rotated maps, but a rotated-map

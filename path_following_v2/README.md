@@ -500,14 +500,18 @@ source install/setup.bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
-The full-stack launch passes matching raceline and centerline files to the
-publisher and planner. To select another generated pair explicitly:
+The simulator full-stack launch drives the validated optimized Spielberg
+raceline by default while retaining `centerline_points_smooth.csv` as the
+planner's Frenet frame. To select another generated pair explicitly:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   raceline_csv_path:=/absolute/path/raceline_points_smooth.csv \
   centerline_csv_path:=/absolute/path/centerline_points_smooth.csv
 ```
+
+The original manually tuned simulator raceline remains at
+`centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv`.
 
 Useful checks:
 
