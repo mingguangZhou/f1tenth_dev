@@ -52,6 +52,8 @@ does not hard-code `0.24`. When tuning, keep these two values aligned across
 |---|---|---:|---|
 | `/scan` | `sensor_msgs/msg/LaserScan` | Yes | Local free-space geometry |
 | `/ego_racecar/odom` (sim) or `/odom` (onboard) | `nav_msgs/msg/Odometry` | Required for reverse | VESC/simulator speed feedback and reverse distance/stop confirmation |
+| `/drive_arbitration_v2/selected_mode` | `std_msgs/msg/UInt8` | Required by the integrated stack | Limits fallback and reverse authority to selected Reactive mode |
+| `/path_following_v2/raceline_heading_error_rad` | `geometry_msgs/msg/Vector3Stamped` | Required for integrated simulator wrong-way recovery | Producing scan stamp and path frame; vector x is signed heading error, y is Raceline projection distance, and z is projected station |
 | `/reactive_control_v2/enable` | `std_msgs/msg/Bool` | No by default | Reserved external mode-enable input |
 | `/reactive_control_v2/selected_cmd` | `ackermann_msgs/msg/AckermannDriveStamped` | Yes for nominal mode | Command selected by the upper stack or drive arbitrator |
 | `/reactive_control_v2/status` | `diagnostic_msgs/msg/DiagnosticArray` | No | Lets the lower layer recognize upper `PATH_INVALID`/`BLOCKED` explicitly |
@@ -219,7 +221,7 @@ Consequently, a missing, paused, or reset simulator `/clock` cannot freeze the
 safety state machine, and the controller does not alter `/clock` or the timing
 behavior of any other ROS node.
 
-Two independent conditions may request reverse:
+Three independent conditions may request reverse:
 
 1. **Persistent dead end:** the output is stopped, the VESC speed confirms that
    the vehicle is stationary, and either the front emergency brake is active or
@@ -227,14 +229,22 @@ Two independent conditions may request reverse:
 2. **Physical stuck inference:** a meaningful forward command is available but
    VESC-reported speed remains below `stuck_speed_threshold_mps` for
    `stuck_confirmation_sec`.
+3. **Simulator wrong-way recovery:** the planner reports a fresh
+   Raceline-relative heading error at or beyond 90 degrees. The gateway stops
+   immediately in Raceline or Reactive, confirms the condition on distinct
+   scans, waits for explicit Reactive authority, then uses at most four
+   bounded reverse steering arcs until the heading is below 80 degrees.
 
-Both require a fresh valid scan, fresh finite odometry, remaining recovery
+All three require a fresh valid scan, fresh finite odometry, remaining recovery
 attempts, and acceptable available rear-side scan evidence. Stale scan or
 odometry always produces STOP and never initiates reverse.
 
-Reverse uses `-reverse_speed_mps` with zero steering. Low-speed assistance may
-temporarily replace its magnitude with `low_speed_assist_output_mps` while
-preserving the negative direction.
+Ordinary dead-end and stuck reverse uses `-reverse_speed_mps` with zero
+steering. Simulator wrong-way recovery uses the configured fixed steering sign
+that reduces the signed heading error; the sign is retained across the recovery
+episode. Low-speed assistance may temporarily replace the ordinary reverse
+magnitude with `low_speed_assist_output_mps` while preserving the negative
+direction.
 The reverse remains bounded by both
 `reverse_max_distance_m` and `reverse_max_duration_sec`.
 
@@ -269,10 +279,14 @@ it prints the subscribed odometry age and speed, stationary/dead-end timer, FTG
 recovery count, and reverse-side gate. This makes a missing or stale simulator
 odometry topic visible instead of leaving an unexplained emergency STOP.
 
-The simulator YAML also sets `reverse_require_side_clearance: false`: the
-simulated scan is not treated as a reliable rear-safety sensor, and some scan
-models provide no usable side-rear beams. The onboard YAML retains
-`reverse_require_side_clearance: true`.
+Both supplied profiles require valid rear-side scan sectors. Wrong-way recovery
+additionally requires at least `wrong_way_reverse_min_side_clearance_m` on the
+side swept by the selected steering arc. Because these sectors do not observe
+directly behind the car, the integrated simulator also checks every reverse arc
+against `/map` and the current/predicted poses in `/simulator/agent_status`.
+Missing or stale map, odometry, scan, heading, or agent evidence holds STOP. The
+standalone and onboard profiles leave wrong-way and simulator swept recovery
+disabled.
 
 Set `enable_reverse_recovery: false` to retain the previous forward-only lower
 controller behavior while keeping all other FTG and emergency settings.
@@ -636,9 +650,10 @@ onboard racing values.
 `0.3.0` adds hysteretic bidirectional VESC low-speed assistance, using separate
 parameters for the eligible demand ceiling and forced output magnitude. Its
 shortfall is `max(0, |requested speed| - |measured speed|)`. It also raises the
-configured reverse attempt limit to ten, resets that budget after measured
-forward progress above the configured threshold for 0.30 s, and commands every
-reverse with zero steering.
+configured ordinary reverse attempt limit to ten and resets that budget after
+measured forward progress above the configured threshold for 0.30 s. The
+simulator-only wrong-way correction uses a separate four-attempt bound and
+fixed reverse steering; onboard wrong-way correction is disabled.
 
 `0.2.9` moves every lower-controller elapsed-time and input-freshness check to
 a monotonic steady clock. ROS time remains in outgoing message headers only.

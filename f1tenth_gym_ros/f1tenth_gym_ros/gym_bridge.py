@@ -426,6 +426,8 @@ class GymBridge(Node):
                 'y_m': pose[1],
                 'yaw_rad': pose[2],
                 'speed_mps': math.hypot(speed[0], speed[1]),
+                'body_speed_mps': speed[0],
+                'yaw_rate_radps': speed[2],
                 'agent_separation_m': separation,
             }
             status.values = [

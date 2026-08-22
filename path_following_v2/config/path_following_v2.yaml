@@ -70,6 +70,7 @@ local_trajectory_planner:
     final_path_topic: "/path_following_v2/local_path"
     scan_topic: "/scan"
     speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
+    heading_error_topic: "/path_following_v2/raceline_heading_error_rad"
     status_topic: "/path_following_v2/path_status"
     marker_topic: "/path_following_v2/detour_markers"
     map_topic: "/map"

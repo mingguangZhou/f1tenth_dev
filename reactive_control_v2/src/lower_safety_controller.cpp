@@ -10,11 +10,16 @@
 #include <vector>
 
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
+#include "builtin_interfaces/msg/time.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "geometry_msgs/msg/vector3_stamped.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "reactive_control_v2/raceline_stall_handoff.hpp"
+#include "reactive_control_v2/reverse_swept_safety.hpp"
+#include "reactive_control_v2/wrong_way_recovery.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/u_int8.hpp"
 
@@ -32,6 +37,43 @@ double degreesToRadians(const double degrees)
 double clampValue(const double value, const double minimum, const double maximum)
 {
   return std::max(minimum, std::min(value, maximum));
+}
+
+double quaternionYaw(const geometry_msgs::msg::Quaternion & orientation)
+{
+  const double norm_squared = orientation.x * orientation.x +
+    orientation.y * orientation.y + orientation.z * orientation.z +
+    orientation.w * orientation.w;
+  if (!std::isfinite(norm_squared) || norm_squared <= 1e-12) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  const double scale = 1.0 / std::sqrt(norm_squared);
+  const double x = orientation.x * scale;
+  const double y = orientation.y * scale;
+  const double z = orientation.z * scale;
+  const double w = orientation.w * scale;
+  return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
+}
+
+double wrappedAngleDifference(const double first, const double second)
+{
+  return std::atan2(std::sin(first - second), std::cos(first - second));
+}
+
+int64_t sourceStampNanoseconds(const builtin_interfaces::msg::Time & stamp)
+{
+  constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
+  if (stamp.sec < 0 || stamp.nanosec >= kNanosecondsPerSecond) {
+    return 0;
+  }
+  return static_cast<int64_t>(stamp.sec) * kNanosecondsPerSecond +
+    static_cast<int64_t>(stamp.nanosec);
+}
+
+std::string normalizedFrameId(const std::string & frame)
+{
+  const auto first = frame.find_first_not_of('/');
+  return first == std::string::npos ? std::string{} : frame.substr(first);
 }
 }  // namespace
 
@@ -58,6 +100,15 @@ public:
     arbitration_mode_sub_ = create_subscription<std_msgs::msg::UInt8>(
       arbitration_mode_topic_, 10,
       std::bind(&LowerSafetyController::arbitrationModeCallback, this, _1));
+    heading_error_sub_ = create_subscription<geometry_msgs::msg::Vector3Stamped>(
+      wrong_way_heading_error_topic_, 10,
+      std::bind(&LowerSafetyController::headingErrorCallback, this, _1));
+    reverse_map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+      reverse_swept_map_topic_, rclcpp::QoS(1).reliable().transient_local(),
+      std::bind(&LowerSafetyController::reverseMapCallback, this, _1));
+    simulator_status_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      reverse_swept_agent_status_topic_, 10,
+      std::bind(&LowerSafetyController::simulatorStatusCallback, this, _1));
 
     safe_command_pub_ =
       create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(safe_command_topic_, 10);
@@ -76,7 +127,7 @@ public:
       "upper_failure_status_fallback=%s, arbitration_mode_required=%s, "
       "command_limits=|speed|<=%.1f m/s and |steering|<=%.1f deg, "
       "reverse_recovery=%s, raceline_stall_handoff=%s, "
-      "low_speed_assist=%s, ftg_debug=%s",
+      "wrong_way_recovery=%s, low_speed_assist=%s, ftg_debug=%s",
       selected_command_topic_.c_str(), scan_topic_.c_str(), odom_topic_.c_str(),
       safe_command_topic_.c_str(),
       enable_fallback_on_upper_failure_status_ ? "true" : "false",
@@ -84,6 +135,7 @@ public:
       absolute_speed_limit_mps_, absolute_steering_limit_deg_,
       enable_reverse_recovery_ ? "true" : "false",
       enable_raceline_stall_handoff_ ? "true" : "false",
+      enable_wrong_way_recovery_ ? "true" : "false",
       enable_low_speed_assist_ ? "true" : "false",
       fallback_terminal_debug_ ? "true" : "false");
   }
@@ -136,6 +188,10 @@ private:
     std::string reason;
     double valid_ratio{0.0};
     double minimum_clearance_m{std::numeric_limits<double>::infinity()};
+    double left_valid_ratio{0.0};
+    double right_valid_ratio{0.0};
+    double left_clearance_m{std::numeric_limits<double>::infinity()};
+    double right_clearance_m{std::numeric_limits<double>::infinity()};
   };
 
   // ROS interfaces
@@ -144,6 +200,9 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr upper_status_sub_;
   rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr arbitration_mode_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Vector3Stamped>::SharedPtr heading_error_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr reverse_map_sub_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr simulator_status_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr safe_command_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
@@ -158,17 +217,37 @@ private:
   std::mutex mutex_;
   ackermann_msgs::msg::AckermannDriveStamped::SharedPtr latest_command_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
+  nav_msgs::msg::OccupancyGrid::SharedPtr latest_reverse_map_;
+  std::vector<reactive_control_v2::reverse_swept_safety::Actor> simulator_actors_;
+  reactive_control_v2::reverse_swept_safety::Pose2 simulator_ego_pose_;
+  bool simulator_ego_pose_valid_{false};
+  reactive_control_v2::reverse_swept_safety::Pose2 current_odom_pose_;
+  std::string current_odom_frame_;
   rclcpp::Time last_command_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_scan_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_odom_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_upper_status_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_arbitration_mode_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_heading_error_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_simulator_status_time_{0, 0, RCL_STEADY_TIME};
+  int64_t heading_error_source_stamp_ns_{0};
+  int64_t odom_source_stamp_ns_{0};
+  int64_t simulator_status_source_stamp_ns_{0};
+  uint64_t heading_error_sequence_{0};
   bool command_received_{false};
   bool scan_received_{false};
   bool odom_received_{false};
   bool upper_status_received_{false};
   bool arbitration_mode_received_{false};
+  bool heading_error_received_{false};
+  bool heading_error_frame_valid_{false};
+  bool reverse_map_received_{false};
+  bool simulator_status_received_{false};
   double current_speed_mps_{0.0};
+  double current_heading_error_rad_{0.0};
+  double current_raceline_distance_m_{std::numeric_limits<double>::infinity()};
+  double current_raceline_station_m_{std::numeric_limits<double>::quiet_NaN()};
+  std::string current_heading_error_frame_;
   std::string upper_state_;
   uint8_t arbitration_mode_{0};
 
@@ -178,6 +257,7 @@ private:
   std::string odom_topic_;
   std::string upper_status_topic_;
   std::string arbitration_mode_topic_;
+  std::string wrong_way_heading_error_topic_;
   std::string safe_command_topic_;
   std::string lower_status_topic_;
   double control_frequency_hz_{20.0};
@@ -188,6 +268,18 @@ private:
   bool enable_fallback_on_upper_failure_status_{true};
   bool require_arbitration_mode_{false};
   double arbitration_mode_timeout_sec_{0.50};
+  double wrong_way_heading_error_timeout_sec_{0.20};
+  double wrong_way_max_raceline_distance_m_{4.0};
+  bool enable_sim_reverse_swept_gate_{false};
+  std::string reverse_swept_map_topic_{"/map"};
+  std::string reverse_swept_agent_status_topic_{"/simulator/agent_status"};
+  double reverse_swept_status_timeout_sec_{0.10};
+  double reverse_swept_sample_step_m_{0.02};
+  double reverse_vehicle_length_m_{0.58};
+  double reverse_vehicle_width_m_{0.31};
+  double reverse_swept_margin_m_{0.03};
+  double reverse_wheelbase_m_{0.33};
+  int reverse_map_occupied_threshold_{50};
 
   // Final command bounds. Speed remains a loose sanity bound; steering is
   // clamped to the approximately +/-25 degree physical steering limit.
@@ -234,6 +326,7 @@ private:
   // scan-motion confidence source without making it mandatory now.
   bool enable_reverse_recovery_{true};
   bool enable_raceline_stall_handoff_{false};
+  bool enable_wrong_way_recovery_{false};
   double stationary_speed_threshold_mps_{0.05};
   double dead_end_confirmation_sec_{1.0};
   double stuck_forward_command_threshold_mps_{0.20};
@@ -254,6 +347,16 @@ private:
   double reverse_side_sector_max_angle_deg_{135.0};
   double reverse_min_side_clearance_m_{0.20};
   double reverse_side_min_valid_ratio_{0.25};
+  double wrong_way_stop_angle_rad_{degreesToRadians(90.0)};
+  double wrong_way_entry_angle_rad_{degreesToRadians(90.0)};
+  double wrong_way_exit_angle_rad_{degreesToRadians(80.0)};
+  double wrong_way_confirmation_sec_{0.20};
+  int wrong_way_confirmation_samples_{3};
+  double wrong_way_exit_confirmation_sec_{0.15};
+  int wrong_way_exit_confirmation_samples_{3};
+  double wrong_way_reverse_steering_rad_{degreesToRadians(25.0)};
+  double wrong_way_reverse_min_side_clearance_m_{0.50};
+  int wrong_way_reverse_max_attempts_{4};
   bool reverse_terminal_debug_{false};
   double reverse_terminal_debug_period_sec_{0.50};
 
@@ -279,6 +382,26 @@ private:
   bool raceline_stall_handoff_evidence_{false};
   bool raceline_stall_handoff_active_{false};
   bool raceline_stall_handoff_latched_{false};
+  bool wrong_way_timer_active_{false};
+  bool wrong_way_suspect_latched_{false};
+  bool wrong_way_recovery_latched_{false};
+  bool wrong_way_reverse_active_{false};
+  bool wrong_way_evidence_{false};
+  bool wrong_way_alignment_recovered_{false};
+  rclcpp::Time wrong_way_started_at_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time wrong_way_alignment_started_at_{0, 0, RCL_STEADY_TIME};
+  uint64_t last_wrong_way_heading_sequence_{0};
+  uint64_t last_wrong_way_alignment_sequence_{0};
+  int wrong_way_confirmation_sample_count_{0};
+  int wrong_way_alignment_sample_count_{0};
+  bool wrong_way_alignment_timer_active_{false};
+  int wrong_way_turn_sign_{0};
+  int wrong_way_reverse_attempt_count_{0};
+  bool wrong_way_reverse_attempt_committed_{false};
+  bool reverse_swept_gate_valid_{false};
+  double reverse_swept_checked_distance_m_{0.0};
+  std::string reverse_swept_gate_reason_{"not evaluated"};
+  double last_published_steering_rad_{0.0};
   int low_speed_assist_direction_{0};
   double low_speed_assist_requested_mps_{0.0};
   double low_speed_assist_output_command_mps_{0.0};
@@ -305,6 +428,9 @@ private:
     declare_parameter<std::string>("upper_status_topic", "/reactive_control_v2/status");
     declare_parameter<std::string>(
       "arbitration_mode_topic", "/drive_arbitration_v2/selected_mode");
+    declare_parameter<std::string>(
+      "wrong_way_heading_error_topic",
+      "/path_following_v2/raceline_heading_error_rad");
     declare_parameter<std::string>("safe_command_topic", "/reactive_control_v2/safe_cmd");
     declare_parameter<std::string>(
       "lower_status_topic", "/reactive_control_v2/lower_safety_status");
@@ -319,6 +445,19 @@ private:
     // run while drive_arbitration_v2 explicitly selects REACTIVE mode.
     declare_parameter<bool>("require_arbitration_mode", false);
     declare_parameter<double>("arbitration_mode_timeout_sec", 0.50);
+    declare_parameter<double>("wrong_way_heading_error_timeout_sec", 0.20);
+    declare_parameter<double>("wrong_way_max_raceline_distance_m", 4.0);
+    declare_parameter<bool>("enable_sim_reverse_swept_gate", false);
+    declare_parameter<std::string>("reverse_swept_map_topic", "/map");
+    declare_parameter<std::string>(
+      "reverse_swept_agent_status_topic", "/simulator/agent_status");
+    declare_parameter<double>("reverse_swept_status_timeout_sec", 0.10);
+    declare_parameter<double>("reverse_swept_sample_step_m", 0.02);
+    declare_parameter<double>("reverse_vehicle_length_m", 0.58);
+    declare_parameter<double>("reverse_vehicle_width_m", 0.31);
+    declare_parameter<double>("reverse_swept_margin_m", 0.03);
+    declare_parameter<double>("reverse_wheelbase_m", 0.33);
+    declare_parameter<int>("reverse_map_occupied_threshold", 50);
 
     declare_parameter<double>("absolute_speed_limit_mps", 20.0);
     declare_parameter<double>("absolute_steering_limit_deg", 25.0);
@@ -352,6 +491,7 @@ private:
 
     declare_parameter<bool>("enable_reverse_recovery", true);
     declare_parameter<bool>("enable_raceline_stall_handoff", false);
+    declare_parameter<bool>("enable_wrong_way_recovery", false);
     declare_parameter<double>("stationary_speed_threshold_mps", 0.05);
     declare_parameter<double>("dead_end_confirmation_sec", 1.0);
     declare_parameter<double>("stuck_forward_command_threshold_mps", 0.20);
@@ -372,6 +512,16 @@ private:
     declare_parameter<double>("reverse_side_sector_max_angle_deg", 135.0);
     declare_parameter<double>("reverse_min_side_clearance_m", 0.20);
     declare_parameter<double>("reverse_side_min_valid_ratio", 0.25);
+    declare_parameter<double>("wrong_way_stop_angle_deg", 90.0);
+    declare_parameter<double>("wrong_way_entry_angle_deg", 90.0);
+    declare_parameter<double>("wrong_way_exit_angle_deg", 80.0);
+    declare_parameter<double>("wrong_way_confirmation_sec", 0.20);
+    declare_parameter<int>("wrong_way_confirmation_samples", 3);
+    declare_parameter<double>("wrong_way_exit_confirmation_sec", 0.15);
+    declare_parameter<int>("wrong_way_exit_confirmation_samples", 3);
+    declare_parameter<double>("wrong_way_reverse_steering_deg", 25.0);
+    declare_parameter<double>("wrong_way_reverse_min_side_clearance_m", 0.50);
+    declare_parameter<int>("wrong_way_reverse_max_attempts", 4);
     declare_parameter<bool>("reverse_terminal_debug", false);
     declare_parameter<double>("reverse_terminal_debug_period_sec", 0.50);
   }
@@ -383,6 +533,8 @@ private:
     odom_topic_ = get_parameter("odom_topic").as_string();
     upper_status_topic_ = get_parameter("upper_status_topic").as_string();
     arbitration_mode_topic_ = get_parameter("arbitration_mode_topic").as_string();
+    wrong_way_heading_error_topic_ =
+      get_parameter("wrong_way_heading_error_topic").as_string();
     safe_command_topic_ = get_parameter("safe_command_topic").as_string();
     lower_status_topic_ = get_parameter("lower_status_topic").as_string();
     control_frequency_hz_ = std::max(1.0, get_parameter("control_frequency_hz").as_double());
@@ -396,6 +548,30 @@ private:
     require_arbitration_mode_ = get_parameter("require_arbitration_mode").as_bool();
     arbitration_mode_timeout_sec_ = std::max(
       0.01, get_parameter("arbitration_mode_timeout_sec").as_double());
+    wrong_way_heading_error_timeout_sec_ = std::max(
+      0.01, get_parameter("wrong_way_heading_error_timeout_sec").as_double());
+    wrong_way_max_raceline_distance_m_ = std::max(
+      0.1, get_parameter("wrong_way_max_raceline_distance_m").as_double());
+    enable_sim_reverse_swept_gate_ =
+      get_parameter("enable_sim_reverse_swept_gate").as_bool();
+    reverse_swept_map_topic_ = get_parameter("reverse_swept_map_topic").as_string();
+    reverse_swept_agent_status_topic_ =
+      get_parameter("reverse_swept_agent_status_topic").as_string();
+    reverse_swept_status_timeout_sec_ = std::max(
+      0.02, get_parameter("reverse_swept_status_timeout_sec").as_double());
+    reverse_swept_sample_step_m_ = clampValue(
+      get_parameter("reverse_swept_sample_step_m").as_double(), 0.005, 0.05);
+    reverse_vehicle_length_m_ = std::max(
+      0.1, get_parameter("reverse_vehicle_length_m").as_double());
+    reverse_vehicle_width_m_ = std::max(
+      0.1, get_parameter("reverse_vehicle_width_m").as_double());
+    reverse_swept_margin_m_ = std::max(
+      0.0, get_parameter("reverse_swept_margin_m").as_double());
+    reverse_wheelbase_m_ = std::max(
+      0.1, get_parameter("reverse_wheelbase_m").as_double());
+    reverse_map_occupied_threshold_ = static_cast<int>(clampValue(
+      static_cast<double>(get_parameter("reverse_map_occupied_threshold").as_int()),
+      1.0, 100.0));
 
     absolute_speed_limit_mps_ =
       std::max(0.1, get_parameter("absolute_speed_limit_mps").as_double());
@@ -455,6 +631,7 @@ private:
     enable_reverse_recovery_ = get_parameter("enable_reverse_recovery").as_bool();
     enable_raceline_stall_handoff_ =
       get_parameter("enable_raceline_stall_handoff").as_bool();
+    enable_wrong_way_recovery_ = get_parameter("enable_wrong_way_recovery").as_bool();
     stationary_speed_threshold_mps_ =
       std::max(0.0, get_parameter("stationary_speed_threshold_mps").as_double());
     dead_end_confirmation_sec_ =
@@ -495,6 +672,33 @@ private:
       std::max(0.0, get_parameter("reverse_min_side_clearance_m").as_double());
     reverse_side_min_valid_ratio_ = clampValue(
       get_parameter("reverse_side_min_valid_ratio").as_double(), 0.0, 1.0);
+    const double wrong_way_stop_angle_deg = clampValue(
+      get_parameter("wrong_way_stop_angle_deg").as_double(), 90.0, 179.0);
+    const double wrong_way_entry_angle_deg = clampValue(
+      get_parameter("wrong_way_entry_angle_deg").as_double(), 90.0, 180.0);
+    const double wrong_way_exit_angle_deg = clampValue(
+      get_parameter("wrong_way_exit_angle_deg").as_double(), 0.0,
+      wrong_way_stop_angle_deg - 1.0);
+    wrong_way_stop_angle_rad_ = degreesToRadians(
+      std::min(wrong_way_stop_angle_deg, wrong_way_entry_angle_deg));
+    wrong_way_entry_angle_rad_ = degreesToRadians(wrong_way_entry_angle_deg);
+    wrong_way_exit_angle_rad_ = degreesToRadians(wrong_way_exit_angle_deg);
+    wrong_way_confirmation_sec_ = std::max(
+      0.0, get_parameter("wrong_way_confirmation_sec").as_double());
+    wrong_way_confirmation_samples_ = std::max(
+      1, static_cast<int>(get_parameter("wrong_way_confirmation_samples").as_int()));
+    wrong_way_exit_confirmation_sec_ = std::max(
+      0.0, get_parameter("wrong_way_exit_confirmation_sec").as_double());
+    wrong_way_exit_confirmation_samples_ = std::max(
+      1, static_cast<int>(get_parameter("wrong_way_exit_confirmation_samples").as_int()));
+    wrong_way_reverse_steering_rad_ = degreesToRadians(clampValue(
+      get_parameter("wrong_way_reverse_steering_deg").as_double(), 0.0,
+      std::min(absolute_steering_limit_deg_, fallback_steering_limit_deg_)));
+    wrong_way_reverse_min_side_clearance_m_ = std::max(
+      reverse_min_side_clearance_m_,
+      get_parameter("wrong_way_reverse_min_side_clearance_m").as_double());
+    wrong_way_reverse_max_attempts_ = std::clamp(
+      static_cast<int>(get_parameter("wrong_way_reverse_max_attempts").as_int()), 1, 4);
     reverse_terminal_debug_ = get_parameter("reverse_terminal_debug").as_bool();
     reverse_terminal_debug_period_sec_ = std::max(
       0.05, get_parameter("reverse_terminal_debug_period_sec").as_double());
@@ -521,8 +725,93 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     current_speed_mps_ = odom->twist.twist.linear.x;
+    current_odom_pose_.x = odom->pose.pose.position.x;
+    current_odom_pose_.y = odom->pose.pose.position.y;
+    current_odom_pose_.yaw = quaternionYaw(odom->pose.pose.orientation);
+    current_odom_frame_ = odom->header.frame_id;
+    odom_source_stamp_ns_ = sourceStampNanoseconds(odom->header.stamp);
     last_odom_time_ = steady_clock_.now();
     odom_received_ = true;
+  }
+
+  void reverseMapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr map)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_reverse_map_ = map;
+    reverse_map_received_ = true;
+  }
+
+  void simulatorStatusCallback(
+    const diagnostic_msgs::msg::DiagnosticArray::SharedPtr array)
+  {
+    const int64_t source_stamp_ns = sourceStampNanoseconds(array->header.stamp);
+    if (source_stamp_ns <= 0) {
+      return;
+    }
+
+    std::vector<reactive_control_v2::reverse_swept_safety::Actor> actors;
+    reactive_control_v2::reverse_swept_safety::Pose2 ego_pose;
+    bool ego_found = false;
+    bool valid = !array->status.empty();
+    for (const auto & status : array->status) {
+      if (status.name.rfind("simulator/", 0) != 0) {
+        continue;
+      }
+      double x = std::numeric_limits<double>::quiet_NaN();
+      double y = std::numeric_limits<double>::quiet_NaN();
+      double yaw = std::numeric_limits<double>::quiet_NaN();
+      double signed_speed = std::numeric_limits<double>::quiet_NaN();
+      double yaw_rate = std::numeric_limits<double>::quiet_NaN();
+      try {
+        for (const auto & value : status.values) {
+          if (value.key == "x_m") {
+            x = std::stod(value.value);
+          } else if (value.key == "y_m") {
+            y = std::stod(value.value);
+          } else if (value.key == "yaw_rad") {
+            yaw = std::stod(value.value);
+          } else if (value.key == "body_speed_mps") {
+            signed_speed = std::stod(value.value);
+          } else if (value.key == "yaw_rate_radps") {
+            yaw_rate = std::stod(value.value);
+          }
+        }
+      } catch (const std::exception &) {
+        valid = false;
+        break;
+      }
+      reactive_control_v2::reverse_swept_safety::Pose2 pose{x, y, yaw};
+      if (!reactive_control_v2::reverse_swept_safety::finitePose(pose) ||
+        !std::isfinite(signed_speed) || !std::isfinite(yaw_rate))
+      {
+        valid = false;
+        break;
+      }
+      if (status.name == "simulator/ego") {
+        ego_pose = pose;
+        ego_found = true;
+      } else {
+        reactive_control_v2::reverse_swept_safety::Actor actor;
+        actor.pose = pose;
+        actor.signed_speed_mps = signed_speed;
+        actor.yaw_rate_radps = yaw_rate;
+        actors.push_back(actor);
+      }
+    }
+    if (!valid || !ego_found) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (source_stamp_ns <= simulator_status_source_stamp_ns_) {
+      return;
+    }
+    simulator_actors_ = std::move(actors);
+    simulator_ego_pose_ = ego_pose;
+    simulator_ego_pose_valid_ = true;
+    simulator_status_source_stamp_ns_ = source_stamp_ns;
+    last_simulator_status_time_ = steady_clock_.now();
+    simulator_status_received_ = true;
   }
 
   void upperStatusCallback(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr array)
@@ -557,6 +846,24 @@ private:
     arbitration_mode_ = mode->data;
     last_arbitration_mode_time_ = steady_clock_.now();
     arbitration_mode_received_ = true;
+  }
+
+  void headingErrorCallback(const geometry_msgs::msg::Vector3Stamped::SharedPtr error)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int64_t source_stamp_ns = sourceStampNanoseconds(error->header.stamp);
+    if (source_stamp_ns <= 0 || source_stamp_ns <= heading_error_source_stamp_ns_) {
+      return;
+    }
+    current_heading_error_rad_ = error->vector.x;
+    current_raceline_distance_m_ = error->vector.y;
+    current_raceline_station_m_ = error->vector.z;
+    current_heading_error_frame_ = normalizedFrameId(error->header.frame_id);
+    heading_error_frame_valid_ = !current_heading_error_frame_.empty();
+    heading_error_source_stamp_ns_ = source_stamp_ns;
+    last_heading_error_time_ = steady_clock_.now();
+    ++heading_error_sequence_;
+    heading_error_received_ = true;
   }
 
   ScanData preprocessScan(const sensor_msgs::msg::LaserScan & scan) const
@@ -797,6 +1104,10 @@ private:
       std::max(0.0, static_cast<double>(scan.range_min)) : 0.0;
     size_t sector_beams = 0;
     size_t valid_beams = 0;
+    size_t left_sector_beams = 0;
+    size_t right_sector_beams = 0;
+    size_t left_valid_beams = 0;
+    size_t right_valid_beams = 0;
     for (size_t i = 0; i < scan.ranges.size(); ++i) {
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
       const double absolute_angle = std::abs(angle);
@@ -804,6 +1115,12 @@ private:
         continue;
       }
       ++sector_beams;
+      const bool left = angle >= 0.0;
+      if (left) {
+        ++left_sector_beams;
+      } else {
+        ++right_sector_beams;
+      }
       const double raw = scan.ranges[i];
       const bool finite_hit = std::isfinite(raw) && raw >= range_min &&
         (!range_max_valid || raw <= scan.range_max);
@@ -812,8 +1129,20 @@ private:
       if (finite_hit) {
         ++valid_beams;
         result.minimum_clearance_m = std::min(result.minimum_clearance_m, raw);
+        if (left) {
+          ++left_valid_beams;
+          result.left_clearance_m = std::min(result.left_clearance_m, raw);
+        } else {
+          ++right_valid_beams;
+          result.right_clearance_m = std::min(result.right_clearance_m, raw);
+        }
       } else if (clear_to_max) {
         ++valid_beams;
+        if (left) {
+          ++left_valid_beams;
+        } else {
+          ++right_valid_beams;
+        }
       }
     }
 
@@ -823,6 +1152,10 @@ private:
     }
     result.valid_ratio = static_cast<double>(valid_beams) /
       static_cast<double>(sector_beams);
+    result.left_valid_ratio = left_sector_beams > 0 ?
+      static_cast<double>(left_valid_beams) / static_cast<double>(left_sector_beams) : 0.0;
+    result.right_valid_ratio = right_sector_beams > 0 ?
+      static_cast<double>(right_valid_beams) / static_cast<double>(right_sector_beams) : 0.0;
     if (result.valid_ratio < reverse_side_min_valid_ratio_) {
       result.reason = "too few valid reverse-side LaserScan beams";
       return result;
@@ -942,6 +1275,7 @@ private:
   void cancelReactiveRecovery()
   {
     reverse_active_ = false;
+    wrong_way_reverse_active_ = false;
     settle_active_ = false;
     settle_stationary_timer_active_ = false;
     forward_motion_timer_active_ = false;
@@ -954,6 +1288,7 @@ private:
   void startReverse(const rclcpp::Time & current_time, const std::string & trigger)
   {
     reverse_active_ = true;
+    wrong_way_reverse_active_ = false;
     settle_active_ = false;
     reverse_started_at_ = current_time;
     reverse_last_update_at_ = current_time;
@@ -965,9 +1300,117 @@ private:
     clearTriggerTimers();
   }
 
+  bool wrongWayReverseSafetyValid(
+    const ReverseSafety & safety, const int turn_sign) const
+  {
+    return safety.valid &&
+      reactive_control_v2::wrong_way_recovery::selectedReverseSideClear(
+      turn_sign, safety.left_valid_ratio, safety.right_valid_ratio,
+      reverse_side_min_valid_ratio_, safety.left_clearance_m,
+      safety.right_clearance_m, wrong_way_reverse_min_side_clearance_m_);
+  }
+
+  bool reverseSweptSafetyValid(
+    const nav_msgs::msg::OccupancyGrid::SharedPtr & map,
+    const std::vector<reactive_control_v2::reverse_swept_safety::Actor> & actors,
+    const reactive_control_v2::reverse_swept_safety::Pose2 & simulator_ego_pose,
+    const bool simulator_ego_pose_valid,
+    const reactive_control_v2::reverse_swept_safety::Pose2 & odom_pose,
+    const std::string & odom_frame, const bool reverse_map_received,
+    const bool simulator_status_received, const double odom_age,
+    const double simulator_status_age, const int64_t odom_source_stamp_ns,
+    const int64_t simulator_status_source_stamp_ns,
+    const int64_t scan_source_stamp_ns, const double steering_rad,
+    const double remaining_distance_m)
+  {
+    if (!enable_sim_reverse_swept_gate_) {
+      reverse_swept_gate_valid_ = true;
+      reverse_swept_gate_reason_ = "simulator reverse swept gate disabled";
+      reverse_swept_checked_distance_m_ = 0.0;
+      return true;
+    }
+    const double status_scan_skew_sec =
+      (scan_source_stamp_ns > 0 && simulator_status_source_stamp_ns > 0) ?
+      std::abs(static_cast<double>(
+        scan_source_stamp_ns - simulator_status_source_stamp_ns)) * 1e-9 :
+      std::numeric_limits<double>::infinity();
+    const double odom_scan_skew_sec =
+      (scan_source_stamp_ns > 0 && odom_source_stamp_ns > 0) ?
+      std::abs(static_cast<double>(scan_source_stamp_ns - odom_source_stamp_ns)) * 1e-9 :
+      std::numeric_limits<double>::infinity();
+    if (!map || !simulator_ego_pose_valid || !reverse_map_received ||
+      !simulator_status_received || odom_age < 0.0 ||
+      odom_age > reverse_swept_status_timeout_sec_ || simulator_status_age < 0.0 ||
+      simulator_status_age > reverse_swept_status_timeout_sec_ ||
+      status_scan_skew_sec > reverse_swept_status_timeout_sec_ ||
+      odom_scan_skew_sec > reverse_swept_status_timeout_sec_ ||
+      !reactive_control_v2::reverse_swept_safety::finitePose(odom_pose) ||
+      odom_frame.empty() || map->header.frame_id != odom_frame)
+    {
+      reverse_swept_gate_valid_ = false;
+      reverse_swept_gate_reason_ = "reverse swept map, odometry, or agent state unavailable";
+      reverse_swept_checked_distance_m_ = 0.0;
+      return false;
+    }
+    if (std::hypot(
+        odom_pose.x - simulator_ego_pose.x,
+        odom_pose.y - simulator_ego_pose.y) > 0.15 ||
+      std::abs(wrappedAngleDifference(odom_pose.yaw, simulator_ego_pose.yaw)) > 0.20)
+    {
+      reverse_swept_gate_valid_ = false;
+      reverse_swept_gate_reason_ = "simulator ego pose disagrees with odometry";
+      reverse_swept_checked_distance_m_ = 0.0;
+      return false;
+    }
+
+    reactive_control_v2::reverse_swept_safety::Input input;
+    input.map.valid = true;
+    input.map.frame = map->header.frame_id;
+    input.map.width = map->info.width;
+    input.map.height = map->info.height;
+    input.map.resolution = map->info.resolution;
+    input.map.origin.x = map->info.origin.position.x;
+    input.map.origin.y = map->info.origin.position.y;
+    input.map.origin.yaw = quaternionYaw(map->info.origin.orientation);
+    input.map.cells = &map->data;
+    input.map.occupied_threshold = reverse_map_occupied_threshold_;
+    input.ego = odom_pose;
+    input.actors = actors;
+    input.steering_rad = steering_rad;
+    input.wheelbase_m = reverse_wheelbase_m_;
+    input.reverse_speed_mps = reverse_speed_mps_;
+    input.arc_distance_m = std::max(reverse_swept_sample_step_m_, remaining_distance_m);
+    input.sample_step_m = reverse_swept_sample_step_m_;
+    input.vehicle_length_m = reverse_vehicle_length_m_;
+    input.vehicle_width_m = reverse_vehicle_width_m_;
+    input.clearance_margin_m = reverse_swept_margin_m_;
+    const auto result = reactive_control_v2::reverse_swept_safety::
+      evaluateSteeringTransition(input, last_published_steering_rad_);
+    reverse_swept_gate_valid_ = result.valid;
+    reverse_swept_gate_reason_ = result.reason;
+    reverse_swept_checked_distance_m_ = result.checked_distance_m;
+    return result.valid;
+  }
+
+  void startWrongWayReverse(
+    const rclcpp::Time & current_time, const double heading_error_rad,
+    const ReverseSafety & safety)
+  {
+    startReverse(current_time, "confirmed reverse track heading; steering reverse toward alignment");
+    wrong_way_reverse_active_ = true;
+    ++wrong_way_reverse_attempt_count_;
+    wrong_way_reverse_attempt_committed_ = true;
+    wrong_way_turn_sign_ = reactive_control_v2::wrong_way_recovery::retainEpisodeTurnSign(
+      wrong_way_turn_sign_, heading_error_rad,
+      safety.left_clearance_m, safety.right_clearance_m,
+      degreesToRadians(170.0));
+  }
+
   void startRecoverySettle(const rclcpp::Time & current_time, const std::string & reason)
   {
     reverse_active_ = false;
+    wrong_way_reverse_active_ = false;
+    wrong_way_reverse_attempt_committed_ = false;
     settle_active_ = true;
     settle_stationary_since_ = current_time;
     settle_stationary_timer_active_ = false;
@@ -976,13 +1419,15 @@ private:
     clearTriggerTimers();
   }
 
-  ackermann_msgs::msg::AckermannDriveStamped reverseCommand() const
+  ackermann_msgs::msg::AckermannDriveStamped reverseCommand(
+    const double steering_angle = 0.0) const
   {
     ackermann_msgs::msg::AckermannDriveStamped output;
     output.header.stamp = now();
     output.header.frame_id = "base_link";
     output.drive.speed = -std::min(reverse_speed_mps_, absolute_speed_limit_mps_);
-    output.drive.steering_angle = 0.0;
+    output.drive.steering_angle = clampValue(
+      steering_angle, -absolute_steering_limit_rad_, absolute_steering_limit_rad_);
     return output;
   }
 
@@ -1048,16 +1493,20 @@ private:
     last_reverse_debug_time_ = current_time;
     const double reverse_duration = reverse_active_ ?
       std::max(0.0, (current_time - reverse_started_at_).seconds()) : 0.0;
+    const double reverse_steering_deg = wrong_way_reverse_active_ ?
+      reactive_control_v2::wrong_way_recovery::reverseSteeringAngle(
+      wrong_way_turn_sign_, wrong_way_reverse_steering_rad_) * 180.0 / kPi : 0.0;
     RCLCPP_INFO(
       get_logger(),
       "reverse debug | mode=%s attempt=%d/%d trigger=%s | "
       "speed=%+.3f m/s odom_ok=%s age=%.3f s distance=%.3f m duration=%.2f s "
-      "steer=+0.0 deg | assist=%s requested=%+.2f output=%+.2f shortfall=%.2f m/s | "
+      "steer=%+.1f deg wrong_way=%s | assist=%s requested=%+.2f output=%+.2f shortfall=%.2f m/s | "
       "dead_end_timer=%s %.2f/%.2f s | "
       "front_emergency=%s ftg_valid=%d/%d stable=%s | side_safe=%s ratio=%.2f min=%.2f m",
       modeName(mode), reverse_attempt_count_, reverse_max_attempts_,
       reverse_trigger_reason_.c_str(), current_speed, odom_healthy ? "true" : "false",
-      odom_age, reverse_distance_m_, reverse_duration,
+      odom_age, reverse_distance_m_, reverse_duration, reverse_steering_deg,
+      wrong_way_reverse_active_ ? "true" : "false",
       low_speed_assist_active_ ? "true" : "false",
       low_speed_assist_requested_mps_, low_speed_assist_output_command_mps_,
       low_speed_assist_shortfall_mps_,
@@ -1145,6 +1594,8 @@ private:
     const double scan_age, const double current_speed, const std::string & upper_state,
     const bool odom_healthy, const double odom_age, const bool front_emergency,
     const bool ftg_stably_available, const ReverseSafety & reverse_safety,
+    const double heading_error_rad, const double heading_error_age,
+    const bool heading_error_fresh,
     const uint8_t arbitration_mode, const bool arbitration_mode_healthy,
     const double arbitration_mode_age,
     const rclcpp::Time & steady_now)
@@ -1226,6 +1677,59 @@ private:
     add(
       "raceline_stall_handoff_latched",
       raceline_stall_handoff_latched_ ? "true" : "false");
+    add("wrong_way_recovery_enabled", enable_wrong_way_recovery_ ? "true" : "false");
+    add("wrong_way_heading_error_topic", wrong_way_heading_error_topic_);
+    add("wrong_way_heading_error_age_sec", std::to_string(heading_error_age));
+    add("wrong_way_heading_error_fresh", heading_error_fresh ? "true" : "false");
+    add("wrong_way_heading_source_stamp_ns", std::to_string(heading_error_source_stamp_ns_));
+    add("wrong_way_heading_frame", current_heading_error_frame_);
+    add("wrong_way_raceline_distance_m", std::to_string(current_raceline_distance_m_));
+    add("wrong_way_raceline_station_m", std::to_string(current_raceline_station_m_));
+    add(
+      "wrong_way_raceline_association_valid",
+      (std::isfinite(current_raceline_distance_m_) &&
+      current_raceline_distance_m_ >= 0.0 &&
+      current_raceline_distance_m_ <= wrong_way_max_raceline_distance_m_) ?
+      "true" : "false");
+    add(
+      "wrong_way_heading_error_deg",
+      std::isfinite(heading_error_rad) ?
+      std::to_string(heading_error_rad * 180.0 / kPi) : "nan");
+    add("wrong_way_evidence", wrong_way_evidence_ ? "true" : "false");
+    add("wrong_way_suspect_latched", wrong_way_suspect_latched_ ? "true" : "false");
+    add("wrong_way_recovery_latched", wrong_way_recovery_latched_ ? "true" : "false");
+    add("wrong_way_reverse_active", wrong_way_reverse_active_ ? "true" : "false");
+    add(
+      "wrong_way_alignment_recovered",
+      wrong_way_alignment_recovered_ ? "true" : "false");
+    add("wrong_way_reverse_attempt_count", std::to_string(wrong_way_reverse_attempt_count_));
+    add(
+      "wrong_way_reverse_attempt_committed",
+      wrong_way_reverse_attempt_committed_ ? "true" : "false");
+    add("wrong_way_turn_sign", std::to_string(wrong_way_turn_sign_));
+    add(
+      "wrong_way_confirmation_samples",
+      std::to_string(wrong_way_confirmation_sample_count_));
+    add(
+      "wrong_way_confirmation_samples_required",
+      std::to_string(wrong_way_confirmation_samples_));
+    add(
+      "wrong_way_alignment_confirmation_samples",
+      std::to_string(wrong_way_alignment_sample_count_));
+    add(
+      "wrong_way_alignment_confirmation_samples_required",
+      std::to_string(wrong_way_exit_confirmation_samples_));
+    add("reverse_swept_gate_enabled", enable_sim_reverse_swept_gate_ ? "true" : "false");
+    add("reverse_swept_gate_valid", reverse_swept_gate_valid_ ? "true" : "false");
+    add("reverse_swept_gate_reason", reverse_swept_gate_reason_);
+    add(
+      "reverse_swept_checked_distance_m",
+      std::to_string(reverse_swept_checked_distance_m_));
+    add(
+      "wrong_way_confirmation_sec",
+      wrong_way_timer_active_ ?
+      std::to_string(std::max(0.0, (steady_now - wrong_way_started_at_).seconds())) :
+      "0.000000");
     add("dead_end_timer_active", dead_end_timer_active_ ? "true" : "false");
     add(
       "dead_end_timer_sec",
@@ -1253,6 +1757,14 @@ private:
       "reverse_side_min_clearance_m",
       std::isfinite(reverse_safety.minimum_clearance_m) ?
       std::to_string(reverse_safety.minimum_clearance_m) : "inf");
+    add(
+      "reverse_left_clearance_m",
+      std::isfinite(reverse_safety.left_clearance_m) ?
+      std::to_string(reverse_safety.left_clearance_m) : "inf");
+    add(
+      "reverse_right_clearance_m",
+      std::isfinite(reverse_safety.right_clearance_m) ?
+      std::to_string(reverse_safety.right_clearance_m) : "inf");
     const double stop_duration = stopped_timer_active_ ?
       std::max(0.0, (steady_now - stopped_since_).seconds()) : 0.0;
     add("stop_duration_sec", std::to_string(stop_duration));
@@ -1282,36 +1794,76 @@ private:
   {
     ackermann_msgs::msg::AckermannDriveStamped::SharedPtr command;
     sensor_msgs::msg::LaserScan::SharedPtr scan;
+    nav_msgs::msg::OccupancyGrid::SharedPtr reverse_map;
+    std::vector<reactive_control_v2::reverse_swept_safety::Actor> simulator_actors;
+    reactive_control_v2::reverse_swept_safety::Pose2 simulator_ego_pose;
+    reactive_control_v2::reverse_swept_safety::Pose2 odom_pose;
+    std::string odom_frame;
     rclcpp::Time command_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time scan_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time status_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time arbitration_mode_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time heading_error_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time simulator_status_time(0, 0, RCL_STEADY_TIME);
     rclcpp::Time odom_time(0, 0, RCL_STEADY_TIME);
     bool command_received = false;
     bool scan_received = false;
     bool status_received = false;
     bool arbitration_mode_received = false;
+    bool heading_error_received = false;
+    bool heading_error_frame_valid = false;
+    bool simulator_ego_pose_valid = false;
+    bool reverse_map_received = false;
+    bool simulator_status_received = false;
     bool odom_received = false;
     double current_speed = 0.0;
     std::string upper_state;
     uint8_t arbitration_mode = 0;
+    double heading_error_rad = 0.0;
+    double raceline_distance_m = std::numeric_limits<double>::infinity();
+    double raceline_station_m = std::numeric_limits<double>::quiet_NaN();
+    std::string heading_error_frame;
+    int64_t heading_error_source_stamp_ns = 0;
+    int64_t odom_source_stamp_ns = 0;
+    int64_t simulator_status_source_stamp_ns = 0;
+    uint64_t heading_error_sequence = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       command = latest_command_;
       scan = latest_scan_;
+      reverse_map = latest_reverse_map_;
+      simulator_actors = simulator_actors_;
+      simulator_ego_pose = simulator_ego_pose_;
+      odom_pose = current_odom_pose_;
+      odom_frame = current_odom_frame_;
       command_time = last_command_time_;
       scan_time = last_scan_time_;
       status_time = last_upper_status_time_;
       arbitration_mode_time = last_arbitration_mode_time_;
+      heading_error_time = last_heading_error_time_;
+      simulator_status_time = last_simulator_status_time_;
       odom_time = last_odom_time_;
       command_received = command_received_;
       scan_received = scan_received_;
       status_received = upper_status_received_;
       arbitration_mode_received = arbitration_mode_received_;
+      heading_error_received = heading_error_received_;
+      heading_error_frame_valid = heading_error_frame_valid_;
+      simulator_ego_pose_valid = simulator_ego_pose_valid_;
+      reverse_map_received = reverse_map_received_;
+      simulator_status_received = simulator_status_received_;
       odom_received = odom_received_;
       current_speed = current_speed_mps_;
       upper_state = upper_state_;
       arbitration_mode = arbitration_mode_;
+      heading_error_rad = current_heading_error_rad_;
+      raceline_distance_m = current_raceline_distance_m_;
+      raceline_station_m = current_raceline_station_m_;
+      heading_error_frame = current_heading_error_frame_;
+      heading_error_source_stamp_ns = heading_error_source_stamp_ns_;
+      odom_source_stamp_ns = odom_source_stamp_ns_;
+      simulator_status_source_stamp_ns = simulator_status_source_stamp_ns_;
+      heading_error_sequence = heading_error_sequence_;
     }
 
     const rclcpp::Time current_time = steady_clock_.now();
@@ -1331,6 +1883,30 @@ private:
       (arbitration_mode_healthy && arbitration_mode == 2);
     const bool selected_command_authorized = !require_arbitration_mode_ ||
       (arbitration_mode_healthy && (arbitration_mode == 1 || arbitration_mode == 2));
+    const double heading_error_age = heading_error_received ?
+      (current_time - heading_error_time).seconds() :
+      std::numeric_limits<double>::infinity();
+    const double simulator_status_age = simulator_status_received ?
+      (current_time - simulator_status_time).seconds() :
+      std::numeric_limits<double>::infinity();
+    const int64_t scan_source_stamp_ns = scan ?
+      sourceStampNanoseconds(scan->header.stamp) : 0;
+    const double heading_scan_skew_sec =
+      (scan_source_stamp_ns > 0 && heading_error_source_stamp_ns > 0) ?
+      static_cast<double>(scan_source_stamp_ns - heading_error_source_stamp_ns) * 1e-9 :
+      std::numeric_limits<double>::infinity();
+    const bool heading_scan_aligned = heading_scan_skew_sec >= 0.0 &&
+      heading_scan_skew_sec <= wrong_way_heading_error_timeout_sec_;
+    const bool raceline_association_valid = heading_error_frame_valid &&
+      !odom_frame.empty() && heading_error_frame == normalizedFrameId(odom_frame) &&
+      std::isfinite(raceline_distance_m) && raceline_distance_m >= 0.0 &&
+      raceline_distance_m <= wrong_way_max_raceline_distance_m_ &&
+      std::isfinite(raceline_station_m);
+    const bool heading_error_fresh = heading_error_received &&
+      heading_error_age >= 0.0 &&
+      heading_error_age <= wrong_way_heading_error_timeout_sec_ &&
+      heading_scan_aligned && std::isfinite(heading_error_rad) &&
+      std::abs(heading_error_rad) <= kPi + 1e-6;
 
     if (require_arbitration_mode_) {
       const bool continuity_broken =
@@ -1339,6 +1915,8 @@ private:
         arbitration_mode_healthy, arbitration_mode);
       if (continuity_broken) {
         stuck_timer_active_ = false;
+        wrong_way_timer_active_ = false;
+        wrong_way_confirmation_sample_count_ = 0;
       }
       control_arbitration_mode_valid_ = arbitration_mode_healthy;
       if (arbitration_mode_healthy) {
@@ -1379,6 +1957,15 @@ private:
       status_received, status_age, upper_state);
     const double nominal_forward_speed = command_valid ?
       std::max(0.0, static_cast<double>(command->drive.speed)) : 0.0;
+    const bool selected_command_would_be_used = selected_command_authorized &&
+      command_fresh && command_valid && !explicit_fallback;
+    const bool fallback_would_be_used = reactive_mode_authorized && fallback.valid &&
+      (explicit_fallback || !command_fresh || !command_valid);
+    const bool selected_forward_intent = selected_command_would_be_used &&
+      nominal_forward_speed > 0.0;
+    const bool fallback_forward_intent = fallback_would_be_used && fallback.speed > 0.0;
+    const bool pre_safety_forward_intent =
+      selected_forward_intent || fallback_forward_intent;
     const double normal_forward_reference = std::max(
       std::max(0.0, current_speed), nominal_forward_speed);
     std::string front_emergency_reason;
@@ -1469,7 +2056,115 @@ private:
     std::string reason = base_reason;
     ackermann_msgs::msg::AckermannDriveStamped output = base_output;
 
+    reactive_control_v2::wrong_way_recovery::Evidence wrong_way_input;
+    wrong_way_input.enabled = enable_wrong_way_recovery_ && enable_reverse_recovery_;
+    wrong_way_input.arbitration_required = require_arbitration_mode_;
+    wrong_way_input.arbitration_mode_healthy = arbitration_mode_healthy;
+    wrong_way_input.arbitration_mode = arbitration_mode;
+    wrong_way_input.heading_sample_fresh = heading_error_fresh;
+    wrong_way_input.path_association_valid = raceline_association_valid;
+    wrong_way_input.scan_valid = scan_data.valid;
+    wrong_way_input.odom_healthy = odom_healthy;
+    wrong_way_input.positive_forward_request = pre_safety_forward_intent;
+    wrong_way_input.heading_error_rad = heading_error_rad;
+    wrong_way_input.entry_angle_rad = wrong_way_entry_angle_rad_;
+    const bool wrong_way_geometry_valid =
+      reactive_control_v2::wrong_way_recovery::currentGeometryValid(wrong_way_input);
+    wrong_way_evidence_ = wrong_way_input.positive_forward_request &&
+      reactive_control_v2::wrong_way_recovery::reverseHeadingPresent(
+      wrong_way_input, wrong_way_stop_angle_rad_);
+    const bool wrong_way_direction_unverified =
+      reactive_control_v2::wrong_way_recovery::forwardDirectionUnverified(
+      wrong_way_input);
+    const bool raw_alignment_recovered =
+      reactive_control_v2::wrong_way_recovery::alignmentRecovered(
+      wrong_way_input, wrong_way_exit_angle_rad_);
+    const bool new_heading_sample = heading_error_sequence != 0 &&
+      heading_error_sequence != last_wrong_way_alignment_sequence_;
+    if (new_heading_sample) {
+      last_wrong_way_alignment_sequence_ = heading_error_sequence;
+      if (raw_alignment_recovered) {
+        if (!wrong_way_alignment_timer_active_) {
+          wrong_way_alignment_started_at_ = current_time;
+          wrong_way_alignment_timer_active_ = true;
+          wrong_way_alignment_sample_count_ = 0;
+        }
+        ++wrong_way_alignment_sample_count_;
+      } else {
+        wrong_way_alignment_timer_active_ = false;
+        wrong_way_alignment_sample_count_ = 0;
+      }
+    } else if (!wrong_way_geometry_valid)
+    {
+      wrong_way_alignment_timer_active_ = false;
+      wrong_way_alignment_sample_count_ = 0;
+    }
+    const double wrong_way_alignment_elapsed_sec = wrong_way_alignment_timer_active_ ?
+      std::max(0.0, (current_time - wrong_way_alignment_started_at_).seconds()) : 0.0;
+    const bool alignment_confirmed = raw_alignment_recovered &&
+      reactive_control_v2::wrong_way_recovery::confirmationReached(
+      wrong_way_alignment_timer_active_, wrong_way_alignment_elapsed_sec,
+      wrong_way_exit_confirmation_sec_, wrong_way_alignment_sample_count_,
+      wrong_way_exit_confirmation_samples_);
+    if (alignment_confirmed) {
+      wrong_way_alignment_recovered_ = true;
+    } else if (!wrong_way_geometry_valid ||
+      std::abs(heading_error_rad) >= wrong_way_stop_angle_rad_)
+    {
+      wrong_way_alignment_recovered_ = false;
+    }
+    if (wrong_way_recovery_latched_) {
+      wrong_way_suspect_latched_ = false;
+    } else if (wrong_way_evidence_) {
+      wrong_way_suspect_latched_ = true;
+    } else if (wrong_way_suspect_latched_ && wrong_way_alignment_recovered_)
+    {
+      wrong_way_suspect_latched_ = false;
+    }
+
+    if (reverse_active_ && !wrong_way_reverse_active_ &&
+      (wrong_way_suspect_latched_ || wrong_way_recovery_latched_))
+    {
+      startRecoverySettle(
+        current_time, "ordinary reverse preempted by track-direction recovery");
+    }
+    const auto reverse_swept_clear_for = [&](const int turn_sign,
+        const double remaining_distance_m) {
+        return reverseSweptSafetyValid(
+          reverse_map, simulator_actors, simulator_ego_pose,
+          simulator_ego_pose_valid, odom_pose, odom_frame,
+          reverse_map_received, simulator_status_received,
+          odom_age, simulator_status_age, odom_source_stamp_ns,
+          simulator_status_source_stamp_ns, scan_source_stamp_ns,
+          reactive_control_v2::wrong_way_recovery::reverseSteeringAngle(
+            turn_sign, wrong_way_reverse_steering_rad_),
+          remaining_distance_m);
+      };
+    const auto select_safe_wrong_way_turn = [&](const double remaining_distance_m) {
+        if (wrong_way_turn_sign_ == -1 || wrong_way_turn_sign_ == 1) {
+          return wrongWayReverseSafetyValid(reverse_safety, wrong_way_turn_sign_) &&
+                 reverse_swept_clear_for(wrong_way_turn_sign_, remaining_distance_m);
+        }
+        const int preferred_sign =
+          reactive_control_v2::wrong_way_recovery::chooseTurnSign(
+          heading_error_rad, reverse_safety.left_clearance_m,
+          reverse_safety.right_clearance_m, degreesToRadians(170.0));
+        const bool ambiguous = std::abs(heading_error_rad) >= degreesToRadians(170.0);
+        const int candidate_count = ambiguous ? 2 : 1;
+        for (int index = 0; index < candidate_count; ++index) {
+          const int candidate_sign = index == 0 ? preferred_sign : -preferred_sign;
+          if (wrongWayReverseSafetyValid(reverse_safety, candidate_sign) &&
+            reverse_swept_clear_for(candidate_sign, remaining_distance_m))
+          {
+            wrong_way_turn_sign_ = candidate_sign;
+            return true;
+          }
+        }
+        return false;
+      };
+
     if (reverse_active_) {
+      const bool correcting_wrong_way = wrong_way_reverse_active_;
       const double update_dt = std::max(
         0.0, std::min(0.20, (current_time - reverse_last_update_at_).seconds()));
       reverse_last_update_at_ = current_time;
@@ -1485,14 +2180,36 @@ private:
         reverse_distance_m_ >= reverse_max_distance_m_ ||
         reverse_duration >= reverse_max_duration_sec_;
 
-      if (!scan_data.valid || !odom_healthy) {
+      if (!scan_data.valid || !odom_healthy ||
+        (correcting_wrong_way &&
+        !reactive_control_v2::wrong_way_recovery::reverseAuthorityValid(wrong_way_input)))
+      {
         startRecoverySettle(current_time, "reverse aborted because scan or odometry became invalid");
       } else if (!reverse_safety.valid) {
         startRecoverySettle(current_time, "reverse aborted: " + reverse_safety.reason);
-      } else if (minimum_reverse_satisfied && ftg_stably_available) {
+      } else if (correcting_wrong_way && !wrongWayReverseSafetyValid(
+          reverse_safety, wrong_way_turn_sign_))
+      {
+        startRecoverySettle(
+          current_time, "wrong-way reverse aborted because its selected rear-side sector is not clear");
+      } else if (!reverse_swept_clear_for(
+          correcting_wrong_way ? wrong_way_turn_sign_ : 0,
+          std::max(0.0, reverse_max_distance_m_ - reverse_distance_m_)))
+      {
+        startRecoverySettle(
+          current_time, "reverse swept gate blocked: " +
+          reverse_swept_gate_reason_);
+      } else if (correcting_wrong_way && minimum_reverse_satisfied &&
+        wrong_way_alignment_recovered_)
+      {
+        startRecoverySettle(current_time, "track-relative heading recovered");
+      } else if (!correcting_wrong_way && minimum_reverse_satisfied && ftg_stably_available) {
         startRecoverySettle(current_time, "forward FTG route recovered stably");
       } else if (reverse_limit_reached) {
-        startRecoverySettle(current_time, "reverse distance or duration limit reached");
+        startRecoverySettle(
+          current_time, correcting_wrong_way ?
+          "wrong-way reverse segment reached its distance or duration limit" :
+          "reverse distance or duration limit reached");
       }
 
       if (settle_active_) {
@@ -1502,7 +2219,10 @@ private:
       } else {
         mode = Mode::REVERSE_RECOVERY;
         reason = reverse_trigger_reason_;
-        output = reverseCommand();
+        const double steering = correcting_wrong_way ?
+          reactive_control_v2::wrong_way_recovery::reverseSteeringAngle(
+          wrong_way_turn_sign_, wrong_way_reverse_steering_rad_) : 0.0;
+        output = reverseCommand(steering);
       }
     } else if (settle_active_) {
       mode = Mode::RECOVERY_SETTLE;
@@ -1521,9 +2241,57 @@ private:
       if (fully_settled) {
         settle_active_ = false;
         settle_stationary_timer_active_ = false;
-        if (ftg_stably_available) {
+        const bool alignment_release_window =
+          reactive_control_v2::wrong_way_recovery::alignmentReleaseWindow(
+          wrong_way_recovery_latched_, wrong_way_alignment_recovered_,
+          wrong_way_input, wrong_way_stop_angle_rad_);
+        const bool wrong_way_correction_required =
+          wrong_way_recovery_latched_ && !alignment_release_window;
+        if (wrong_way_suspect_latched_ && !wrong_way_recovery_latched_) {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way suspicion held while confirmation restarts after reverse preemption";
+          output = stopCommand();
+        } else if (wrong_way_correction_required &&
+          reactive_control_v2::wrong_way_recovery::reverseAuthorityValid(wrong_way_input) &&
+          wrong_way_reverse_attempt_count_ < wrong_way_reverse_max_attempts_ &&
+          reverse_attempt_count_ < reverse_max_attempts_)
+        {
+          if (select_safe_wrong_way_turn(reverse_max_distance_m_)) {
+            startWrongWayReverse(current_time, heading_error_rad, reverse_safety);
+            mode = Mode::REVERSE_RECOVERY;
+            reason = reverse_trigger_reason_;
+            output = reverseCommand(
+              reactive_control_v2::wrong_way_recovery::reverseSteeringAngle(
+                wrong_way_turn_sign_, wrong_way_reverse_steering_rad_));
+          } else {
+            mode = Mode::EMERGENCY_STOP;
+            reason = "wrong-way recovery swept gate blocked: " +
+              reverse_swept_gate_reason_;
+            output = stopCommand();
+          }
+        } else if (wrong_way_correction_required) {
+          mode = Mode::EMERGENCY_STOP;
+          if (!reactive_control_v2::wrong_way_recovery::reverseAuthorityValid(
+              wrong_way_input))
+          {
+            reason = "wrong-way recovery waiting for explicit Reactive authority";
+          } else if (wrong_way_reverse_attempt_count_ >= wrong_way_reverse_max_attempts_ ||
+            reverse_attempt_count_ >= reverse_max_attempts_)
+          {
+            reason = "wrong-way reverse attempt limit reached";
+          } else {
+            reason = "wrong-way recovery held because rear-side clearance is unavailable";
+          }
+          output = stopCommand();
+        } else if (wrong_way_recovery_latched_ && !wrong_way_alignment_recovered_) {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way recovery held because heading evidence is stale or invalid";
+          output = stopCommand();
+        } else if (ftg_stably_available) {
           mode = Mode::FALLBACK_FTG;
-          reason = "reverse complete and stationary; resuming through stable FTG";
+          reason = wrong_way_recovery_latched_ ?
+            "track-relative heading recovered; resuming through stable FTG" :
+            "reverse complete and stationary; resuming through stable FTG";
           output = fallbackCommand(fallback);
           applyLowSpeedAssist(output, current_speed, odom_healthy, current_time);
         } else {
@@ -1533,6 +2301,113 @@ private:
         }
       }
     } else {
+      const bool new_confirmation_sample = heading_error_sequence != 0 &&
+        heading_error_sequence != last_wrong_way_heading_sequence_;
+      if (!wrong_way_suspect_latched_ && !wrong_way_recovery_latched_) {
+        wrong_way_timer_active_ = false;
+        wrong_way_confirmation_sample_count_ = 0;
+      } else if (!wrong_way_geometry_valid) {
+        wrong_way_timer_active_ = false;
+        wrong_way_confirmation_sample_count_ = 0;
+      } else if (new_confirmation_sample) {
+        last_wrong_way_heading_sequence_ = heading_error_sequence;
+        const bool confirmation_present =
+          reactive_control_v2::wrong_way_recovery::suspicionConfirmationPresent(
+          wrong_way_suspect_latched_, wrong_way_input, wrong_way_exit_angle_rad_);
+        if (confirmation_present && !wrong_way_recovery_latched_) {
+          if (!wrong_way_timer_active_) {
+            wrong_way_started_at_ = current_time;
+            wrong_way_timer_active_ = true;
+            wrong_way_confirmation_sample_count_ = 0;
+          }
+          ++wrong_way_confirmation_sample_count_;
+        } else if (!wrong_way_recovery_latched_) {
+          wrong_way_timer_active_ = false;
+          wrong_way_confirmation_sample_count_ = 0;
+        }
+      }
+      const double wrong_way_elapsed_sec = wrong_way_timer_active_ ?
+        std::max(0.0, (current_time - wrong_way_started_at_).seconds()) : 0.0;
+      const bool wrong_way_confirmed = wrong_way_suspect_latched_ &&
+        reactive_control_v2::wrong_way_recovery::suspicionConfirmationPresent(
+        wrong_way_suspect_latched_, wrong_way_input, wrong_way_exit_angle_rad_) &&
+        reactive_control_v2::wrong_way_recovery::confirmationReached(
+        wrong_way_timer_active_, wrong_way_elapsed_sec, wrong_way_confirmation_sec_,
+        wrong_way_confirmation_sample_count_, wrong_way_confirmation_samples_);
+      if (wrong_way_confirmed) {
+        wrong_way_recovery_latched_ =
+          reactive_control_v2::wrong_way_recovery::updatePersistentLatch(
+          wrong_way_recovery_latched_, true, false, false);
+        raceline_stall_handoff_latched_ =
+          reactive_control_v2::raceline_stall_handoff::updatePersistentLatch(
+          raceline_stall_handoff_latched_, true, false);
+        wrong_way_timer_active_ = false;
+        wrong_way_confirmation_sample_count_ = 0;
+        wrong_way_suspect_latched_ = false;
+      }
+
+      const bool alignment_release_window =
+        reactive_control_v2::wrong_way_recovery::alignmentReleaseWindow(
+        wrong_way_recovery_latched_, wrong_way_alignment_recovered_,
+        wrong_way_input, wrong_way_stop_angle_rad_);
+      const bool wrong_way_control_owns = wrong_way_suspect_latched_ ||
+        (wrong_way_recovery_latched_ && !alignment_release_window) ||
+        wrong_way_direction_unverified;
+      if (wrong_way_control_owns) {
+        clearTriggerTimers();
+        resetLowSpeedAssist();
+        const bool stationary = odom_healthy &&
+          std::abs(current_speed) <= stationary_speed_threshold_mps_;
+        if (wrong_way_direction_unverified && !wrong_way_suspect_latched_ &&
+          !wrong_way_recovery_latched_)
+        {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "forward motion held until fresh track-direction geometry is available";
+          output = stopCommand();
+        } else if (!wrong_way_recovery_latched_) {
+          mode = Mode::EMERGENCY_STOP;
+          reason = wrong_way_geometry_valid ?
+            "negative track progress detected; braking for confirmation" :
+            "possible wrong-way motion held because heading evidence is stale or invalid";
+          output = stopCommand();
+        } else if (!wrong_way_geometry_valid) {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way recovery held because heading evidence is stale or invalid";
+          output = stopCommand();
+        } else if (!reactive_control_v2::wrong_way_recovery::reverseAuthorityValid(
+            wrong_way_input))
+        {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way recovery waiting for explicit Reactive authority";
+          output = stopCommand();
+        } else if (!stationary) {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way recovery waiting for a complete stop before reverse";
+          output = stopCommand();
+        } else if (wrong_way_reverse_attempt_count_ >= wrong_way_reverse_max_attempts_ ||
+          reverse_attempt_count_ >= reverse_max_attempts_)
+        {
+          mode = Mode::EMERGENCY_STOP;
+          reason = "wrong-way reverse attempt limit reached";
+          output = stopCommand();
+        } else {
+          if (select_safe_wrong_way_turn(reverse_max_distance_m_)) {
+            startWrongWayReverse(current_time, heading_error_rad, reverse_safety);
+            mode = Mode::REVERSE_RECOVERY;
+            reason = reverse_trigger_reason_;
+            output = reverseCommand(
+              reactive_control_v2::wrong_way_recovery::reverseSteeringAngle(
+                wrong_way_turn_sign_, wrong_way_reverse_steering_rad_));
+          } else {
+            mode = Mode::EMERGENCY_STOP;
+            reason = "wrong-way recovery swept gate blocked: " +
+              reverse_swept_gate_reason_;
+            output = stopCommand();
+          }
+        }
+      }
+
+      if (!wrong_way_control_owns) {
       const bool stationary = odom_healthy &&
         std::abs(current_speed) <= stationary_speed_threshold_mps_;
       const bool dead_end_evidence = reactive_mode_authorized &&
@@ -1619,7 +2494,7 @@ private:
         output = stopCommand();
         resetLowSpeedAssist();
       } else if ((reactive_stuck_confirmed || dead_end_confirmed) && attempts_available &&
-        reverse_safety.valid)
+        reverse_safety.valid && reverse_swept_clear_for(0, reverse_max_distance_m_))
       {
         const std::string trigger = reactive_stuck_confirmed ?
           "forward command persisted while VESC speed stayed low" :
@@ -1636,6 +2511,13 @@ private:
         mode = Mode::EMERGENCY_STOP;
         reason = "reverse recovery blocked: " + reverse_safety.reason;
         output = stopCommand();
+      } else if ((reactive_stuck_confirmed || dead_end_confirmed) &&
+        !reverse_swept_gate_valid_)
+      {
+        mode = Mode::EMERGENCY_STOP;
+        reason = "reverse recovery swept gate blocked: " + reverse_swept_gate_reason_;
+        output = stopCommand();
+      }
       }
     }
 
@@ -1653,9 +2535,17 @@ private:
       {
         reverse_attempt_count_ = 0;
         reverse_trigger_reason_.clear();
-        raceline_stall_handoff_latched_ =
-          reactive_control_v2::raceline_stall_handoff::updatePersistentLatch(
-          raceline_stall_handoff_latched_, false, true);
+        wrong_way_recovery_latched_ =
+          reactive_control_v2::wrong_way_recovery::updatePersistentLatch(
+          wrong_way_recovery_latched_, false,
+          wrong_way_alignment_recovered_, true);
+        if (!wrong_way_recovery_latched_) {
+          wrong_way_reverse_attempt_count_ = 0;
+          wrong_way_turn_sign_ = 0;
+          raceline_stall_handoff_latched_ =
+            reactive_control_v2::raceline_stall_handoff::updatePersistentLatch(
+            raceline_stall_handoff_latched_, false, true);
+        }
       }
     } else {
       forward_motion_timer_active_ = false;
@@ -1675,6 +2565,7 @@ private:
     low_speed_assist_output_command_mps_ = output.drive.speed;
 
     safe_command_pub_->publish(output);
+    last_published_steering_rad_ = output.drive.steering_angle;
     logFallbackDebug(mode, scan_data, fallback, output);
     logReverseDebug(
       mode, current_speed, odom_healthy, odom_age, front_emergency,
@@ -1682,6 +2573,7 @@ private:
     publishStatus(
       mode, reason, scan_data, fallback, command_age, scan_age, current_speed, upper_state,
       odom_healthy, odom_age, front_emergency, ftg_stably_available, reverse_safety,
+      heading_error_rad, heading_error_age, heading_error_fresh,
       arbitration_mode, arbitration_mode_healthy, arbitration_mode_age,
       current_time);
     logTransition(mode, reason);

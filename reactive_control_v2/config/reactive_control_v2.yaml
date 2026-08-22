@@ -135,6 +135,7 @@ lower_safety_controller:
     odom_topic: "/odom"
     upper_status_topic: "/reactive_control_v2/status"
     arbitration_mode_topic: "/drive_arbitration_v2/selected_mode"
+    wrong_way_heading_error_topic: "/path_following_v2/raceline_heading_error_rad"
     safe_command_topic: "/reactive_control_v2/safe_cmd"
     lower_status_topic: "/reactive_control_v2/lower_safety_status"
     control_frequency_hz: 20.0
@@ -147,6 +148,18 @@ lower_safety_controller:
     # false so FTG/reverse can operate without the arbitrator topic.
     require_arbitration_mode: false
     arbitration_mode_timeout_sec: 0.50
+    wrong_way_heading_error_timeout_sec: 0.20
+    wrong_way_max_raceline_distance_m: 4.0
+    enable_sim_reverse_swept_gate: false
+    reverse_swept_map_topic: "/map"
+    reverse_swept_agent_status_topic: "/simulator/agent_status"
+    reverse_swept_status_timeout_sec: 0.10
+    reverse_swept_sample_step_m: 0.02
+    reverse_vehicle_length_m: 0.58
+    reverse_vehicle_width_m: 0.31
+    reverse_swept_margin_m: 0.03
+    reverse_wheelbase_m: 0.33
+    reverse_map_occupied_threshold: 50
 
     # ========================================================
     # 2. ABSOLUTE COMMAND SANITY LIMITS
@@ -202,15 +215,26 @@ lower_safety_controller:
     # Onboard behavior is unchanged until this handoff is validated with the
     # real drivetrain and odometry. The simulator enables it explicitly.
     enable_raceline_stall_handoff: false
+    # Disabled onboard until rear sensing and reverse swept-path validation are
+    # available. The simulator profile enables the bounded recovery explicitly.
+    enable_wrong_way_recovery: false
     stationary_speed_threshold_mps: 0.05
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20
     stuck_speed_threshold_mps: 0.05
     stuck_confirmation_sec: 0.5
+    wrong_way_stop_angle_deg: 90.0
+    wrong_way_entry_angle_deg: 90.0
+    wrong_way_exit_angle_deg: 80.0
+    wrong_way_confirmation_sec: 0.20
+    wrong_way_confirmation_samples: 3
+    wrong_way_exit_confirmation_sec: 0.15
+    wrong_way_exit_confirmation_samples: 3
 
     # ========================================================
     # 7. REVERSE COMMAND AND BOUNDS
-    # Recovery always commands zero steering.
+    # Ordinary stall recovery commands zero steering. Wrong-way steering is
+    # disabled by enable_wrong_way_recovery above.
     # ========================================================
     reverse_speed_mps: 0.85
     reverse_min_distance_m: 0.10
@@ -220,6 +244,9 @@ lower_safety_controller:
     reverse_max_attempts: 50
     reverse_attempt_reset_forward_time_sec: 0.30
     reverse_attempt_reset_speed_mps: 0.20
+    wrong_way_reverse_steering_deg: 25.0
+    wrong_way_reverse_min_side_clearance_m: 0.50
+    wrong_way_reverse_max_attempts: 4
 
     # ========================================================
     # 8. REVERSE EXIT AND FORWARD HANDOFF

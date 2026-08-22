@@ -18,6 +18,7 @@
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "geometry_msgs/msg/point.hpp"
+#include "geometry_msgs/msg/vector3_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -104,7 +105,8 @@ class LocalTrajectoryPlannerNode : public rclcpp::Node
 public:
   LocalTrajectoryPlannerNode()
   : Node("local_trajectory_planner"),
-    tf_buffer_(this->get_clock()),
+    tf_system_clock_(std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME)),
+    tf_buffer_(tf_system_clock_),
     tf_listener_(tf_buffer_)
   {
     declareParameters();
@@ -127,6 +129,8 @@ public:
     final_path_pub_ = create_publisher<nav_msgs::msg::Path>(
       final_path_topic_, rclcpp::QoS(1).reliable().transient_local());
     speed_cap_pub_ = create_publisher<std_msgs::msg::Float64>(speed_cap_topic_, 10);
+    heading_error_pub_ =
+      create_publisher<geometry_msgs::msg::Vector3Stamped>(heading_error_topic_, 10);
     status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(status_topic_, 10);
     if (publish_markers_) {
       marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, 10);
@@ -314,9 +318,11 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr final_path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_cap_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr heading_error_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Clock::SharedPtr tf_system_clock_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
@@ -333,6 +339,7 @@ private:
   std::string final_path_topic_;
   std::string scan_topic_;
   std::string speed_cap_topic_;
+  std::string heading_error_topic_;
   std::string status_topic_;
   std::string marker_topic_;
   std::string reset_topic_;
@@ -470,6 +477,8 @@ private:
     declare_parameter<std::string>("scan_topic", "/scan");
     declare_parameter<std::string>(
       "speed_cap_topic", "/path_following_v2/trajectory_speed_cap_mps");
+    declare_parameter<std::string>(
+      "heading_error_topic", "/path_following_v2/raceline_heading_error_rad");
     declare_parameter<std::string>("status_topic", "/path_following_v2/path_status");
     declare_parameter<std::string>("marker_topic", "/path_following_v2/detour_markers");
     declare_parameter<std::string>("reset_topic", "/path_following_v2/reset");
@@ -607,6 +616,7 @@ private:
     final_path_topic_ = get_parameter("final_path_topic").as_string();
     scan_topic_ = get_parameter("scan_topic").as_string();
     speed_cap_topic_ = get_parameter("speed_cap_topic").as_string();
+    heading_error_topic_ = get_parameter("heading_error_topic").as_string();
     status_topic_ = get_parameter("status_topic").as_string();
     marker_topic_ = get_parameter("marker_topic").as_string();
     reset_topic_ = get_parameter("reset_topic").as_string();
@@ -1292,11 +1302,12 @@ private:
   }
 
   bool lookupRobotPose(
-    const std::string & frame, Point2 & position, double & yaw)
+    const std::string & frame, const builtin_interfaces::msg::Time & source_stamp,
+    Point2 & position, double & yaw)
   {
     try {
       const auto transform = tf_buffer_.lookupTransform(
-        frame, robot_frame_, tf2::TimePointZero,
+        frame, robot_frame_, rclcpp::Time(source_stamp),
         tf2::durationFromSec(transform_timeout_sec_));
       position.x = transform.transform.translation.x;
       position.y = transform.transform.translation.y;
@@ -1334,7 +1345,7 @@ private:
     tf2::Transform path_from_scan;
     try {
       const auto transform = tf_buffer_.lookupTransform(
-        path.frame, scan.header.frame_id, tf2::TimePointZero,
+        path.frame, scan.header.frame_id, rclcpp::Time(scan.header.stamp),
         tf2::durationFromSec(transform_timeout_sec_));
       tf2::fromMsg(transform.transform, path_from_scan);
     } catch (const tf2::TransformException & exception) {
@@ -3637,7 +3648,7 @@ private:
 
     Point2 robot_position;
     double robot_yaw = 0.0;
-    if (!lookupRobotPose(raw.frame, robot_position, robot_yaw)) {
+    if (!lookupRobotPose(raw.frame, scan->header.stamp, robot_position, robot_yaw)) {
       failPrimary(
         "TF_UNAVAILABLE", "path-frame-to-robot transform is unavailable",
         raw_age, scan_age, valid_beam_ratio);
@@ -3657,6 +3668,13 @@ private:
       last_processed_scan_time_.nanoseconds();
     if (new_scan) {
       last_processed_scan_time_ = current_scan_time;
+      geometry_msgs::msg::Vector3Stamped heading_error_message;
+      heading_error_message.header.stamp = scan->header.stamp;
+      heading_error_message.header.frame_id = raw.frame;
+      heading_error_message.vector.x = car_heading_error;
+      heading_error_message.vector.y = robot_on_raw.distance;
+      heading_error_message.vector.z = robot_on_raw.s;
+      heading_error_pub_->publish(heading_error_message);
     }
 
     last_effective_detection_distance_m_ = effectiveObstacleDetectionDistance(raw);

@@ -45,7 +45,9 @@ add_executable(lower_safety_controller src/lower_safety_controller.cpp)
 target_include_directories(lower_safety_controller PRIVATE include)
 ament_target_dependencies(lower_safety_controller
   ackermann_msgs
+  builtin_interfaces
   diagnostic_msgs
+  geometry_msgs
   nav_msgs
   rclcpp
   sensor_msgs
@@ -74,6 +76,16 @@ if(BUILD_TESTING)
     test/raceline_stall_handoff_test.cpp
   )
   target_include_directories(raceline_stall_handoff_test PRIVATE include)
+
+  ament_add_gtest(wrong_way_recovery_test
+    test/wrong_way_recovery_test.cpp
+  )
+  target_include_directories(wrong_way_recovery_test PRIVATE include)
+
+  ament_add_gtest(reverse_swept_safety_test
+    test/reverse_swept_safety_test.cpp
+  )
+  target_include_directories(reverse_swept_safety_test PRIVATE include)
 endif()
 
 ament_package()
