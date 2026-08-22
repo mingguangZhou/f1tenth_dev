@@ -33,7 +33,9 @@ Docker lifecycle:
 Inside the container:
   f1 build sim     Build simulator + RViz launch package.
   f1 build auto    Build the autonomy stack.
-  f1 sim           Run simulator + RViz; Ctrl+C returns to the shell.
+  f1 sim           Run the eleven-vehicle simulator + RViz.
+  f1 sim --no-agents
+                   Run the ego-only simulator + RViz.
   f1 auto          Run autonomy stack; Ctrl+C returns to the shell.
 EOF
 }

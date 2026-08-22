@@ -26,6 +26,13 @@ Use one container terminal for the simulator and RViz:
 f1 sim
 ```
 
+This starts the Spielberg fixture with the ego car and ten traffic agents. For
+the original ego-only simulator, use:
+
+```bash
+f1 sim --no-agents
+```
+
 Use a second host terminal to enter the same container and launch autonomy:
 
 ```bash
@@ -74,18 +81,22 @@ cars. The traffic cars use one fixed, map-validated route derived from the ego
 raceline, with smooth local nudges around the nine fixed obstacles. Their
 starts are separated by exactly one tenth of the route's closed arc length.
 
-After building the simulator package, launch it with:
+After building the simulator package, launch the default fixture with:
 
 ```bash
-ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py
+f1 sim
 ```
 
 For a headless smoke test, disable only RViz; all eleven simulated identities
 and all ten traffic controllers still run:
 
 ```bash
-ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py use_rviz:=false
+f1 sim use_rviz:=false
 ```
+
+Use `f1 sim --no-agents` for the same obstacle map without traffic agents.
+Direct `ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py` and
+`gym_bridge_launch.py` commands remain available.
 
 With that launch running, verify that every simulator identity is present, all
 ten traffic cars move, and no collision is reported:

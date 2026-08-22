@@ -41,6 +41,13 @@ Run the simulator and RViz in the first container terminal:
 f1 sim
 ```
 
+The default is the eleven-vehicle Spielberg fixture. Use the original
+ego-only simulator when needed:
+
+```bash
+f1 sim --no-agents
+```
+
 Open another host terminal, enter the same container, and run autonomy:
 
 ```bash
@@ -419,7 +426,13 @@ Please see the local package README for detailed instructions:
 cat README.md
 ```
 
-Main output used by the runtime raceline publisher:
+The validated Spielberg raceline selected by `f1 auto` is:
+
+```bash
+/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv
+```
+
+The generic offline generator writes new, inactive output to:
 
 ```bash
 /sim_ws/src/centerline_tools/centerline_output/raceline_points_smooth.csv

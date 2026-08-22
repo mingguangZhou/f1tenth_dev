@@ -22,10 +22,10 @@ usage() {
 Usage: run_obstacle_trials.sh [--obstacle 1-4] [--trials N] [--duration SEC]
                               [--output-dir DIR] [--reuse-stack]
 
-Run this inside the ROS container while `f1 sim` is running. The script starts
-one autonomy stack, waits for ROS discovery, then resets planner/arbitrator and
-vehicle state before every trial. It records synchronized planner, guard,
-arbitrator, Reactive, scan, and drive data.
+Run this inside the ROS container while `f1 sim --no-agents` is running. The
+script starts one autonomy stack, waits for ROS discovery, then resets
+planner/arbitrator and vehicle state before every trial. It records synchronized
+planner, guard, arbitrator, Reactive, scan, and drive data.
 
 Use --reuse-stack to test an already-running `f1 auto` process. In that mode,
 the script resets but does not stop that autonomy stack.

@@ -28,16 +28,18 @@ Build:
   build all       Install dependencies and build both groups.
 
 Run:
-  sim [ARGS...]   Launch simulator + RViz.
+  sim [--agents|--no-agents] [ARGS...]
+                  Launch the eleven-vehicle simulator by default.
   auto [ARGS...]  Launch autonomy stack only.
 
 Inspect:
   status          List ROS nodes and launch processes.
   help            Show this help.
 
-Each run command accepts normal ROS launch arguments. Press Ctrl+C to stop a
-launch and return to the same container shell. Rendering mode comes from the
-host-side dk.sh command: GPU by default, or --cpu for software/noVNC.
+Use `sim --no-agents` for the ego-only simulator. Each run command accepts
+normal ROS launch arguments. Press Ctrl+C to stop a launch and return to the
+same container shell. Rendering mode comes from the host-side dk.sh command:
+GPU by default, or --cpu for software/noVNC.
 EOF
 }
 
@@ -109,9 +111,45 @@ build_group() {
 }
 
 run_sim() {
+  local launch_file="spielberg_multi_agent_launch.py"
+  local requested_mode=""
+  local parse_options=true
+  local -a launch_args=()
+  local argument
+
+  for argument in "$@"; do
+    if [[ "${parse_options}" == true ]]; then
+      case "${argument}" in
+        --agents)
+          if [[ "${requested_mode}" == "no-agents" ]]; then
+            echo "Cannot combine --agents and --no-agents." >&2
+            return 2
+          fi
+          requested_mode="agents"
+          ;;
+        --no-agents)
+          if [[ "${requested_mode}" == "agents" ]]; then
+            echo "Cannot combine --agents and --no-agents." >&2
+            return 2
+          fi
+          requested_mode="no-agents"
+          launch_file="gym_bridge_launch.py"
+          ;;
+        --)
+          parse_options=false
+          ;;
+        *)
+          launch_args+=("${argument}")
+          ;;
+      esac
+    else
+      launch_args+=("${argument}")
+    fi
+  done
+
   source_workspace
   configure_rendering
-  ros2 launch f1tenth_gym_ros gym_bridge_launch.py "$@"
+  ros2 launch f1tenth_gym_ros "${launch_file}" "${launch_args[@]}"
 }
 
 run_auto() {
@@ -172,4 +210,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

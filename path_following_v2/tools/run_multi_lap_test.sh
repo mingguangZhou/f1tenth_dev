@@ -78,7 +78,7 @@ fi
 source /opt/ros/foxy/setup.bash
 source /sim_ws/install/local_setup.bash
 
-if ! pgrep -f '^/usr/bin/python3 /opt/ros/foxy/bin/ros2 launch f1tenth_gym_ros gym_bridge_launch.py' >/dev/null; then
+if ! pgrep -f '^/usr/bin/python3 /opt/ros/foxy/bin/ros2 launch f1tenth_gym_ros (spielberg_multi_agent_launch|gym_bridge_launch)\.py' >/dev/null; then
   echo "Simulator launch is not running." >&2
   exit 1
 fi

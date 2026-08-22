@@ -11,7 +11,8 @@ f1 build auto
 f1 auto
 ```
 
-Run `f1 sim` in a separate container terminal for the simulator and RViz.
+Run `f1 sim` in a separate container terminal for the eleven-vehicle simulator
+and RViz. Use `f1 sim --no-agents` for an ego-only obstacle-map run.
 
 In simulation, `f1 auto` follows the validated optimized Spielberg raceline by
 default. The original manually tuned line remains available as a rollback:
