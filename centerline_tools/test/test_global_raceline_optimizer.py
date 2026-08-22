@@ -26,6 +26,35 @@ def wavy_circle(count=240):
     return np.column_stack((radius * np.cos(angle), radius * np.sin(angle)))
 
 
+def rounded_rectangle():
+    """Return a CCW loop with four well-separated 90-degree corners."""
+
+    def line(start, end, count):
+        fraction = np.linspace(0.0, 1.0, count, endpoint=False)
+        start = np.asarray(start, dtype=np.float64)
+        end = np.asarray(end, dtype=np.float64)
+        return start + (end - start) * fraction[:, None]
+
+    def arc(center, start_angle, end_angle, count):
+        angle = np.linspace(start_angle, end_angle, count, endpoint=False)
+        center = np.asarray(center, dtype=np.float64)
+        return center + 2.0 * np.column_stack((np.cos(angle), np.sin(angle)))
+
+    raw = np.vstack(
+        (
+            line((-8.0, -6.0), (8.0, -6.0), 100),
+            arc((8.0, -4.0), -0.5 * np.pi, 0.0, 60),
+            line((10.0, -4.0), (10.0, 4.0), 50),
+            arc((8.0, 4.0), 0.0, 0.5 * np.pi, 60),
+            line((8.0, 6.0), (-8.0, 6.0), 100),
+            arc((-8.0, 4.0), 0.5 * np.pi, np.pi, 60),
+            line((-10.0, 4.0), (-10.0, -4.0), 50),
+            arc((-8.0, -4.0), np.pi, 1.5 * np.pi, 60),
+        )
+    )
+    return optimizer.resample_closed_loop(raw, 0.20)[0]
+
+
 def write_path_csv(path, points):
     """Write the minimum accepted input schema."""
     with path.open("w", newline="", encoding="utf-8") as stream:
@@ -140,6 +169,73 @@ def test_bounded_optimizer_reduces_curvature_and_curvature_rate():
     )
     np.testing.assert_allclose(
         first.points, second.points, rtol=0.0, atol=1.0e-12
+    )
+
+
+def test_optimizer_uses_outside_inside_outside_line_through_isolated_corners():
+    reference = rounded_rectangle()
+    corridor_half_width_m = 0.80
+    lower = np.full(len(reference), -corridor_half_width_m)
+    upper = np.full(len(reference), corridor_half_width_m)
+    config = optimizer.OptimizerConfig()
+    assert config.path_length_weight == pytest.approx(0.125)
+    assert config.offset_slope_weight == pytest.approx(0.005)
+    assert optimizer.load_optimizer_config(
+        PACKAGE_ROOT / "config" / "global_raceline_optimizer.yaml"
+    ) == config
+
+    first = optimizer.optimize_global_raceline(reference, lower, upper, config)
+    second = optimizer.optimize_global_raceline(reference, lower, upper, config)
+
+    assert all(stage["success"] for stage in first.stages)
+    assert all(stage["success"] for stage in second.stages)
+    np.testing.assert_allclose(
+        first.offsets_m, second.offsets_m, rtol=0.0, atol=1.0e-12
+    )
+    np.testing.assert_allclose(
+        first.points, second.points, rtol=0.0, atol=1.0e-12
+    )
+
+    root_two = np.sqrt(2.0)
+    corner_samples = (
+        ((6.0, -6.0), (8.0 + root_two, -4.0 - root_two), (10.0, -2.0)),
+        ((10.0, 2.0), (8.0 + root_two, 4.0 + root_two), (6.0, 6.0)),
+        ((-6.0, 6.0), (-8.0 - root_two, 4.0 + root_two), (-10.0, 2.0)),
+        ((-10.0, -2.0), (-8.0 - root_two, -4.0 - root_two), (-6.0, -6.0)),
+    )
+
+    def offset_near(point):
+        delta = reference - np.asarray(point, dtype=np.float64)
+        index = int(np.argmin(np.sum(delta * delta, axis=1)))
+        return float(first.offsets_m[index])
+
+    for entrance, apex, exit_point in corner_samples:
+        # The loop is counter-clockwise, so positive offsets are toward the
+        # inside of each turn and negative offsets are toward the outside.
+        assert offset_near(entrance) <= -0.50
+        assert offset_near(apex) >= 0.25
+        assert offset_near(exit_point) <= -0.50
+
+    assert np.all(first.offsets_m >= lower - 1.0e-10)
+    assert np.all(first.offsets_m <= upper + 1.0e-10)
+    assert optimizer.first_self_intersection(first.points) is None
+    assert np.sign(optimizer.signed_area(first.points)) == np.sign(
+        optimizer.signed_area(reference)
+    )
+    segments = np.linalg.norm(
+        np.roll(first.points, -1, axis=0) - first.points,
+        axis=1,
+    )
+    assert float(np.min(segments)) >= 0.10
+
+    before = optimizer.path_metrics(reference)
+    after = optimizer.path_metrics(first.points)
+    assert after["curvature_abs_max_inv_m"] <= config.maximum_curvature_inv_m
+    assert after["curvature_abs_max_inv_m"] < before["curvature_abs_max_inv_m"]
+    assert after["curvature_rms_inv_m"] <= 0.70 * before["curvature_rms_inv_m"]
+    assert (
+        after["curvature_rate_rms_inv_m2"]
+        <= 0.25 * before["curvature_rate_rms_inv_m2"]
     )
 
 

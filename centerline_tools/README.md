@@ -65,13 +65,15 @@ The header should be:
 index,x,y,yaw,curvature,curvature_abs
 ```
 
-## Global smoothness optimization
+## Global raceline optimization
 
 The global optimizer consumes the Phase-9 centerline, selected drivable-region
 mask, and ROS map metadata. It optimizes one lateral offset at each uniformly
 sampled centerline station. The objective is solved in three deterministic
 stages: segment/length initialization, minimum curvature, and curvature-rate
-smoothing. All objective terms wrap across the lap seam.
+smoothing. The default length and lateral-transition weights balance minimum
+curvature with an outside-inside-outside corner line; the offset-to-center term
+remains small. All objective terms wrap across the lap seam.
 
 Legal lateral offsets are ray-cast from the centerline through an eroded
 drivable-region mask. Before saving, the tool densely validates the complete

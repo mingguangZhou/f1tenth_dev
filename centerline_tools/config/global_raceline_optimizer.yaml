@@ -10,9 +10,12 @@ parameters:
   curvature_limit_weight: 0.10
   comfortable_curvature_inv_m: 0.90
   segment_uniformity_weight: 1.0
-  path_length_weight: 0.005
+  # Balance minimum curvature with distance so turns use an
+  # outside-inside-outside line instead of remaining on the outer parallel.
+  path_length_weight: 0.125
   offset_weight: 0.001
-  offset_slope_weight: 0.03
+  # Permit gradual cross-track transitions between corner entry and apex.
+  offset_slope_weight: 0.005
   # 0.95 * tan(20.6 deg) / 0.33 m, matching the runtime steering envelope.
   maximum_curvature_inv_m: 1.082
   maximum_iterations_per_stage: 2500

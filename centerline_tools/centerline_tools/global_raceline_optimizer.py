@@ -37,9 +37,9 @@ class OptimizerConfig:
     curvature_limit_weight: float = 0.10
     comfortable_curvature_inv_m: float = 0.90
     segment_uniformity_weight: float = 1.0
-    path_length_weight: float = 0.005
+    path_length_weight: float = 0.125
     offset_weight: float = 0.001
-    offset_slope_weight: float = 0.03
+    offset_slope_weight: float = 0.005
     maximum_curvature_inv_m: float = 1.082
     maximum_iterations_per_stage: int = 2500
     function_tolerance: float = 1.0e-9
