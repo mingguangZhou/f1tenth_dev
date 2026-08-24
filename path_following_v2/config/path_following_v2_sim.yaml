@@ -1,25 +1,23 @@
 # Path Following V2 — simulator parameters
 #
 # START TUNING HERE
-#   Normal speed cap:  command_speed_max_mps (shared by raceline, avoidance,
-#                      and raceline recovery)
-#   Curve slowdown:    rule_curve_min_speed_mps, rule_speed_curvature_gain,
-#                      rule_speed_curvature_preview_m
+#   Normal speed:      rule_straight_speed_mps, rule_curve_min_speed_mps,
+#                      rule_speed_curvature_gain, rule_speed_curvature_preview_m
+#   Absolute limit:    command_speed_min_mps, command_speed_max_mps (defined once)
 #   Maneuver limits:   avoidance/recovery/replan_pending_speed_cap_mps,
 #                      maneuver_lateral_acceleration_limit_mps2
 #   Steering response: steering_*_lookahead_m and steering_lookahead_speed_gain
 #   Local window:      local_path_target_length_m (primary physical target)
 
 # ============================================================
-# SHARED NORMAL-DRIVING COMMAND ENVELOPE
-# The maximum is the common ceiling for raceline, avoidance, and recovery.
-# The generator encodes with it, the planner applies it, and the follower
-# decodes and clips with the same value.
+# SHARED PHYSICAL COMMAND ENVELOPE
+# Adjust once; generator encodes with it, planner uses its maximum as the
+# ordinary-path cap, and follower decodes/clips with the same values.
 # ============================================================
 /**:
   ros__parameters:
     command_speed_min_mps: 0.5
-    command_speed_max_mps: 4.5
+    command_speed_max_mps: 10.0
 
 path_generator:
   ros__parameters:
@@ -55,7 +53,7 @@ path_generator:
     # the current ~0.03 m raceline spacing. Tune it separately if desired.
     # --------------------------------------------------------
     rule_curve_min_speed_mps: 1.0
-    rule_straight_speed_mps: 4.5
+    rule_straight_speed_mps: 5.0
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_preview_m: 0.50
 
@@ -176,8 +174,7 @@ local_trajectory_planner:
 
     # --------------------------------------------------------
     # TEMPORARY LOCAL-TRAJECTORY SPEED CAPS
-    # Raceline, avoidance, and recovery share command_speed_max_mps. Curvature
-    # can lower the active avoidance/recovery cap below that common ceiling.
+    # Ordinary raceline cap = shared command_speed_max_mps.
     # --------------------------------------------------------
     # These are upper ceilings. The planner lowers them automatically so that
     # speed^2 * remaining-path curvature stays within the lateral-acceleration

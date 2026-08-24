@@ -17,6 +17,10 @@ if(BUILD_TESTING)
     test/test_full_stack_sim_defaults.py
     TIMEOUT 30
   )
+  ament_add_pytest_test(onboard_profile_contracts_test
+    test/test_onboard_profile_contracts.py
+    TIMEOUT 30
+  )
 endif()
 
 ament_package()

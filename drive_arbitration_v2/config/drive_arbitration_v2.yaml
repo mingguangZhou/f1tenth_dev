@@ -62,7 +62,7 @@ drive_arbitrator:
     reactive_command_timeout_sec: 0.30
     pf_health_timeout_sec: 0.50
 
-    require_pf_health: false
+    require_pf_health: true
     latch_reactive_mode: true
     allow_auto_recovery_from_blocked: true
     allow_auto_recovery_from_pf_invalid: true

@@ -4,7 +4,5 @@ lower_safety_controller:
     # Integrated operation: only selected REACTIVE mode may authorize lower
     # FTG/reverse. A stale mode heartbeat is a STOP condition.
     require_arbitration_mode: true
-    enable_wrong_way_recovery: true
-    enable_sim_reverse_swept_gate: true
     arbitration_mode_topic: "/drive_arbitration_v2/selected_mode"
     arbitration_mode_timeout_sec: 0.50
