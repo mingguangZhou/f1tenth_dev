@@ -1,0 +1,22 @@
+parameters:
+  optimization_spacing_m: 0.15
+  output_spacing_m: 0.03
+  safety_margin_m: 0.30
+  maximum_lateral_offset_m: 1.50
+  ray_step_fraction: 0.40
+  validation_step_m: 0.005
+  curvature_weight: 1.22
+  curvature_rate_weight: 0.025
+  curvature_limit_weight: 0.10
+  comfortable_curvature_inv_m: 0.90
+  segment_uniformity_weight: 1.0
+  path_length_weight: 0.125
+  offset_weight: 0.001
+  offset_slope_weight: 0.005
+  maximum_curvature_inv_m: 1.082
+  maximum_iterations_per_stage: 2500
+
+  # The short scanned circuit converges reliably with these map-specific
+  # tolerances. The common Spielberg optimizer configuration remains strict.
+  function_tolerance: 1.0e-7
+  gradient_tolerance: 1.0e-3

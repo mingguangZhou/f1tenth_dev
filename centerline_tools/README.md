@@ -118,6 +118,20 @@ Generate a fresh centerline and optimized raceline in one command:
 python3 run_centerline_and_optimized_raceline.py Spielberg_map.png Spielberg_map.yaml
 ```
 
+The centerline extractor normally requires the ordered loop to cover at least
+98% of the pruned skeleton. A scanned map with verified short medial-axis
+branches can use an explicit one-run threshold without weakening the default:
+
+```bash
+CENTERLINE_MIN_ORDERED_LOOP_COVERAGE_RATIO=0.94 \
+  python3 centerline_reference_generator.py <map_image> <map.yaml>
+```
+
+The resolved threshold is written to `centerline_metadata.yaml`. The generated
+loop must still be closed and pass the traversal step checks, and the global
+optimizer independently validates clearance, self-intersection, direction,
+curvature, and smoothness before saving its output.
+
 The validation YAML records input hashes, resolved parameters, each solver
 stage, numerical-library versions, common-spacing before/after metrics, and
 dense safety results. Its clearance metric is a conservative nearest-grid-cell

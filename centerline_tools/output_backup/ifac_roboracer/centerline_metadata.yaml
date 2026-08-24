@@ -1,0 +1,59 @@
+source_files:
+  map_image: f1tenth_gym_ros/maps/ifac_roboracer.png
+  map_yaml: f1tenth_gym_ros/maps/ifac_roboracer.yaml
+map_metadata:
+  resolution: 0.025
+  origin:
+  - -17.9339
+  - -8.42608
+  - 0.0
+pipeline_parameters:
+  inflation_radius_m: 0.1
+  spur_dilation_radius: 1
+  spur_fallback_dilation_radius: 0
+  spur_dilation_radius_used: 0
+  resample_spacing_m: 0.05
+  smoothing_window: 9
+  smoothing_passes: 2
+  use_bspline_centerline_smoothing: true
+  bspline_degree: 3
+  bspline_smoothing_factor_per_point: 0.0005
+  centerline_direction: normal
+  geometry_columns:
+  - index
+  - x
+  - y
+  - yaw
+  - curvature
+  - curvature_abs
+  min_component_area_abs: 50
+  min_component_area_ratio: 0.01
+  minimum_ordered_loop_coverage_ratio: 0.94
+drivable_region_selection:
+  mode: filtered_enclosed_component
+  label_id: 1
+  area: 156979
+  skeleton_pixels: 2501
+  endpoint_count: 13
+  junction_count: 57
+  num_enclosed_candidates: 1
+  num_filtered_candidates: 1
+  largest_enclosed_area: 156979
+  min_area_threshold: 1569
+ordered_loop_validation:
+  ordered_points: 1846
+  unique_ordered_points: 1845
+  loop_pixels: 1948
+  coverage_ratio: 0.9471252566735113
+  closed: true
+  min_step_m: 0.025
+  mean_step_m: 0.027127194310832024
+  max_step_m: 0.03535533905932738
+outputs:
+  raw_csv: centerline_points_raw.csv
+  smooth_csv: centerline_points_smooth.csv
+  smooth_npy: centerline_points_smooth.npy
+  raw_point_count: 1846
+  smooth_point_count: 951
+  raw_loop_length_m: 50.049673503485096
+  smooth_loop_length_m: 47.527433039932816

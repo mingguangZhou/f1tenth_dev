@@ -47,6 +47,14 @@ CENTERLINE_DIRECTION = "normal"
 MIN_COMPONENT_AREA_ABS = 50
 MIN_COMPONENT_AREA_RATIO = 0.01
 
+# A clean single-loop skeleton normally covers at least 98% of its pixels.
+# Scanned maps with wide bays can leave short medial-axis branches after the
+# conservative spur-pruning fallback. Keep the strict default, but allow an
+# explicit per-generation override that is recorded in the output metadata.
+MIN_ORDERED_LOOP_COVERAGE_RATIO = float(
+    os.environ.get("CENTERLINE_MIN_ORDERED_LOOP_COVERAGE_RATIO", "0.98")
+)
+
 # Phase 9 outputs
 OUTPUT_DIR = "centerline_output"
 RAW_CSV_NAME = "centerline_points_raw.csv"
@@ -1080,6 +1088,7 @@ def save_metadata_yaml(
     yaml_path,
     map_meta,
     region_info,
+    traversal_metrics,
     raw_loop,
     smooth_loop,
     centerline_rows,
@@ -1117,8 +1126,12 @@ def save_metadata_yaml(
             "geometry_columns": ["index", "x", "y", "yaw", "curvature", "curvature_abs"],
             "min_component_area_abs": int(MIN_COMPONENT_AREA_ABS),
             "min_component_area_ratio": float(MIN_COMPONENT_AREA_RATIO),
+            "minimum_ordered_loop_coverage_ratio": float(
+                MIN_ORDERED_LOOP_COVERAGE_RATIO
+            ),
         },
         "drivable_region_selection": region_info,
+        "ordered_loop_validation": traversal_metrics,
         "outputs": {
             "raw_csv": RAW_CSV_NAME,
             "smooth_csv": SMOOTH_CSV_NAME,
@@ -1370,6 +1383,7 @@ def main():
     print(f"  Ordered points:       {traversal_metrics['ordered_points']}")
     print(f"  Unique ordered pts:   {traversal_metrics['unique_ordered_points']}")
     print(f"  Coverage ratio:       {traversal_metrics['coverage_ratio']:.3f}")
+    print(f"  Required coverage:    {MIN_ORDERED_LOOP_COVERAGE_RATIO:.3f}")
     print(f"  Closed:               {traversal_metrics['closed']}")
     print(f"  Step length min:      {traversal_metrics['min_step_m']:.3f} m")
     print(f"  Step length mean:     {traversal_metrics['mean_step_m']:.3f} m")
@@ -1377,7 +1391,11 @@ def main():
 
     if not traversal_metrics["closed"]:
         raise RuntimeError("Ordered loop validation failed: loop is not closed.")
-    if traversal_metrics["coverage_ratio"] < 0.98:
+    if not 0.0 < MIN_ORDERED_LOOP_COVERAGE_RATIO <= 1.0:
+        raise RuntimeError(
+            "MIN_ORDERED_LOOP_COVERAGE_RATIO must be in the interval (0, 1]."
+        )
+    if traversal_metrics["coverage_ratio"] < MIN_ORDERED_LOOP_COVERAGE_RATIO:
         raise RuntimeError("Ordered loop validation failed: traversal coverage is too low.")
     if traversal_metrics["max_step_m"] > np.sqrt(2) * res + 1e-6:
         raise RuntimeError("Ordered loop validation failed: detected a traversal jump.")
@@ -1458,6 +1476,7 @@ def main():
         yaml_path=yaml_path,
         map_meta=meta,
         region_info=region_info,
+        traversal_metrics=traversal_metrics,
         raw_loop=world_loop_raw,
         smooth_loop=world_loop_final_xy,
         centerline_rows=centerline_rows,
