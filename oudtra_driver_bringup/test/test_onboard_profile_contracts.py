@@ -107,3 +107,33 @@ def test_simulator_path_and_rl_speed_envelopes_remain_aligned():
 
     assert shared["command_speed_max_mps"] == rl["command_speed_max_mps"]
     assert generator["rule_straight_speed_mps"] == rl["rule_straight_speed_mps"]
+
+
+def test_local_planner_curvature_is_executable_in_both_profiles():
+    profiles = []
+    for filename in ("path_following_v2.yaml", "path_following_v2_sim.yaml"):
+        document = yaml.safe_load(
+            (REPOSITORY / "path_following_v2/config" / filename).read_text(
+                encoding="utf-8"
+            )
+        )
+        planner = document["local_trajectory_planner"]["ros__parameters"]
+        follower = document["path_following_v2"]["ros__parameters"]
+        required_steering_deg = math.degrees(
+            math.atan(
+                planner["curvature_safety_factor"]
+                * math.tan(math.radians(planner["steering_max_deg"]))
+            )
+        )
+
+        assert planner["curvature_safety_factor"] > 1.0
+        assert follower["wheelbase_m"] == planner["wheelbase_m"]
+        assert follower["steering_max_deg"] >= required_steering_deg
+        profiles.append(
+            (
+                planner["curvature_safety_factor"],
+                follower["steering_max_deg"],
+            )
+        )
+
+    assert profiles[0] == profiles[1]

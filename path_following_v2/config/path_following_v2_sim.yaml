@@ -89,8 +89,7 @@ local_trajectory_planner:
     # --------------------------------------------------------
     # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
     # Physical half-width remains 0.24 m. Candidate map/scan checks use a
-    # 0.03 m planning reserve, while the hard footprint and curvature limit
-    # remain unchanged.
+    # 0.03 m planning reserve while the hard footprint remains unchanged.
     # blocked_min_points and beam-gap settings are intentionally count based.
     # --------------------------------------------------------
     vehicle_width_m: 0.28
@@ -129,7 +128,9 @@ local_trajectory_planner:
     max_lateral_shift_m: 0.80
     wheelbase_m: 0.33
     steering_max_deg: 20.6
-    curvature_safety_factor: 0.95
+    # Allows up to 23.92 deg equivalent steering during local planning, below
+    # the simulator's 24 deg physical steering range.
+    curvature_safety_factor: 1.18
 
     # --------------------------------------------------------
     # LIGHTWEIGHT CENTERLINE-FRAME LATTICE
@@ -251,7 +252,7 @@ path_following_v2:
     # active lookahead = clip(min + gain * commanded_speed, min, max)
     # --------------------------------------------------------
     wheelbase_m: 0.33
-    steering_max_deg: 20.6
+    steering_max_deg: 25.0
     min_forward_point_x_m: 0.05
     stop_if_no_path: true
     fixed_steering_lookahead_m: 0.60

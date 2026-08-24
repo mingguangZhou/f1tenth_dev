@@ -684,7 +684,7 @@ private:
     wheelbase_m_ = std::max(0.01, get_parameter("wheelbase_m").as_double());
     steering_max_deg_ = std::max(0.1, get_parameter("steering_max_deg").as_double());
     curvature_safety_factor_ = std::clamp(
-      get_parameter("curvature_safety_factor").as_double(), 0.1, 1.0);
+      get_parameter("curvature_safety_factor").as_double(), 0.1, 1.20);
     centerline_csv_path_ = get_parameter("centerline_csv_path").as_string();
     centerline_direction_ = get_parameter("centerline_direction").as_string();
     centerline_frame_ = get_parameter("centerline_frame").as_string();
