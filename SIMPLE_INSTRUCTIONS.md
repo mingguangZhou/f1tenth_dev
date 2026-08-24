@@ -22,9 +22,9 @@ Start Docker and enter the ROS container:
 ./dk.sh start
 ```
 
-This automatically installs ROS dependencies on the first container start and
-rechecks them only when one of the managed `package.xml` files changes. Normal
-`f1 build` commands compile packages without rerunning `rosdep`.
+Startup does not install ROS packages and does not require network access.
+Normal `f1 build` commands only compile packages. After intentionally adding a
+new system dependency to `package.xml`, run `./dk.sh deps` once from the host.
 
 For CPU software rendering and browser/noVNC instead:
 

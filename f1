@@ -24,7 +24,7 @@ Usage: f1 <command>
 
 Dependencies:
   deps [--force]  Install ROS dependencies for all managed packages.
-                  Normally this is handled automatically by dk.sh.
+                  Run explicitly only after adding a system dependency.
 
 Build:
   build sim       Build simulator package.

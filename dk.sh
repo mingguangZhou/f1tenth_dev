@@ -23,7 +23,7 @@ Docker lifecycle:
   up         Start Docker services in the background.
   enter      Enter the already-running ROS container.
   image      Build the simulator Docker image only.
-  deps       Check/install ROS dependencies in the running container.
+  deps       Explicitly check/install ROS dependencies in the running container.
   restart    Stop services, start them, and enter the ROS container.
   stop       Stop Docker services; keep build/install volumes.
   status     Show container and ROS launch status.
@@ -32,7 +32,7 @@ Docker lifecycle:
   help       Show this help.
 
 Inside the container:
-  f1 deps          Recheck dependencies (normally automatic on start/up).
+  f1 deps          Explicitly install dependencies after manifest changes.
   f1 build sim     Build simulator + RViz launch package.
   f1 build auto    Build the autonomy stack.
   f1 sim           Run IFAC with 3 static obstacles + 1 moving agent.
@@ -108,12 +108,10 @@ up() {
     fi
     compose stop novnc >/dev/null 2>&1 || true
     compose up -d --remove-orphans sim
-    install_dependencies
     echo "Docker services are running in GPU mode."
     echo "RViz will open as a host X11 window on DISPLAY=${DISPLAY}."
   else
     compose up -d --remove-orphans sim novnc
-    install_dependencies
     echo "Docker services are running in CPU mode."
     echo "RViz/noVNC: ${NOVNC_URL}"
   fi

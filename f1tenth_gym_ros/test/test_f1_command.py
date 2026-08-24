@@ -22,13 +22,16 @@
 
 """Tests for simulator mode selection in the f1 command."""
 
+import os
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+DK_COMMAND = REPOSITORY / "dk.sh"
 F1_COMMAND = next(
     candidate
     for candidate in (REPOSITORY / "f1", Path("/usr/local/bin/f1"))
@@ -132,3 +135,34 @@ def test_default_agent_free_config_contains_only_ego():
 
 def test_f1_shell_syntax():
     subprocess.run(["bash", "-n", str(F1_COMMAND)], check=True)
+
+
+def test_docker_startup_does_not_install_ros_dependencies(tmp_path):
+    if not DK_COMMAND.is_file():
+        pytest.skip("repository-root dk.sh is not mounted in this container")
+
+    docker_calls = tmp_path / "docker-calls.txt"
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\n'
+        'if [[ "${1:-}" == "inspect" ]]; then printf "true\\n"; fi\n',
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{tmp_path}:{environment['PATH']}"
+    environment["DOCKER_CALL_LOG"] = str(docker_calls)
+
+    result = subprocess.run(
+        [str(DK_COMMAND), "--cpu", "up"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    calls = docker_calls.read_text(encoding="utf-8")
+    assert " up -d --remove-orphans sim novnc" in calls
+    assert " f1 deps" not in calls

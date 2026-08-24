@@ -11,8 +11,9 @@ f1 build auto
 f1 auto
 ```
 
-`dk.sh start` installs the managed ROS dependencies once per container and
-rechecks them when a package manifest changes; `f1 build auto` only compiles.
+`dk.sh start` performs no dependency installation or network access;
+`f1 build auto` only compiles. Run `./dk.sh deps` explicitly after adding a new
+system dependency to a package manifest.
 
 Run `f1 sim` in a separate container terminal for the IFAC Roboracer simulator
 with three fixed obstacles and one moving traffic car. Use

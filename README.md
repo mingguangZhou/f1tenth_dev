@@ -13,10 +13,10 @@ development container:
 ./dk.sh start
 ```
 
-`dk.sh start` (and `dk.sh up`) checks the ROS package manifests and installs
-their system dependencies inside the container. The result is fingerprinted,
-so this runs only for a new container or after a relevant `package.xml`
-changes. Use `./dk.sh deps --force` only when a manual reinstall is needed.
+`dk.sh start` and `dk.sh up` do not install packages and therefore do not need
+network access. The Docker image supplies the normal simulator and autonomy
+dependencies. Run `./dk.sh deps` explicitly only after adding a new system
+dependency to a package manifest; use `--force` to repeat that manual check.
 
 Inside the container, build each ROS group independently:
 
