@@ -22,6 +22,10 @@ Start Docker and enter the ROS container:
 ./dk.sh start
 ```
 
+This automatically installs ROS dependencies on the first container start and
+rechecks them only when one of the managed `package.xml` files changes. Normal
+`f1 build` commands compile packages without rerunning `rosdep`.
+
 For CPU software rendering and browser/noVNC instead:
 
 ```bash

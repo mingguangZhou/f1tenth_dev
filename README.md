@@ -13,6 +13,11 @@ development container:
 ./dk.sh start
 ```
 
+`dk.sh start` (and `dk.sh up`) checks the ROS package manifests and installs
+their system dependencies inside the container. The result is fingerprinted,
+so this runs only for a new container or after a relevant `package.xml`
+changes. Use `./dk.sh deps --force` only when a manual reinstall is needed.
+
 Inside the container, build each ROS group independently:
 
 ```bash

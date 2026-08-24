@@ -22,10 +22,14 @@ usage() {
   cat <<'EOF'
 Usage: f1 <command>
 
+Dependencies:
+  deps [--force]  Install ROS dependencies for all managed packages.
+                  Normally this is handled automatically by dk.sh.
+
 Build:
-  build sim       Install dependencies and build simulator package.
-  build auto      Install dependencies and build autonomy packages.
-  build all       Install dependencies and build both groups.
+  build sim       Build simulator package.
+  build auto      Build autonomy packages.
+  build all       Build both groups.
 
 Run:
   sim [--agents|--no-agents] [ARGS...]
@@ -84,24 +88,82 @@ group_packages() {
   esac
 }
 
-build_group() {
-  local group="$1"
+install_dependencies() {
+  local force=false
   local -a packages=()
   local -a package_paths=()
   local package
+  local fingerprint
+  local state_dir="/var/lib/f1tenth"
+  local state_file="${state_dir}/rosdep-packages.sha256"
+
+  case "${1:-}" in
+    "")
+      ;;
+    --force)
+      force=true
+      ;;
+    *)
+      echo "Usage: f1 deps [--force]" >&2
+      return 2
+      ;;
+  esac
+
+  if [[ $# -gt 1 ]]; then
+    echo "Usage: f1 deps [--force]" >&2
+    return 2
+  fi
 
   while IFS= read -r package; do
     packages+=("${package}")
     package_paths+=("src/${package}")
-  done < <(group_packages "${group}")
+  done < <(group_packages all)
 
   source_ros
 
-  echo "Installing resolvable ROS dependencies for: ${packages[*]}"
+  for package in "${package_paths[@]}"; do
+    if [[ ! -f "${package}/package.xml" ]]; then
+      echo "Missing ROS package manifest: /sim_ws/${package}/package.xml" >&2
+      return 1
+    fi
+  done
+
+  fingerprint="$({
+    printf '%s\n' 'f1-rosdep-schema=1' 'rosdistro=foxy'
+    printf '%s\n' "${package_paths[@]}"
+    for package in "${package_paths[@]}"; do
+      sha256sum "${package}/package.xml"
+    done
+  } | sha256sum | cut -d ' ' -f 1)"
+
+  if [[ "${force}" == false ]] \
+      && [[ -f "${state_file}" ]] \
+      && [[ "$(<"${state_file}")" == "${fingerprint}" ]]; then
+    echo "ROS dependencies are already up to date."
+    return 0
+  fi
+
+  echo "Installing ROS dependencies for: ${packages[*]}"
   rosdep install -q -y -r \
     --from-paths "${package_paths[@]}" \
     --ignore-src \
     --skip-keys "ament_python f1tenth_gym_ros"
+
+  mkdir -p "${state_dir}"
+  printf '%s\n' "${fingerprint}" > "${state_file}"
+  echo "ROS dependency bootstrap complete."
+}
+
+build_group() {
+  local group="$1"
+  local -a packages=()
+  local package
+
+  while IFS= read -r package; do
+    packages+=("${package}")
+  done < <(group_packages "${group}")
+
+  source_ros
 
   echo "Building: ${packages[*]}"
   colcon build --symlink-install --packages-select "${packages[@]}"
@@ -211,6 +273,10 @@ main() {
   require_container
 
   case "${1:-help}" in
+    deps)
+      shift
+      install_dependencies "$@"
+      ;;
     build)
       build_group "${2:-all}"
       ;;
