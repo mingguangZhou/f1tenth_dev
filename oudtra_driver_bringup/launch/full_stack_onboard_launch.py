@@ -35,7 +35,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "raceline_csv_path",
-            default_value="centerline_output/raceline_points_smooth.csv",
+            default_value="/f1tenth_ws/src/f1tenth_dev/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv",
             description="Relative or absolute raceline CSV path.",
         ),
         DeclareLaunchArgument(
