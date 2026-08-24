@@ -1,0 +1,20 @@
+# Three equal-size obstacles anchored to the validated IFAC racing line.
+# Each placement leaves a boundary-side gap and intersects the vehicle envelope.
+obstacles:
+  - label: northwest_hairpin_exit
+    centerline_index: 80
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: east_hairpin_entry
+    centerline_index: 715
+    side: right
+    requested_gap_m: 0.50
+    size_m: 0.40
+
+  - label: center_chicane_entry
+    centerline_index: 1080
+    side: left
+    requested_gap_m: 0.50
+    size_m: 0.40

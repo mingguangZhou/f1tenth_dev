@@ -141,9 +141,9 @@ The shipped `1.082 1/m` curvature gate matches the runtime 20.6-degree steering
 limit, 0.33 m wheelbase, and 0.95 safety factor; change it only together with
 the vehicle/controller envelope.
 
-The checked-in optimized Spielberg CSV is the default global path for `f1 auto`
-and `full_stack_sim_launch.py`. To A/B test another generated CSV, pass an
-explicit launch override. To restore the retained manually tuned line:
+The checked-in optimized IFAC Roboracer CSV is the default global path for
+`f1 auto` and `full_stack_sim_launch.py`. To A/B test another generated CSV,
+pass an explicit launch override. To select the retained Spielberg line:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \

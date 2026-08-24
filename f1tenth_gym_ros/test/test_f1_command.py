@@ -53,13 +53,13 @@ run_sim "$@"
     )
 
 
-def test_sim_defaults_to_eleven_vehicle_fixture():
+def test_sim_defaults_to_ifac_moving_agent_fixture():
     result = run_sim("use_rviz:=false")
     assert result.returncode == 0
     assert result.stdout.splitlines() == [
         "launch",
         "f1tenth_gym_ros",
-        "spielberg_multi_agent_launch.py",
+        "ifac_roboracer_moving_agent_launch.py",
         "use_rviz:=false",
     ]
 
@@ -67,7 +67,9 @@ def test_sim_defaults_to_eleven_vehicle_fixture():
 def test_agents_flag_explicitly_selects_default_fixture():
     result = run_sim("--agents")
     assert result.returncode == 0
-    assert result.stdout.splitlines()[2] == "spielberg_multi_agent_launch.py"
+    assert result.stdout.splitlines()[2] == (
+        "ifac_roboracer_moving_agent_launch.py"
+    )
     assert "--agents" not in result.stdout
 
 
@@ -87,6 +89,25 @@ def test_no_agents_selects_ego_only_launch_and_preserves_ros_arguments():
     ]
 
 
+def test_no_agents_defaults_to_ifac_static_obstacle_config():
+    result = run_sim("--no-agents", "use_rviz:=false")
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        "launch",
+        "f1tenth_gym_ros",
+        "gym_bridge_launch.py",
+        (
+            "config_file:=/sim_ws/src/f1tenth_gym_ros/config/"
+            "sim_ifac_roboracer_obstacles.yaml"
+        ),
+        (
+            "rviz_config:=/sim_ws/src/f1tenth_gym_ros/launch/"
+            "gym_bridge_ifac_roboracer.rviz"
+        ),
+        "use_rviz:=false",
+    ]
+
+
 def test_conflicting_agent_flags_are_rejected():
     result = run_sim("--agents", "--no-agents")
     assert result.returncode == 2
@@ -94,13 +115,19 @@ def test_conflicting_agent_flags_are_rejected():
     assert result.stdout == ""
 
 
-def test_agent_free_config_contains_only_ego():
+def test_default_agent_free_config_contains_only_ego():
     config = yaml.safe_load(
-        (REPOSITORY / "f1tenth_gym_ros/config/sim.yaml").read_text(
+        (
+            REPOSITORY
+            / "f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+        ).read_text(
             encoding="utf-8"
         )
     )
     assert int(config["bridge"]["ros__parameters"]["num_agent"]) == 1
+    assert config["bridge"]["ros__parameters"]["map_path"].endswith(
+        "/ifac_roboracer_obstacles"
+    )
 
 
 def test_f1_shell_syntax():

@@ -33,9 +33,9 @@ Docker lifecycle:
 Inside the container:
   f1 build sim     Build simulator + RViz launch package.
   f1 build auto    Build the autonomy stack.
-  f1 sim           Run the eleven-vehicle simulator + RViz.
+  f1 sim           Run IFAC with 3 static obstacles + 1 moving agent.
   f1 sim --no-agents
-                   Run the ego-only simulator + RViz.
+                   Run the same IFAC map without the moving agent.
   f1 auto          Run autonomy stack; Ctrl+C returns to the shell.
 EOF
 }

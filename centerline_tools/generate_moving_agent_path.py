@@ -541,12 +541,12 @@ def write_outputs(
         color="lime",
         edgecolor="black",
         s=32,
-        label="ten equal-arc starts",
+        label="traffic spawn",
     )
     axis.set_aspect("equal", adjustable="box")
     axis.set_xlabel("x [m]")
     axis.set_ylabel("y [m]")
-    axis.set_title("Spielberg raceline-covering traffic route")
+    axis.set_title("Raceline-covering traffic route")
     axis.legend(loc="best")
     figure.tight_layout()
     figure.savefig(debug_path, dpi=180)

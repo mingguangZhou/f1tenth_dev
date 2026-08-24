@@ -33,7 +33,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "raceline_csv_path",
-            default_value="/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_optimized.csv",
+            default_value="/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv",
             description="Relative or absolute simulator raceline CSV path.",
         ),
         DeclareLaunchArgument(
@@ -43,7 +43,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "centerline_csv_path",
-            default_value="/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/centerline_points_smooth.csv",
+            default_value="/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/centerline_points_smooth.csv",
             description="Centerline CSV used as the lightweight planning frame.",
         ),
         DeclareLaunchArgument(

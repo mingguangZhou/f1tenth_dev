@@ -26,8 +26,8 @@ Use one container terminal for the simulator and RViz:
 f1 sim
 ```
 
-This starts the Spielberg fixture with the ego car and ten traffic agents. For
-the original ego-only simulator, use:
+This starts the IFAC Roboracer fixture with three fixed corner obstacles and
+one moving traffic car. To remove only the moving car, use:
 
 ```bash
 f1 sim --no-agents
@@ -57,7 +57,7 @@ leaves Docker running. Stop the containers explicitly from the host with:
 ./dk.sh stop
 ```
 
-### Two-agent planner validation
+### Spielberg two-agent regression
 
 The bundled moving-agent scenario exercises overtaking on the current
 Spielberg test map. After building `sim` and `auto`, run these in separate
@@ -81,22 +81,21 @@ cars. The traffic cars use one fixed, map-validated route derived from the ego
 raceline, with smooth local nudges around the nine fixed obstacles. Their
 starts are separated by exactly one tenth of the route's closed arc length.
 
-After building the simulator package, launch the default fixture with:
+After building the simulator package, launch this regression fixture with:
 
 ```bash
-f1 sim
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py
 ```
 
 For a headless smoke test, disable only RViz; all eleven simulated identities
 and all ten traffic controllers still run:
 
 ```bash
-f1 sim use_rviz:=false
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py use_rviz:=false
 ```
 
-Use `f1 sim --no-agents` for the same obstacle map without traffic agents.
-Direct `ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py` and
-`gym_bridge_launch.py` commands remain available.
+The generic `gym_bridge_launch.py` command remains available for custom
+simulator configurations.
 
 With that launch running, verify that every simulator identity is present, all
 ten traffic cars move, and no collision is reported:

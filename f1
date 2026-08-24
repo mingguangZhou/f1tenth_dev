@@ -29,17 +29,17 @@ Build:
 
 Run:
   sim [--agents|--no-agents] [ARGS...]
-                  Launch the eleven-vehicle simulator by default.
+                  Launch IFAC with three fixed obstacles and one moving agent.
   auto [ARGS...]  Launch autonomy stack only.
 
 Inspect:
   status          List ROS nodes and launch processes.
   help            Show this help.
 
-Use `sim --no-agents` for the ego-only simulator. Each run command accepts
-normal ROS launch arguments. Press Ctrl+C to stop a launch and return to the
-same container shell. Rendering mode comes from the host-side dk.sh command:
-GPU by default, or --cpu for software/noVNC.
+Use `sim --no-agents` to keep the IFAC static obstacles but remove the moving
+agent. Each run command accepts normal ROS launch arguments. Press Ctrl+C to
+stop a launch and return to the same container shell. Rendering mode comes
+from the host-side dk.sh command: GPU by default, or --cpu for software/noVNC.
 EOF
 }
 
@@ -111,7 +111,7 @@ build_group() {
 }
 
 run_sim() {
-  local launch_file="spielberg_multi_agent_launch.py"
+  local launch_file="ifac_roboracer_moving_agent_launch.py"
   local requested_mode=""
   local parse_options=true
   local -a launch_args=()
@@ -146,6 +146,32 @@ run_sim() {
       launch_args+=("${argument}")
     fi
   done
+
+  if [[ "${requested_mode}" == "no-agents" ]]; then
+    local has_config_override=false
+    local has_rviz_override=false
+    for argument in "${launch_args[@]}"; do
+      if [[ "${argument}" == config_file:=* ]]; then
+        has_config_override=true
+      elif [[ "${argument}" == rviz_config:=* ]]; then
+        has_rviz_override=true
+      fi
+    done
+    if [[ "${has_config_override}" == false ]]; then
+      if [[ "${has_rviz_override}" == false ]]; then
+        launch_args=(
+          "config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+          "rviz_config:=/sim_ws/src/f1tenth_gym_ros/launch/gym_bridge_ifac_roboracer.rviz"
+          "${launch_args[@]}"
+        )
+      else
+        launch_args=(
+          "config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+          "${launch_args[@]}"
+        )
+      fi
+    fi
+  fi
 
   source_workspace
   configure_rendering
