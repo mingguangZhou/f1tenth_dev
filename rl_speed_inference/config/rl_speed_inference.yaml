@@ -10,12 +10,12 @@ ppo_speed_node:
 
     # Use the ratio model trained in rl_training. Copy the .zip onto the onboard
     # machine and set this absolute path.
-    model_path: "/home/ubuntu/f1tenth_dev/rl_training/models/V1_reward_ratio_ppo_speed_spielberg_500k_20260812.zip"
+    model_path: "/sim_ws/src/rl_training/models/V1_reward_ratio_ppo_speed_spielberg_500k_20260812.zip"
 
     # Must be the same raceline geometry used by path_following_v2.
-    centerline_csv: "/home/ubuntu/f1tenth_dev/centerline_tools/centerline_output/raceline_points_smooth.csv"
+    centerline_csv: "/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv"
 
-    odom_topic: "/pf/pose/odom"
+    odom_topic: "/ego_racecar/odom"
     speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
 
     # ======================================================================
@@ -33,20 +33,20 @@ ppo_speed_node:
     #   0.50 = moderate in sim only before any real use
     positive_assist_ratio: 0.667
     negative_assist_ratio: 0.50
-    assist_gain: 0.10
+    assist_gain: 0.5
 
     # Legacy physical_mps field. Not used in speed_ratio mode.
-    max_delta_speed_mps: 0.5
+    max_delta_speed_mps: 4.0
 
     # ======================================================================
     # Reserved/onboard speed profile
     # ======================================================================
     # These values must match the raceline-following rule-speed setup you want
     # the model to assist. Keep them conservative for onboard.
-    command_speed_min_mps: 0.5
-    command_speed_max_mps: 2.0
-    rule_curve_min_speed_mps: 0.5
-    rule_straight_speed_mps: 1.5
+    command_speed_min_mps: 1.0
+    command_speed_max_mps: 10.0
+    rule_curve_min_speed_mps: 1.0
+    rule_straight_speed_mps: 5.0
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_preview_m: 0.50
 

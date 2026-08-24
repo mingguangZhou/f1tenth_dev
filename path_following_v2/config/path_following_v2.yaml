@@ -17,7 +17,7 @@
 /**:
   ros__parameters:
     command_speed_min_mps: 0.5
-    command_speed_max_mps: 4.0
+    command_speed_max_mps: 4.5
 
 path_generator:
   ros__parameters:
@@ -28,7 +28,7 @@ path_generator:
     # --------------------------------------------------------
     global_frame: "map"
     robot_frame: "base_link"
-    tf_timeout_sec: 0.10
+    tf_timeout_sec: 0.05
     raceline_waypoints_topic: "/raceline_waypoints"
     # Internal unmodified raceline. local_trajectory_planner owns the public
     # local_path consumed by the follower and guard.
@@ -44,8 +44,8 @@ path_generator:
     # The legacy point-count fallback remains internal and is used only if the
     # metric target is set <= 0.
     # --------------------------------------------------------
-    local_path_target_length_m: 6.0
-    local_path_max_points: 350
+    local_path_target_length_m: 14.0
+    local_path_max_points: 600
 
     # --------------------------------------------------------
     # RULE-BASED BASELINE SPEED — PRIMARY SPEED TUNING
@@ -54,8 +54,8 @@ path_generator:
     # The 0.09 m preview preserves the previous three-waypoint behavior for
     # the current ~0.03 m raceline spacing. Tune it separately if desired.
     # --------------------------------------------------------
-    rule_curve_min_speed_mps: 0.8
-    rule_straight_speed_mps: 2.5
+    rule_curve_min_speed_mps: 1.0
+    rule_straight_speed_mps: 4.5
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_preview_m: 0.50
 
@@ -86,7 +86,7 @@ local_trajectory_planner:
     # extra path; runtime planning is bounded by the actually available path.
     # --------------------------------------------------------
     scan_range_cap_m: 10.0
-    planning_distance_m: 10.0
+    planning_distance_m: 14.0
 
     # --------------------------------------------------------
     # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
@@ -96,7 +96,7 @@ local_trajectory_planner:
     # --------------------------------------------------------
     vehicle_width_m: 0.28
     lateral_safety_margin_m: 0.10
-    planning_clearance_reserve_m: 0.05
+    planning_clearance_reserve_m: 0.03
     # Require a short, smooth splice to the refreshed raceline.
     raceline_splice_max_gap_m: 0.15
     raceline_splice_max_heading_error_deg: 15.0
@@ -120,10 +120,10 @@ local_trajectory_planner:
     # Advanced: candidate count remains discrete to bound computation.
     # --------------------------------------------------------
     detour_longitudinal_buffer_m: 0.20
-    detour_post_obstacle_hold_m: 0.60
+    detour_post_obstacle_hold_m: 0.80
     detour_extra_clearance_m: 0.0
-    detour_return_min_length_m: 2.50
-    detour_return_max_length_m: 5.00
+    detour_return_min_length_m: 4.00
+    detour_return_max_length_m: 6.00
     candidate_lateral_step_m: 0.08
     max_candidates_per_side: 6
     max_lateral_shift_m: 0.80
@@ -142,16 +142,16 @@ local_trajectory_planner:
     require_centerline_reference: true
     enable_frenet_lattice_planner: true
     lattice_fallback_to_legacy_planner: true
-    lattice_station_step_m: 0.25
+    lattice_station_step_m: 0.30
     lattice_lateral_step_m: 0.05
     lattice_max_abs_slope: 0.55
-    lattice_beam_width: 70
+    lattice_beam_width: 90
     lattice_max_final_candidates: 4
-    lattice_max_compute_time_ms: 6.0
+    lattice_max_compute_time_ms: 8.0
     lattice_reference_weight: 4.0
     lattice_slope_weight: 1.0
     lattice_curvature_weight: 8.0
-    lattice_curvature_rate_weight: 2.0
+    lattice_curvature_rate_weight: 5.0
     lattice_continuity_weight: 12.0
     lattice_clearance_weight: 2.0
     lattice_preferred_clearance_m: 0.45
@@ -159,15 +159,15 @@ local_trajectory_planner:
     lattice_terminal_weight_multiplier: 5.0
     # Shorter onboard alignment tail preserves compute/path-window margin while
     # still constraining at least three 0.25 m lattice stations.
-    lattice_rejoin_alignment_length_m: 0.75
+    lattice_rejoin_alignment_length_m: 1.20
     side_clearance_tie_m: 0.03
-    corridor_smoothing_iterations: 8
+    corridor_smoothing_iterations: 12
     corridor_smoothing_relaxation: 0.85
     corridor_reference_weight: 1.0
     corridor_continuity_weight: 12.0
     corridor_slope_weight: 0.5
-    corridor_curvature_weight: 10.0
-    corridor_curvature_rate_weight: 2.0
+    corridor_curvature_weight: 12.0
+    corridor_curvature_rate_weight: 5.0
 
     # --------------------------------------------------------
     # TEMPORARY LOCAL-TRAJECTORY SPEED CAPS
@@ -176,16 +176,16 @@ local_trajectory_planner:
     # --------------------------------------------------------
     # These are upper ceilings. Remaining-path curvature lowers the active cap
     # when needed to respect the lateral-acceleration limit.
-    avoidance_speed_cap_mps: 2.2
-    recovery_speed_cap_mps: 2.2
-    replan_pending_speed_cap_mps: 1.5
-    maneuver_lateral_acceleration_limit_mps2: 2.0
+    avoidance_speed_cap_mps: 4.5
+    recovery_speed_cap_mps: 4.5
+    replan_pending_speed_cap_mps: 2.0
+    maneuver_lateral_acceleration_limit_mps2: 3.5
     # Stop safely and retry when neither overtake corridor is available.
     enable_primary_safe_yield: true
     yield_standoff_m: 1.00
     yield_min_path_length_m: 0.50
-    yield_max_speed_mps: 1.0
-    yield_deceleration_mps2: 2.0
+    yield_max_speed_mps: 2.0
+    yield_deceleration_mps2: 3.0
     safe_yield_terminal_speed_mps: 0.05
 
     # --------------------------------------------------------
@@ -236,8 +236,8 @@ path_following_v2:
     # 0 = rule baseline only; 1 = rule baseline + fresh RL speed residual.
     # A stale residual automatically falls back to the rule baseline.
     # --------------------------------------------------------
-    speed_policy_mode: 0
-    max_speed_delta_per_step_mps: 0.1
+    speed_policy_mode: 1
+    max_speed_delta_per_step_mps: 0.2
     require_trajectory_speed_cap: true
 
     # --------------------------------------------------------
@@ -250,8 +250,8 @@ path_following_v2:
     stop_if_no_path: true
     fixed_steering_lookahead_m: 0.60
     use_speed_dependent_steering_lookahead: true
-    steering_min_lookahead_m: 0.6
-    steering_max_lookahead_m: 1.4
+    steering_min_lookahead_m: 0.3
+    steering_max_lookahead_m: 1.5
     steering_lookahead_speed_gain: 0.25
 
     # --------------------------------------------------------

@@ -19,7 +19,7 @@ upper_corridor_follower:
     # 1. ROS INTERFACES, FRAME AND AUTHORIZATION
     # ========================================================
     scan_topic: "/scan"
-    odom_topic: "/odom"
+    odom_topic: "/ego_racecar/odom"
     base_frame: "base_link"
     transform_timeout_sec: 0.05
     enable_topic: "/reactive_control_v2/enable"
@@ -56,9 +56,9 @@ upper_corridor_follower:
     # ADVANCED: smaller slice/sample steps cost more CPU.
     # ========================================================
     forward_start_m: 0.30
-    forward_max_m: 1.5
+    forward_max_m: 3.0
     forward_slice_step_m: 0.20
-    lateral_limit_m: 1.2
+    lateral_limit_m: 2.0
     lateral_sample_step_m: 0.05
     min_interval_width_m: 0.10
     max_interval_shift_per_slice_m: 0.25
@@ -88,14 +88,14 @@ upper_corridor_follower:
     # ========================================================
     # 7. PURE PURSUIT AND REACTIVE SPEED — PRIMARY MOTION TUNING
     # ========================================================
-    lookahead_distance_m: 0.50
+    lookahead_distance_m: 0.60
     wheelbase_m: 0.33
     steering_max_deg: 20.6
     steering_filter_alpha: 0.40
-    velocity_max_mps: 1.65
-    velocity_min_mps: 0.75
-    slow_reach_distance_m: 1.00
-    stop_reach_distance_m: 0.50
+    velocity_max_mps: 2.50
+    velocity_min_mps: 1.00
+    slow_reach_distance_m: 1.50
+    stop_reach_distance_m: 0.60
 
     # ========================================================
     # 8. SWEPT-PATH VALIDATION AND HYSTERESIS
@@ -132,7 +132,7 @@ lower_safety_controller:
     # ========================================================
     selected_command_topic: "/reactive_control_v2/selected_cmd"
     scan_topic: "/scan"
-    odom_topic: "/odom"
+    odom_topic: "/ego_racecar/odom"
     upper_status_topic: "/reactive_control_v2/status"
     arbitration_mode_topic: "/drive_arbitration_v2/selected_mode"
     wrong_way_heading_error_topic: "/path_following_v2/raceline_heading_error_rad"
@@ -171,7 +171,7 @@ lower_safety_controller:
     # 3. FORWARD EMERGENCY STOP / TTC
     # ========================================================
     emergency_sector_half_angle_deg: 15.0
-    emergency_distance_m: 0.25
+    emergency_distance_m: 0.35
     emergency_ttc_sec: 0.2
     emergency_ttc_clearance_m: 0.12
 
@@ -189,7 +189,7 @@ lower_safety_controller:
     fallback_steering_gain: 1.0
     fallback_steering_limit_deg: 25.0
     fallback_speed_max_mps: 1.00
-    fallback_speed_min_mps: 0.75
+    fallback_speed_min_mps: 0.4
     fallback_deepest_region_ratio: 0.90
     fallback_terminal_debug: false
     fallback_terminal_debug_period_sec: 0.50
@@ -199,9 +199,9 @@ lower_safety_controller:
     # demand_max selects eligible commands; output_mps is the forced magnitude.
     # Shortfall = max(0, |requested speed| - |measured speed|).
     # ========================================================
-    enable_low_speed_assist: false
-    low_speed_assist_demand_max_mps: 0.80
-    low_speed_assist_output_mps: 0.90
+    enable_low_speed_assist: true
+    low_speed_assist_demand_max_mps: 1.00
+    low_speed_assist_output_mps: 1.00
     low_speed_assist_entry_shortfall_mps: 0.50
     low_speed_assist_stall_speed_mps: 0.30
     low_speed_assist_confirmation_sec: 0.30
@@ -214,7 +214,7 @@ lower_safety_controller:
     enable_reverse_recovery: true
     # Onboard behavior is unchanged until this handoff is validated with the
     # real drivetrain and odometry. The simulator enables it explicitly.
-    enable_raceline_stall_handoff: false
+    enable_raceline_stall_handoff: true
     # Disabled onboard until rear sensing and reverse swept-path validation are
     # available. The simulator profile enables the bounded recovery explicitly.
     enable_wrong_way_recovery: false
@@ -222,7 +222,7 @@ lower_safety_controller:
     dead_end_confirmation_sec: 1.0
     stuck_forward_command_threshold_mps: 0.20
     stuck_speed_threshold_mps: 0.05
-    stuck_confirmation_sec: 0.5
+    stuck_confirmation_sec: 1.0
     wrong_way_stop_angle_deg: 90.0
     wrong_way_entry_angle_deg: 90.0
     wrong_way_exit_angle_deg: 80.0
@@ -236,12 +236,12 @@ lower_safety_controller:
     # Ordinary stall recovery commands zero steering. Wrong-way steering is
     # disabled by enable_wrong_way_recovery above.
     # ========================================================
-    reverse_speed_mps: 0.85
+    reverse_speed_mps: 0.25
     reverse_min_distance_m: 0.10
     reverse_min_duration_sec: 0.30
     reverse_max_distance_m: 0.50
     reverse_max_duration_sec: 2.0
-    reverse_max_attempts: 50
+    reverse_max_attempts: 10
     reverse_attempt_reset_forward_time_sec: 0.30
     reverse_attempt_reset_speed_mps: 0.20
     wrong_way_reverse_steering_deg: 25.0
