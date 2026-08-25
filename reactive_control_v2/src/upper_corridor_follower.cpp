@@ -1554,8 +1554,9 @@ private:
     // Default mode reports state transitions only. Full mode also reports
     // periodic geometry/control evidence useful during tuning and debugging.
     const auto wall_now = std::chrono::steady_clock::now();
-    const bool state_changed =
-      result.state != last_terminal_state_ || result.reason != last_terminal_reason_;
+    const bool state_changed = result.state != last_terminal_state_;
+    const bool terminal_detail_changed =
+      state_changed || result.reason != last_terminal_reason_;
 
     if (!full_terminal_debug_) {
       if (!result.valid && state_changed) {
@@ -1571,9 +1572,9 @@ private:
             result.state.c_str(), result.reason.c_str());
         }
       }
+      last_terminal_state_ = result.state;
+      last_terminal_reason_ = result.reason;
       if (state_changed) {
-        last_terminal_state_ = result.state;
-        last_terminal_reason_ = result.reason;
         last_terminal_log_time_ = wall_now;
       }
       return;
@@ -1581,7 +1582,7 @@ private:
 
     const double elapsed_sec =
       std::chrono::duration<double>(wall_now - last_terminal_log_time_).count();
-    if (!state_changed && elapsed_sec < terminal_status_period_sec_) {
+    if (!terminal_detail_changed && elapsed_sec < terminal_status_period_sec_) {
       return;
     }
 

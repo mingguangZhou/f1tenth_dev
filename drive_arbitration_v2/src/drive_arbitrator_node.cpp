@@ -221,7 +221,6 @@ private:
   Mode mode_{Mode::WAITING};
   Mode last_logged_mode_{Mode::WAITING};
   std::string mode_reason_{"waiting for inputs"};
-  std::string last_logged_reason_;
   bool reactive_latched_{false};
   std::string latched_trigger_;
   bool saw_blocked_trigger_{false};
@@ -730,7 +729,10 @@ private:
 
   void logTransition()
   {
-    if (mode_ == last_logged_mode_ && mode_reason_ == last_logged_reason_) {
+    // Full reason details remain available on the status topic every cycle.
+    // Print only actual controller handovers: reason-only changes can occur at
+    // the 20 Hz control rate and previously caused large warning bursts.
+    if (mode_ == last_logged_mode_) {
       return;
     }
     if (mode_ == Mode::RACELINE) {
@@ -740,7 +742,6 @@ private:
         get_logger(), "selected %s: %s", modeName(mode_), mode_reason_.c_str());
     }
     last_logged_mode_ = mode_;
-    last_logged_reason_ = mode_reason_;
   }
 
   void publishStatus(
