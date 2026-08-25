@@ -55,6 +55,9 @@ struct Config
   int beam_width{120};
   int max_solutions{6};
   double max_compute_time_ms{12.0};
+  // Internal differential-test switch. Production keeps the conservative
+  // bound enabled; disabling it restores the exhaustive next-sample loop.
+  bool use_slope_reachable_sample_bounds{true};
 };
 
 struct Solution
@@ -104,6 +107,15 @@ public:
            static_cast<double>(sample_index - half_sample_count_) * config_.lateral_step_m;
   }
 
+  bool sampleGeometryAllowed(const Station & station, const double lateral) const
+  {
+    return !(
+      !std::isfinite(lateral) ||
+      std::abs(lateral) > config_.max_lateral_shift_m + 1e-9 ||
+      lateral < station.lower_offset - 1e-9 ||
+      lateral > station.upper_offset + 1e-9);
+  }
+
   Result solve(const Problem & problem) const
   {
     Result result;
@@ -146,6 +158,7 @@ public:
     };
 
     std::vector<std::vector<State>> layers(problem.stations.size());
+    std::vector<double> next_sample_offsets(static_cast<std::size_t>(sample_count));
     const Station & start_station = problem.stations.front();
     const Station & first_station = problem.stations[1];
     const double first_ds = first_station.s - start_station.s;
@@ -208,6 +221,10 @@ public:
       std::vector<State> best_by_pair(
         static_cast<std::size_t>(sample_count * sample_count));
       std::vector<bool> pair_used(best_by_pair.size(), false);
+      for (int sample = 0; sample < sample_count; ++sample) {
+        next_sample_offsets[static_cast<std::size_t>(sample)] =
+          sampleOffset(next_station, sample);
+      }
 
       for (std::size_t state_index = 0;
         state_index < layers[station_index].size(); ++state_index)
@@ -221,9 +238,44 @@ public:
         const Point previous_point = shiftedPoint(previous_station, previous_lateral);
         const Point current_point = shiftedPoint(current_station, current_lateral);
 
-        for (int next_sample = 0; next_sample < sample_count; ++next_sample) {
+        int first_next_sample = 0;
+        int one_past_last_next_sample = sample_count;
+        const double maximum_lateral_delta = config_.max_abs_slope * next_ds;
+        if (config_.use_slope_reachable_sample_bounds &&
+          std::isfinite(current_lateral) && std::isfinite(maximum_lateral_delta) &&
+          maximum_lateral_delta >= 0.0 &&
+          std::isfinite(next_sample_offsets.front()) &&
+          std::isfinite(next_sample_offsets.back()))
+        {
+          const double minimum_reachable_lateral =
+            current_lateral - maximum_lateral_delta;
+          const double maximum_reachable_lateral =
+            current_lateral + maximum_lateral_delta;
+          if (minimum_reachable_lateral > next_sample_offsets.front() ||
+            maximum_reachable_lateral < next_sample_offsets.back())
+          {
+            const auto lower = std::lower_bound(
+              next_sample_offsets.begin(), next_sample_offsets.end(),
+              minimum_reachable_lateral);
+            const auto upper = std::upper_bound(
+              next_sample_offsets.begin(), next_sample_offsets.end(),
+              maximum_reachable_lateral);
+            // Retain one sample beyond each computed edge. The exact slope
+            // gate below remains authoritative at floating-point boundaries.
+            first_next_sample = std::max(
+              0, static_cast<int>(lower - next_sample_offsets.begin()) - 1);
+            one_past_last_next_sample = std::min(
+              sample_count,
+              static_cast<int>(upper - next_sample_offsets.begin()) + 1);
+          }
+        }
+
+        for (int next_sample = first_next_sample;
+          next_sample < one_past_last_next_sample; ++next_sample)
+        {
           ++result.evaluated_transitions;
-          const double next_lateral = sampleOffset(next_station, next_sample);
+          const double next_lateral =
+            next_sample_offsets[static_cast<std::size_t>(next_sample)];
           if (!sampleAllowed(next_station, next_sample, next_lateral)) {
             continue;
           }
@@ -338,11 +390,7 @@ private:
   bool sampleAllowed(
     const Station & station, const int sample_index, const double lateral) const
   {
-    if (!std::isfinite(lateral) ||
-      std::abs(lateral) > config_.max_lateral_shift_m + 1e-9 ||
-      lateral < station.lower_offset - 1e-9 ||
-      lateral > station.upper_offset + 1e-9)
-    {
+    if (!sampleGeometryAllowed(station, lateral)) {
       return false;
     }
     if (!station.sample_clearances.empty()) {

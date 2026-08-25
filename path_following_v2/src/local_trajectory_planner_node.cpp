@@ -35,6 +35,7 @@
 #include "path_following_v2/active_path_safety.hpp"
 #include "path_following_v2/bounded_corridor_smoother.hpp"
 #include "path_following_v2/candidate_selection.hpp"
+#include "path_following_v2/lattice_clearance.hpp"
 #include "path_following_v2/lightweight_frenet_lattice.hpp"
 #include "path_following_v2/maneuver_speed_policy.hpp"
 #include "path_following_v2/path_splice.hpp"
@@ -193,6 +194,8 @@ private:
     double origin_x{0.0};
     double origin_y{0.0};
     double origin_yaw{0.0};
+    double origin_cos{1.0};
+    double origin_sin{0.0};
     std::vector<float> clearance_m;
   };
 
@@ -325,6 +328,7 @@ private:
     PathModel reference;
     nav_msgs::msg::Path reference_message;
     std::vector<ScanHit> hits;
+    std::vector<Point2> trusted_points;
     Projection robot_projection;
     double robot_heading_error{0.0};
     ObstacleCluster obstacle;
@@ -518,6 +522,7 @@ private:
   std::string last_reference_source_{"raceline"};
   std::size_t last_lattice_evaluated_transitions_{0};
   double last_lattice_compute_time_ms_{0.0};
+  double last_lattice_clearance_grid_time_ms_{0.0};
   std::string last_lattice_reason_{"not run"};
   unsigned long candidate_decision_id_{0};
   std::string candidate_decision_context_{"none"};
@@ -1092,6 +1097,8 @@ private:
     double roll = 0.0;
     double pitch = 0.0;
     tf2::Matrix3x3(orientation).getRPY(roll, pitch, field.origin_yaw);
+    field.origin_cos = std::cos(field.origin_yaw);
+    field.origin_sin = std::sin(field.origin_yaw);
     const std::size_t cell_count = field.width * field.height;
     if (field.frame.empty() || field.width == 0 || field.height == 0 ||
       field.resolution <= 0.0 || map->data.size() != cell_count)
@@ -1151,17 +1158,14 @@ private:
       map_clearance_.width, map_clearance_.height, map_clearance_.resolution);
   }
 
-  double mapClearanceAt(const Point2 & point, const std::string & frame) const
+  double mapClearanceAtUnchecked(const Point2 & point) const
   {
-    if (!map_clearance_.valid || frame != map_clearance_.frame) {
-      return -std::numeric_limits<double>::infinity();
-    }
     const double translated_x = point.x - map_clearance_.origin_x;
     const double translated_y = point.y - map_clearance_.origin_y;
-    const double cosine = std::cos(map_clearance_.origin_yaw);
-    const double sine = std::sin(map_clearance_.origin_yaw);
-    const double local_x = cosine * translated_x + sine * translated_y;
-    const double local_y = -sine * translated_x + cosine * translated_y;
+    const double local_x =
+      map_clearance_.origin_cos * translated_x + map_clearance_.origin_sin * translated_y;
+    const double local_y =
+      -map_clearance_.origin_sin * translated_x + map_clearance_.origin_cos * translated_y;
     const int cell_x = static_cast<int>(std::floor(local_x / map_clearance_.resolution));
     const int cell_y = static_cast<int>(std::floor(local_y / map_clearance_.resolution));
     if (cell_x < 0 || cell_y < 0 ||
@@ -1173,6 +1177,14 @@ private:
     const std::size_t index = static_cast<std::size_t>(cell_y) * map_clearance_.width +
       static_cast<std::size_t>(cell_x);
     return static_cast<double>(map_clearance_.clearance_m[index]);
+  }
+
+  double mapClearanceAt(const Point2 & point, const std::string & frame) const
+  {
+    if (!map_clearance_.valid || frame != map_clearance_.frame) {
+      return -std::numeric_limits<double>::infinity();
+    }
+    return mapClearanceAtUnchecked(point);
   }
 
   void resetCallback(const std_msgs::msg::Bool::SharedPtr message)
@@ -1702,6 +1714,16 @@ private:
     }
 
     context.hits = reprojectHits(raw_hits, context.reference);
+    const auto trusted_clusters = clusterScanHits(context.hits, context.reference.length);
+    context.trusted_points.reserve(context.hits.size());
+    for (const auto & cluster : trusted_clusters) {
+      if (cluster.hits.size() < static_cast<std::size_t>(blocked_min_points_)) {
+        continue;
+      }
+      for (const auto & hit : cluster.hits) {
+        context.trusted_points.push_back(hit.point);
+      }
+    }
     if (raw_obstacle) {
       context.obstacle = reprojectObstacle(*raw_obstacle, context.reference);
       context.obstacle_valid =
@@ -2262,19 +2284,9 @@ private:
       std::tan(std::clamp(context.robot_heading_error, -M_PI / 4.0, M_PI / 4.0)),
       -lattice_max_abs_slope_, lattice_max_abs_slope_);
 
-    const auto clusters = clusterScanHits(context.hits, reference.length);
-    std::vector<Point2> trusted_points;
-    for (const auto & cluster : clusters) {
-      if (cluster.hits.size() < static_cast<std::size_t>(blocked_min_points_)) {
-        continue;
-      }
-      for (const auto & hit : cluster.hits) {
-        trusted_points.push_back(hit.point);
-      }
-    }
-
     const auto config = latticeConfig();
     const path_following_v2::lattice::Solver solver(config);
+    const auto clearance_grid_started_at = std::chrono::steady_clock::now();
     problem.stations.reserve(station_indices.size());
     for (const std::size_t index : station_indices) {
       const Point2 normal = pathNormal(reference, index);
@@ -2341,16 +2353,21 @@ private:
         std::numeric_limits<double>::infinity());
       for (int sample = 0; sample < solver.sampleCount(); ++sample) {
         const double offset = solver.sampleOffset(station, sample);
+        if (!solver.sampleGeometryAllowed(station, offset)) {
+          continue;
+        }
         const Point2 shifted{
           station.x + station.normal_x * offset,
           station.y + station.normal_y * offset};
         auto & sample_clearance =
           station.sample_clearances[static_cast<std::size_t>(sample)];
         if (require_map_clearance_) {
-          const double map_clearance = mapClearanceAt(shifted, reference.frame);
+          const double map_clearance = mapClearanceAtUnchecked(shifted);
           if (!std::isfinite(map_clearance)) {
-            // Unknown, out-of-map, and frame-mismatched samples are forbidden.
+            // Unknown and out-of-map samples are forbidden. The map frame was
+            // validated once before entering this hot loop.
             sample_clearance = 0.0;
+            continue;
           } else {
             const double required_map_clearance = passing_section ?
               planningClearance() : safety_half_width_m_;
@@ -2361,13 +2378,20 @@ private:
             sample_clearance = std::min(sample_clearance, normalized_map_clearance);
           }
         }
-        for (const auto & obstacle_point : trusted_points) {
-          sample_clearance = std::min(
-            sample_clearance, distance(shifted, obstacle_point));
+        if (sample_clearance <= planningClearance()) {
+          continue;
         }
+        sample_clearance =
+          path_following_v2::lattice_clearance::refineWithTrustedPoints(
+          shifted.x, shifted.y, sample_clearance,
+          lattice_preferred_clearance_m_, planningClearance(),
+          context.trusted_points);
       }
       problem.stations.push_back(std::move(station));
     }
+    last_lattice_clearance_grid_time_ms_ +=
+      std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - clearance_grid_started_at).count();
 
     const auto result = solver.solve(problem);
     last_lattice_evaluated_transitions_ += result.evaluated_transitions;
@@ -3445,6 +3469,9 @@ private:
     add(
       "lattice_evaluated_transitions",
       std::to_string(last_lattice_evaluated_transitions_));
+    add(
+      "lattice_clearance_grid_time_ms",
+      std::to_string(last_lattice_clearance_grid_time_ms_));
     add("lattice_compute_time_ms", std::to_string(last_lattice_compute_time_ms_));
     add("lattice_result", last_lattice_reason_);
     add(
@@ -4059,6 +4086,7 @@ private:
         if (!raceline_context_prepared) {
           last_lattice_evaluated_transitions_ = 0;
           last_lattice_compute_time_ms_ = 0.0;
+          last_lattice_clearance_grid_time_ms_ = 0.0;
           last_lattice_reason_ = "not run";
           raceline_context = prepareRacelinePlanningContext(
             raw, hits, robot_position, robot_yaw,

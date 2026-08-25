@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.5)
 project(path_following_v2)
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
@@ -89,6 +93,11 @@ if(BUILD_TESTING)
     test/lightweight_frenet_lattice_test.cpp
   )
   target_include_directories(lightweight_frenet_lattice_test PRIVATE include)
+
+  ament_add_gtest(lattice_clearance_test
+    test/lattice_clearance_test.cpp
+  )
+  target_include_directories(lattice_clearance_test PRIVATE include)
 
   ament_add_gtest(bounded_corridor_smoother_test
     test/bounded_corridor_smoother_test.cpp

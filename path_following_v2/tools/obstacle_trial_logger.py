@@ -41,6 +41,7 @@ PLANNER_FIELDS = (
     "peak_offset_m",
     "planner_objective_cost",
     "lattice_result",
+    "lattice_clearance_grid_time_ms",
     "lattice_compute_time_ms",
     "active_blocked_cycles",
     "active_margin_blocked_cycles",
