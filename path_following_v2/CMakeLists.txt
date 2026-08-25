@@ -123,6 +123,11 @@ if(BUILD_TESTING)
     test/path_splice_test.cpp
   )
   target_include_directories(path_splice_test PRIVATE include)
+
+  ament_add_gtest(polyline_query_test
+    test/polyline_query_test.cpp
+  )
+  target_include_directories(polyline_query_test PRIVATE include)
 endif()
 
 ament_package()

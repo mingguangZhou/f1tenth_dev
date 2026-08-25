@@ -39,12 +39,14 @@
 #include "path_following_v2/lightweight_frenet_lattice.hpp"
 #include "path_following_v2/maneuver_speed_policy.hpp"
 #include "path_following_v2/path_splice.hpp"
+#include "path_following_v2/polyline_query.hpp"
 
 using std::placeholders::_1;
 namespace selection = path_following_v2::selection;
 namespace active_path_safety = path_following_v2::active_path_safety;
 namespace maneuver_speed = path_following_v2::maneuver_speed;
 namespace path_splice = path_following_v2::path_splice;
+namespace polyline_query = path_following_v2::polyline_query;
 
 namespace
 {
@@ -57,21 +59,6 @@ struct Point2
 double distance(const Point2 & a, const Point2 & b)
 {
   return std::hypot(a.x - b.x, a.y - b.y);
-}
-
-double pointToSegmentDistance(const Point2 & point, const Point2 & a, const Point2 & b)
-{
-  const double dx = b.x - a.x;
-  const double dy = b.y - a.y;
-  const double length2 = dx * dx + dy * dy;
-  if (length2 <= 1e-12) {
-    return distance(point, a);
-  }
-  const double projection = std::clamp(
-    ((point.x - a.x) * dx + (point.y - a.y) * dy) / length2, 0.0, 1.0);
-  return std::hypot(
-    point.x - (a.x + projection * dx),
-    point.y - (a.y + projection * dy));
 }
 
 double quinticSmoothstep(const double u)
@@ -180,6 +167,7 @@ private:
   {
     std::vector<Point2> points;
     std::vector<double> s;
+    std::vector<polyline_query::Segment> segments;
     std::string frame;
     double length{0.0};
   };
@@ -518,6 +506,7 @@ private:
   rclcpp::Time last_terminal_safe_yield_scan_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_no_safe_path_scan_time_{0, 0, RCL_STEADY_TIME};
   std::vector<Point2> raceline_reference_points_;
+  std::vector<polyline_query::Segment> raceline_reference_segments_;
   bool raceline_reference_valid_{false};
   std::string last_reference_source_{"raceline"};
   std::size_t last_lattice_evaluated_transitions_{0};
@@ -918,6 +907,8 @@ private:
       releaseActivePlan("global racing-line Frenet reference changed");
     }
     raceline_reference_points_ = std::move(points);
+    raceline_reference_segments_ = polyline_query::prepareSegments(
+      raceline_reference_points_, closed_loop);
     raceline_frame_ = path->header.frame_id;
     raceline_closed_loop_ = closed_loop;
     raceline_reference_valid_ = true;
@@ -929,35 +920,23 @@ private:
   Projection projectToRacelineReference(const Point2 & point) const
   {
     Projection best;
-    const std::size_t size = raceline_reference_points_.size();
-    if (size < 2) {
+    if (raceline_reference_points_.size() < 2 || raceline_reference_segments_.empty()) {
       return best;
     }
-    const std::size_t segment_count = raceline_closed_loop_ ? size : size - 1;
-    for (std::size_t index = 0; index < segment_count; ++index) {
-      const Point2 & a = raceline_reference_points_[index];
-      const Point2 & b = raceline_reference_points_[(index + 1) % size];
-      const double dx = b.x - a.x;
-      const double dy = b.y - a.y;
-      const double length2 = dx * dx + dy * dy;
-      if (length2 <= 1e-12) {
-        continue;
-      }
-      const double ratio = std::clamp(
-        ((point.x - a.x) * dx + (point.y - a.y) * dy) / length2, 0.0, 1.0);
-      const Point2 projected{a.x + ratio * dx, a.y + ratio * dy};
-      const double separation = distance(point, projected);
-      if (separation < best.distance) {
-        const double segment_length = std::sqrt(length2);
-        best.valid = true;
-        best.s = ratio * segment_length;
-        best.d = ((point.x - projected.x) * (-dy) +
-          (point.y - projected.y) * dx) / segment_length;
-        best.yaw = std::atan2(dy, dx);
-        best.distance = separation;
-        best.segment_index = index;
-      }
+    const auto nearest = polyline_query::nearestPoint(
+      point.x, point.y, raceline_reference_segments_, 0,
+      raceline_reference_segments_.size(), true);
+    if (!nearest.valid) {
+      return best;
     }
+    const auto & segment = raceline_reference_segments_[nearest.segment_index];
+    best.valid = true;
+    best.s = nearest.ratio * segment.length;
+    best.d = (nearest.residual_x * (-segment.dy) +
+      nearest.residual_y * segment.dx) / segment.length;
+    best.yaw = segment.yaw;
+    best.distance = nearest.distance;
+    best.segment_index = nearest.segment_index;
     return best;
   }
 
@@ -1008,6 +987,7 @@ private:
     if (model.points.size() < 3 || model.length < std::min(1.0, target_length)) {
       return false;
     }
+    model.segments = polyline_query::prepareSegments(model.points);
 
     path_message.header.frame_id = model.frame;
     path_message.header.stamp = now();
@@ -1229,6 +1209,7 @@ private:
       model.points.push_back(point);
       model.s.push_back(model.length);
     }
+    model.segments = polyline_query::prepareSegments(model.points);
     return model.length >= std::min(1.0, planning_distance_m_);
   }
 
@@ -1261,33 +1242,23 @@ private:
     // spatially close to the current part of the lap.
     const double projection_limit = std::min(
       path.length, planning_distance_m_ + max_obstacle_size_m_);
-    for (std::size_t i = 0; i + 1 < path.points.size(); ++i) {
-      if (path.s[i] > projection_limit) {
+    std::size_t projection_end = 0;
+    for (; projection_end < path.segments.size(); ++projection_end) {
+      if (path.s[projection_end] > projection_limit) {
         break;
       }
-      const Point2 & a = path.points[i];
-      const Point2 & b = path.points[i + 1];
-      const double dx = b.x - a.x;
-      const double dy = b.y - a.y;
-      const double length2 = dx * dx + dy * dy;
-      if (length2 <= 1e-12) {
-        continue;
-      }
-      const double segment_length = std::sqrt(length2);
-      const double u = std::clamp(
-        ((point.x - a.x) * dx + (point.y - a.y) * dy) / length2, 0.0, 1.0);
-      const Point2 closest{a.x + u * dx, a.y + u * dy};
-      const double px = point.x - closest.x;
-      const double py = point.y - closest.y;
-      const double separation = std::hypot(px, py);
-      if (separation < best.distance) {
-        best.valid = true;
-        best.distance = separation;
-        best.s = path.s[i] + u * segment_length;
-        best.d = (dx * py - dy * px) / segment_length;  // positive is path-left
-        best.yaw = std::atan2(dy, dx);
-        best.segment_index = i;
-      }
+    }
+    const auto nearest = polyline_query::nearestPoint(
+      point.x, point.y, path.segments, 0, projection_end, true);
+    if (nearest.valid) {
+      const auto & segment = path.segments[nearest.segment_index];
+      best.valid = true;
+      best.distance = nearest.distance;
+      best.s = path.s[nearest.segment_index] + nearest.ratio * segment.length;
+      best.d = (segment.dx * nearest.residual_y -
+        segment.dy * nearest.residual_x) / segment.length;  // positive is path-left
+      best.yaw = segment.yaw;
+      best.segment_index = nearest.segment_index;
     }
     // Preserve negative s for returns behind the path start.
     if (best.valid && best.segment_index == 0 && best.s <= 1e-9) {
@@ -1928,29 +1899,25 @@ private:
     bool previous_interfered = false;
     const std::size_t collision_end = std::min(
       shifted.size() - 1, candidate.rejoin_index + static_cast<std::size_t>(3));
+    const auto shifted_segments = polyline_query::prepareSegments(shifted);
     for (const auto & hit : all_hits) {
       if (hit.projection.s < -0.20 || hit.projection.s > candidate.rejoin_s + 0.50) {
         continue;
       }
-      double clearance = std::numeric_limits<double>::infinity();
-      for (std::size_t i = 0; i < collision_end; ++i) {
-        clearance = std::min(
-          clearance, pointToSegmentDistance(hit.point, shifted[i], shifted[i + 1]));
-      }
+      const bool interfered = polyline_query::anyWithinDistance(
+        hit.point.x, hit.point.y, planningClearance(),
+        shifted_segments, 0, collision_end);
 
       // Score only the actual obstacle-passing section.  Departure and return
       // are shared smoothness requirements; including them here previously
       // biased the result toward the smaller offset rather than the wider gap.
-      double pass_clearance = std::numeric_limits<double>::infinity();
       const std::size_t pass_begin = std::min(candidate.pass_start_index, collision_end);
       const std::size_t pass_end = std::min(candidate.pass_end_index + 1, collision_end);
-      for (std::size_t i = pass_begin; i < pass_end; ++i) {
-        pass_clearance = std::min(
-          pass_clearance, pointToSegmentDistance(hit.point, shifted[i], shifted[i + 1]));
-      }
-      candidate.min_clearance = std::min(candidate.min_clearance, pass_clearance);
+      const auto pass_nearest = polyline_query::nearestPoint(
+        hit.point.x, hit.point.y, shifted_segments, pass_begin, pass_end);
+      candidate.min_clearance = std::min(
+        candidate.min_clearance, pass_nearest.distance);
 
-      const bool interfered = clearance <= planningClearance();
       if (interfered) {
         const bool connected_to_previous = previous_interfered &&
           hit.beam_index <= previous_beam + static_cast<std::size_t>(cluster_max_beam_gap_) &&
@@ -3101,12 +3068,12 @@ private:
     }
 
     const auto clusters = clusterScanHits(hits, planning_distance_m_);
+    const auto segments = polyline_query::prepareSegments(points);
     double traversed = 0.0;
-    for (std::size_t segment = 0; segment + 1 < points.size(); ++segment) {
-      const Point2 & first = points[segment];
-      const Point2 & second = points[segment + 1];
-      const double dx = second.x - first.x;
-      const double dy = second.y - first.y;
+    for (std::size_t segment_index = 0; segment_index < segments.size(); ++segment_index) {
+      const auto & segment = segments[segment_index];
+      const double dx = segment.dx;
+      const double dy = segment.dy;
       const double segment_length = std::hypot(dx, dy);
       if (segment_length <= 1e-6) {
         continue;
@@ -3116,13 +3083,15 @@ private:
         double first_contact = segment_length;
         for (const auto & hit : cluster.hits) {
           if (hit.projection.s < -0.10 ||
-            pointToSegmentDistance(hit.point, first, second) > planningClearance())
+            !polyline_query::anyWithinDistance(
+              hit.point.x, hit.point.y, planningClearance(),
+              segments, segment_index, segment_index + 1))
           {
             continue;
           }
           ++interfering;
           const double along = std::clamp(
-            ((hit.point.x - first.x) * dx + (hit.point.y - first.y) * dy) /
+            ((hit.point.x - segment.ax) * dx + (hit.point.y - segment.ay) * dy) /
             (segment_length * segment_length), 0.0, 1.0) * segment_length;
           first_contact = std::min(first_contact, along);
         }
@@ -3298,6 +3267,13 @@ private:
     if (path.poses.size() < 2) {
       return true;
     }
+    std::vector<Point2> path_points;
+    path_points.reserve(path.poses.size());
+    for (const auto & pose : path.poses) {
+      path_points.push_back(Point2{
+        pose.pose.position.x, pose.pose.position.y});
+    }
+    const auto path_segments = polyline_query::prepareSegments(path_points);
     int connected = 0;
     int maximum_connected = 0;
     std::size_t previous_beam = 0;
@@ -3308,17 +3284,8 @@ private:
       if (hit.projection.s < -0.10) {
         continue;
       }
-      double clearance = std::numeric_limits<double>::infinity();
-      for (std::size_t i = 0; i + 1 < path.poses.size(); ++i) {
-        const Point2 a{
-          path.poses[i].pose.position.x,
-          path.poses[i].pose.position.y};
-        const Point2 b{
-          path.poses[i + 1].pose.position.x,
-          path.poses[i + 1].pose.position.y};
-        clearance = std::min(clearance, pointToSegmentDistance(hit.point, a, b));
-      }
-      const bool interfered = clearance <= clearance_threshold;
+      const bool interfered = polyline_query::anyWithinDistance(
+        hit.point.x, hit.point.y, clearance_threshold, path_segments);
       if (interfered) {
         const bool connected_to_previous = previous_interfered &&
           hit.beam_index <= previous_beam + static_cast<std::size_t>(cluster_max_beam_gap_) &&
