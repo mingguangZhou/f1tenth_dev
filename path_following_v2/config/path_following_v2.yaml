@@ -17,7 +17,7 @@
 /**:
   ros__parameters:
     command_speed_min_mps: 0.5
-    command_speed_max_mps: 10.0
+    command_speed_max_mps: 8.0
 
 path_generator:
   ros__parameters:
@@ -54,8 +54,8 @@ path_generator:
     # The 0.09 m preview preserves the previous three-waypoint behavior for
     # the current ~0.03 m raceline spacing. Tune it separately if desired.
     # --------------------------------------------------------
-    rule_curve_min_speed_mps: 1.0
-    rule_straight_speed_mps: 5.0
+    rule_curve_min_speed_mps: 0.8
+    rule_straight_speed_mps: 4.0
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_preview_m: 0.50
 
@@ -180,15 +180,15 @@ local_trajectory_planner:
     # --------------------------------------------------------
     # These are upper ceilings. Remaining-path curvature lowers the active cap
     # when needed to respect the lateral-acceleration limit.
-    avoidance_speed_cap_mps: 3.5
-    recovery_speed_cap_mps: 4.0
-    replan_pending_speed_cap_mps: 2.5
-    maneuver_lateral_acceleration_limit_mps2: 4.0
+    avoidance_speed_cap_mps: 2.8
+    recovery_speed_cap_mps: 3.2
+    replan_pending_speed_cap_mps: 2.0
+    maneuver_lateral_acceleration_limit_mps2: 2.56
     # Stop safely and retry when neither overtake corridor is available.
     enable_primary_safe_yield: true
     yield_standoff_m: 1.00
     yield_min_path_length_m: 0.50
-    yield_max_speed_mps: 2.5
+    yield_max_speed_mps: 2.0
     yield_deceleration_mps2: 2.0
     safe_yield_terminal_speed_mps: 0.05
 

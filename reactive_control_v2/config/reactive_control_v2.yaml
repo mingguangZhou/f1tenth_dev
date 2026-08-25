@@ -92,8 +92,8 @@ upper_corridor_follower:
     wheelbase_m: 0.33
     steering_max_deg: 20.6
     steering_filter_alpha: 0.40
-    velocity_max_mps: 2.0
-    velocity_min_mps: 1.0
+    velocity_max_mps: 1.6
+    velocity_min_mps: 0.8
     slow_reach_distance_m: 1.00
     stop_reach_distance_m: 0.50
 
