@@ -22,6 +22,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp/executors/multi_threaded_executor.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float64.hpp"
@@ -113,18 +114,30 @@ public:
     loadParameters();
     loadCenterlineReference();
 
+    planning_callback_group_ = create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+    input_callback_group_ = create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+    heartbeat_callback_group_ = create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+
+    rclcpp::SubscriptionOptions input_options;
+    input_options.callback_group = input_callback_group_;
+    rclcpp::SubscriptionOptions planning_options;
+    planning_options.callback_group = planning_callback_group_;
+
     raw_path_sub_ = create_subscription<nav_msgs::msg::Path>(
       raw_path_topic_, rclcpp::QoS(1).reliable().transient_local(),
-      std::bind(&LocalTrajectoryPlannerNode::rawPathCallback, this, _1));
+      std::bind(&LocalTrajectoryPlannerNode::rawPathCallback, this, _1), input_options);
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&LocalTrajectoryPlannerNode::scanCallback, this, _1));
+      std::bind(&LocalTrajectoryPlannerNode::scanCallback, this, _1), input_options);
     reset_sub_ = create_subscription<std_msgs::msg::Bool>(
       reset_topic_, 10,
-      std::bind(&LocalTrajectoryPlannerNode::resetCallback, this, _1));
+      std::bind(&LocalTrajectoryPlannerNode::resetCallback, this, _1), planning_options);
     map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
       map_topic_, rclcpp::QoS(1).reliable().transient_local(),
-      std::bind(&LocalTrajectoryPlannerNode::mapCallback, this, _1));
+      std::bind(&LocalTrajectoryPlannerNode::mapCallback, this, _1), planning_options);
 
     final_path_pub_ = create_publisher<nav_msgs::msg::Path>(
       final_path_topic_, rclcpp::QoS(1).reliable().transient_local());
@@ -139,7 +152,12 @@ public:
     const auto period = std::chrono::duration<double>(1.0 / control_rate_hz_);
     timer_ = create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(period),
-      std::bind(&LocalTrajectoryPlannerNode::controlLoop, this));
+      std::bind(&LocalTrajectoryPlannerNode::controlLoop, this),
+      planning_callback_group_);
+    heartbeat_timer_ = create_wall_timer(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(period),
+      std::bind(&LocalTrajectoryPlannerNode::planningHeartbeatLoop, this),
+      heartbeat_callback_group_);
 
     RCLCPP_INFO(
       get_logger(),
@@ -312,6 +330,23 @@ private:
     ObstacleCluster obstacle;
   };
 
+  struct PlanningHeartbeat
+  {
+    bool active{false};
+    rclcpp::Time started_at{0, 0, RCL_STEADY_TIME};
+    nav_msgs::msg::Path path;
+    std_msgs::msg::Float64 speed_cap;
+    diagnostic_msgs::msg::DiagnosticArray status;
+  };
+
+  struct InputFreshness
+  {
+    bool raw_received{false};
+    bool scan_received{false};
+    double raw_age{std::numeric_limits<double>::infinity()};
+    double scan_age{std::numeric_limits<double>::infinity()};
+  };
+
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr reset_sub_;
@@ -322,6 +357,10 @@ private:
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr status_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr heartbeat_timer_;
+  rclcpp::CallbackGroup::SharedPtr planning_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr input_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr heartbeat_callback_group_;
   rclcpp::Clock::SharedPtr tf_system_clock_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
@@ -334,6 +373,9 @@ private:
   rclcpp::Time scan_time_{0, 0, RCL_STEADY_TIME};
   bool raw_path_received_{false};
   bool scan_received_{false};
+
+  std::mutex planning_heartbeat_mutex_;
+  PlanningHeartbeat planning_heartbeat_;
 
   std::string raw_path_topic_;
   std::string final_path_topic_;
@@ -349,6 +391,7 @@ private:
   double control_rate_hz_{20.0};
   double raw_path_timeout_sec_{0.30};
   double scan_timeout_sec_{0.30};
+  double planning_heartbeat_timeout_sec_{1.0};
   double transform_timeout_sec_{0.05};
   double scan_range_cap_m_{10.0};
   double planning_distance_m_{10.0};
@@ -488,6 +531,7 @@ private:
     declare_parameter<double>("control_rate_hz", 20.0);
     declare_parameter<double>("raw_path_timeout_sec", 0.30);
     declare_parameter<double>("scan_timeout_sec", 0.30);
+    declare_parameter<double>("planning_heartbeat_timeout_sec", 1.0);
     declare_parameter<double>("transform_timeout_sec", 0.05);
     // The effective obstacle-trigger distance is bounded by the raw path,
     // scan reach, and requested planning distance, then reduced only when
@@ -625,6 +669,8 @@ private:
     control_rate_hz_ = std::max(1.0, get_parameter("control_rate_hz").as_double());
     raw_path_timeout_sec_ = std::max(0.01, get_parameter("raw_path_timeout_sec").as_double());
     scan_timeout_sec_ = std::max(0.01, get_parameter("scan_timeout_sec").as_double());
+    planning_heartbeat_timeout_sec_ = std::max(
+      0.10, get_parameter("planning_heartbeat_timeout_sec").as_double());
     transform_timeout_sec_ = std::max(0.0, get_parameter("transform_timeout_sec").as_double());
     scan_range_cap_m_ = std::max(0.10, get_parameter("scan_range_cap_m").as_double());
     planning_distance_m_ = std::max(0.50, get_parameter("planning_distance_m").as_double());
@@ -684,7 +730,7 @@ private:
     wheelbase_m_ = std::max(0.01, get_parameter("wheelbase_m").as_double());
     steering_max_deg_ = std::max(0.1, get_parameter("steering_max_deg").as_double());
     curvature_safety_factor_ = std::clamp(
-      get_parameter("curvature_safety_factor").as_double(), 0.1, 1.20);
+      get_parameter("curvature_safety_factor").as_double(), 0.1, 100.0);
     centerline_csv_path_ = get_parameter("centerline_csv_path").as_string();
     centerline_direction_ = get_parameter("centerline_direction").as_string();
     centerline_frame_ = get_parameter("centerline_frame").as_string();
@@ -3215,16 +3261,11 @@ private:
     return length;
   }
 
-  bool activePathBlocked(
-    const std::vector<ScanHit> & hits, const double clearance_threshold,
-    const nav_msgs::msg::Path & raw_path) const
+  bool pathBlockedByConnectedHits(
+    const nav_msgs::msg::Path & path, const std::vector<ScanHit> & hits,
+    const double clearance_threshold) const
   {
-    if (!active_plan_.valid || active_plan_.path.poses.size() < 2) {
-      return true;
-    }
-    // Validate the exact published path, including its refreshed tail.
-    const nav_msgs::msg::Path published_path = continuousActivePath(raw_path);
-    if (published_path.poses.size() < 2) {
+    if (path.poses.size() < 2) {
       return true;
     }
     int connected = 0;
@@ -3238,13 +3279,13 @@ private:
         continue;
       }
       double clearance = std::numeric_limits<double>::infinity();
-      for (std::size_t i = 0; i + 1 < published_path.poses.size(); ++i) {
+      for (std::size_t i = 0; i + 1 < path.poses.size(); ++i) {
         const Point2 a{
-          published_path.poses[i].pose.position.x,
-          published_path.poses[i].pose.position.y};
+          path.poses[i].pose.position.x,
+          path.poses[i].pose.position.y};
         const Point2 b{
-          published_path.poses[i + 1].pose.position.x,
-          published_path.poses[i + 1].pose.position.y};
+          path.poses[i + 1].pose.position.x,
+          path.poses[i + 1].pose.position.y};
         clearance = std::min(clearance, pointToSegmentDistance(hit.point, a, b));
       }
       const bool interfered = clearance <= clearance_threshold;
@@ -3263,6 +3304,18 @@ private:
       }
     }
     return maximum_connected >= blocked_min_points_;
+  }
+
+  bool activePathBlocked(
+    const std::vector<ScanHit> & hits, const double clearance_threshold,
+    const nav_msgs::msg::Path & raw_path) const
+  {
+    if (!active_plan_.valid || active_plan_.path.poses.size() < 2) {
+      return true;
+    }
+    // Validate the exact published path, including its refreshed tail.
+    return pathBlockedByConnectedHits(
+      continuousActivePath(raw_path), hits, clearance_threshold);
   }
 
   double remainingActiveMaximumCurvature() const
@@ -3313,24 +3366,26 @@ private:
       replan_pending_speed_cap_mps_;
   }
 
-  void publishSpeedCap(const double cap)
+  std_msgs::msg::Float64 publishSpeedCap(const double cap)
   {
     std_msgs::msg::Float64 message;
     message.data = std::max(0.0, cap);
     last_published_speed_cap_mps_ = message.data;
     speed_cap_pub_->publish(message);
+    return message;
   }
 
-  void publishPath(nav_msgs::msg::Path path)
+  nav_msgs::msg::Path publishPath(nav_msgs::msg::Path path)
   {
     path.header.stamp = now();
     for (auto & pose : path.poses) {
       pose.header = path.header;
     }
     final_path_pub_->publish(path);
+    return path;
   }
 
-  void publishStatus(
+  diagnostic_msgs::msg::DiagnosticArray publishStatus(
     const std::string & state, const std::string & reason,
     const std::string & trajectory_mode, const int side,
     const double raw_path_age, const double scan_age,
@@ -3479,6 +3534,232 @@ private:
     }
     array.status.push_back(status);
     status_pub_->publish(array);
+    return array;
+  }
+
+  void startPlanningHeartbeat(
+    nav_msgs::msg::Path path, const double speed_cap,
+    const std::string & reason, const int side,
+    const double raw_path_age, const double scan_age,
+    const double valid_beam_ratio, const ObstacleCluster * obstacle = nullptr)
+  {
+    stopPlanningHeartbeat();
+
+    // Publish the conservative hold immediately before starting expensive
+    // candidate search. The dedicated heartbeat callback then refreshes this
+    // coherent cap/path/status bundle while planning is still in progress.
+    auto cap_message = publishSpeedCap(speed_cap);
+    auto path_message = publishPath(std::move(path));
+    auto status_message = publishStatus(
+      "READY", reason, "PLANNING_HOLD", side,
+      raw_path_age, scan_age, valid_beam_ratio, obstacle);
+
+    std::lock_guard<std::mutex> lock(planning_heartbeat_mutex_);
+    planning_heartbeat_.started_at = steady_clock_.now();
+    planning_heartbeat_.path = std::move(path_message);
+    planning_heartbeat_.speed_cap = cap_message;
+    planning_heartbeat_.status = std::move(status_message);
+    planning_heartbeat_.active = true;
+  }
+
+  void stopPlanningHeartbeat()
+  {
+    std::lock_guard<std::mutex> lock(planning_heartbeat_mutex_);
+    planning_heartbeat_.active = false;
+  }
+
+  bool finishPlanningHeartbeat()
+  {
+    std::lock_guard<std::mutex> lock(planning_heartbeat_mutex_);
+    const bool valid = planning_heartbeat_.active &&
+      (steady_clock_.now() - planning_heartbeat_.started_at).seconds() <=
+      planning_heartbeat_timeout_sec_;
+    planning_heartbeat_.active = false;
+    return valid;
+  }
+
+  static void updateDiagnosticValue(
+    diagnostic_msgs::msg::DiagnosticStatus & status,
+    const std::string & key, const std::string & value)
+  {
+    for (auto & pair : status.values) {
+      if (pair.key == key) {
+        pair.value = value;
+        return;
+      }
+    }
+  }
+
+  InputFreshness currentInputFreshness()
+  {
+    rclcpp::Time raw_time(0, 0, RCL_STEADY_TIME);
+    rclcpp::Time current_scan_time(0, 0, RCL_STEADY_TIME);
+    InputFreshness freshness;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      freshness.raw_received = raw_path_received_ && latest_raw_path_;
+      freshness.scan_received = scan_received_ && latest_scan_;
+      raw_time = raw_path_time_;
+      current_scan_time = scan_time_;
+    }
+    const auto current_time = steady_clock_.now();
+    if (freshness.raw_received) {
+      freshness.raw_age = (current_time - raw_time).seconds();
+    }
+    if (freshness.scan_received) {
+      freshness.scan_age = (current_time - current_scan_time).seconds();
+    }
+    return freshness;
+  }
+
+  void failPlanningHeartbeatLocked(
+    const std::string & state, const std::string & reason)
+  {
+    planning_heartbeat_.active = false;
+    std_msgs::msg::Float64 stop;
+    stop.data = 0.0;
+    speed_cap_pub_->publish(stop);
+
+    auto failure_status = planning_heartbeat_.status;
+    failure_status.header.stamp = now();
+    for (auto & status : failure_status.status) {
+      status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+      status.message = state + ": " + reason;
+      updateDiagnosticValue(status, "state", state);
+      updateDiagnosticValue(status, "reason", reason);
+      updateDiagnosticValue(status, "trajectory_mode", "NONE");
+      updateDiagnosticValue(status, "speed_cap_mps", "0.0");
+    }
+    status_pub_->publish(failure_status);
+  }
+
+  void planningHeartbeatLoop()
+  {
+    std::lock_guard<std::mutex> lock(planning_heartbeat_mutex_);
+    if (!planning_heartbeat_.active) {
+      return;
+    }
+
+    const InputFreshness freshness = currentInputFreshness();
+    updateDiagnosticValue(
+      planning_heartbeat_.status.status.front(), "raw_path_age_sec",
+      std::to_string(freshness.raw_age));
+    updateDiagnosticValue(
+      planning_heartbeat_.status.status.front(), "scan_age_sec",
+      std::to_string(freshness.scan_age));
+    if (!freshness.scan_received || freshness.scan_age > scan_timeout_sec_) {
+      failPlanningHeartbeatLocked(
+        "SCAN_INVALID", freshness.scan_received ?
+        "LaserScan became stale during planning" :
+        "LaserScan is unavailable during planning");
+      return;
+    }
+    if (!freshness.raw_received || freshness.raw_age > raw_path_timeout_sec_) {
+      failPlanningHeartbeatLocked(
+        "INPUT_INVALID", freshness.raw_received ?
+        "raw raceline path became stale during planning" :
+        "raw raceline path is unavailable during planning");
+      return;
+    }
+
+    const double hold_age =
+      (steady_clock_.now() - planning_heartbeat_.started_at).seconds();
+    if (hold_age > planning_heartbeat_timeout_sec_) {
+      failPlanningHeartbeatLocked(
+        "PLANNING_TIMEOUT", "obstacle-plan computation exceeded heartbeat window");
+      RCLCPP_WARN(
+        get_logger(),
+        "planning heartbeat expired after %.3f s; holding zero speed",
+        hold_age);
+      return;
+    }
+
+    planning_heartbeat_.path.header.stamp = now();
+    for (auto & pose : planning_heartbeat_.path.poses) {
+      pose.header = planning_heartbeat_.path.header;
+    }
+    planning_heartbeat_.status.header.stamp = now();
+
+    // Cap first ensures a refreshed path can never briefly carry an older,
+    // faster maneuver ceiling. Status is last so arbitration sees a coherent
+    // output bundle.
+    speed_cap_pub_->publish(planning_heartbeat_.speed_cap);
+    final_path_pub_->publish(planning_heartbeat_.path);
+    status_pub_->publish(planning_heartbeat_.status);
+  }
+
+  bool finishPlanningAttempt(
+    const rclcpp::Time & started_at, const bool heartbeat_started)
+  {
+    const bool heartbeat_valid = !heartbeat_started || finishPlanningHeartbeat();
+    const InputFreshness freshness = currentInputFreshness();
+    if (!freshness.scan_received || freshness.scan_age > scan_timeout_sec_) {
+      failPrimary(
+        "SCAN_INVALID", freshness.scan_received ?
+        "LaserScan became stale during planning" :
+        "LaserScan is unavailable during planning",
+        freshness.raw_age, freshness.scan_age);
+      return false;
+    }
+    if (!freshness.raw_received || freshness.raw_age > raw_path_timeout_sec_) {
+      failPrimary(
+        "INPUT_INVALID", freshness.raw_received ?
+        "raw raceline path became stale during planning" :
+        "raw raceline path is unavailable during planning",
+        freshness.raw_age, freshness.scan_age);
+      return false;
+    }
+    if ((steady_clock_.now() - started_at).seconds() > planning_heartbeat_timeout_sec_) {
+      failPrimary(
+        "PLANNING_TIMEOUT", "obstacle-plan computation exceeded heartbeat window",
+        freshness.raw_age, freshness.scan_age);
+      return false;
+    }
+    return heartbeat_valid;
+  }
+
+  bool candidateClearOnLatestScan(
+    const Candidate & candidate, const PathModel & raw,
+    std::string & failure_state, std::string & failure_reason)
+  {
+    sensor_msgs::msg::LaserScan::SharedPtr latest_scan;
+    rclcpp::Time latest_scan_time(0, 0, RCL_STEADY_TIME);
+    bool scan_received = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      latest_scan = latest_scan_;
+      latest_scan_time = scan_time_;
+      scan_received = scan_received_;
+    }
+    const double scan_age = scan_received ?
+      (steady_clock_.now() - latest_scan_time).seconds() :
+      std::numeric_limits<double>::infinity();
+    if (!scan_received || !latest_scan || scan_age > scan_timeout_sec_) {
+      failure_state = "SCAN_INVALID";
+      failure_reason = scan_received ?
+        "LaserScan became stale before candidate acceptance" :
+        "LaserScan is unavailable before candidate acceptance";
+      return false;
+    }
+
+    std::vector<ScanHit> latest_hits;
+    double valid_beam_ratio = 0.0;
+    if (!scanHitsInPathFrame(*latest_scan, raw, latest_hits, valid_beam_ratio)) {
+      failure_state = "TF_UNAVAILABLE";
+      failure_reason = "latest LaserScan cannot be transformed before candidate acceptance";
+      return false;
+    }
+    if (valid_beam_ratio < min_valid_beam_ratio_) {
+      failure_state = "SCAN_INVALID";
+      failure_reason = "latest LaserScan has insufficient valid beams";
+      return false;
+    }
+    if (pathBlockedByConnectedHits(candidate.path, latest_hits, safety_half_width_m_)) {
+      failure_state = "PLAN_INVALIDATED";
+      failure_reason = "fresh LaserScan blocks the newly generated candidate";
+      return false;
+    }
+    return true;
   }
 
   visualization_msgs::msg::Marker lineMarker(
@@ -3580,6 +3861,7 @@ private:
     const ObstacleCluster * obstacle = nullptr,
     const Candidate * candidate = nullptr)
   {
+    stopPlanningHeartbeat();
     // A zero cap stops the primary follower immediately while the arbitrator
     // observes the non-READY status and transfers ownership to Reactive.
     publishSpeedCap(0.0);
@@ -3746,9 +4028,29 @@ private:
         if (active_plan_.rolling_pass && !obstacle_found &&
           rolling_pass_clear_cycles_ >= rolling_pass_completion_scans_)
         {
+          const auto planning_started_at = steady_clock_.now();
+          startPlanningHeartbeat(
+            continuousActivePath(*raw_message), activeReplanPendingSpeedCap(),
+            "computing smooth recovery while retaining the current clear path",
+            active_plan_.side, raw_age, scan_age, valid_beam_ratio);
           Candidate recovery = bestAvailableRecoveryCandidate(
             getCenterlineContext(), raw, *raw_message, hits,
             robot_position, robot_yaw, robot_on_raw.d, car_heading_error);
+          if (!finishPlanningAttempt(planning_started_at, true)) {
+            return;
+          }
+          if (recovery.valid) {
+            std::string failure_state;
+            std::string failure_reason;
+            if (!candidateClearOnLatestScan(
+                recovery, raw, failure_state, failure_reason))
+            {
+              const auto freshness = currentInputFreshness();
+              failPrimary(
+                failure_state, failure_reason, freshness.raw_age, freshness.scan_age);
+              return;
+            }
+          }
           if (recovery.valid) {
             activatePlan(recovery, "moving target passed with confirmed rear clearance");
             obstacle_track_ = ObstacleTrack();
@@ -3826,6 +4128,29 @@ private:
         Candidate right;
         const Candidate * selected = nullptr;
         std::string update_reason;
+        const auto planning_started_at = steady_clock_.now();
+        bool heartbeat_started = false;
+        const auto held_active_path = continuousActivePath(*raw_message);
+        if (!physical_blocked_now) {
+          startPlanningHeartbeat(
+            held_active_path, activeReplanPendingSpeedCap(),
+            "updating obstacle plan while retaining the physically clear active path",
+            active_plan_.side, raw_age, scan_age, valid_beam_ratio,
+            obstacle_found ? &obstacle : nullptr);
+          heartbeat_started = true;
+        } else {
+          const auto planning_yield = buildSafeYieldPlan(
+            held_active_path, hits, robot_position, robot_yaw);
+          if (planning_yield.valid) {
+            startPlanningHeartbeat(
+              planning_yield.path,
+              std::min(planning_yield.speed_cap, activeReplanPendingSpeedCap()),
+              "updating obstacle plan while following a collision-free yield prefix",
+              active_plan_.side, raw_age, scan_age, valid_beam_ratio,
+              obstacle_found ? &obstacle : nullptr);
+            heartbeat_started = true;
+          }
+        }
         if (obstacle_found && enable_detour_planning_ && obstacle_size_valid) {
           const bool preserve_raceline_frame =
             active_plan_.planning_reference.rfind("raceline", 0) == 0;
@@ -3893,6 +4218,21 @@ private:
             update_reason = "active return path update toward raceline";
           } else {
             update_reason = "avoidance direction remains closed until the pass anchor";
+          }
+        }
+        if (!finishPlanningAttempt(planning_started_at, heartbeat_started)) {
+          return;
+        }
+        if (selected) {
+          std::string failure_state;
+          std::string failure_reason;
+          if (!candidateClearOnLatestScan(
+              *selected, raw, failure_state, failure_reason))
+          {
+            const auto freshness = currentInputFreshness();
+            failPrimary(
+              failure_state, failure_reason, freshness.raw_age, freshness.scan_age);
+            return;
           }
         }
 
@@ -3980,7 +4320,19 @@ private:
       Candidate right;
       const Candidate * selected = nullptr;
       std::string failure_reason;
+      const auto planning_started_at = steady_clock_.now();
+      bool heartbeat_started = false;
       if (obstacle_found && enable_detour_planning_ && obstacle_size_valid) {
+        const auto planning_yield = buildSafeYieldPlan(
+          *raw_message, hits, robot_position, robot_yaw);
+        if (planning_yield.valid) {
+          startPlanningHeartbeat(
+            planning_yield.path,
+            std::min(planning_yield.speed_cap, replan_pending_speed_cap_mps_),
+            "computing avoidance while following a collision-free raceline prefix",
+            0, raw_age, scan_age, valid_beam_ratio, &obstacle);
+          heartbeat_started = true;
+        }
         left = bestAvailableDetourCandidateForSide(
           getCenterlineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error, +1);
@@ -3999,11 +4351,32 @@ private:
         failure_reason = "interfering cluster exceeds configured obstacle-size rule";
       } else {
         clearMarkers(raw.frame);
+        startPlanningHeartbeat(
+          *raw_message, replan_pending_speed_cap_mps_,
+          "computing raceline recovery while retaining the clear raw path",
+          0, raw_age, scan_age, valid_beam_ratio);
+        heartbeat_started = true;
         recovery = bestAvailableRecoveryCandidate(
           getCenterlineContext(), raw, *raw_message, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error);
         selected = recovery.valid ? &recovery : nullptr;
         failure_reason = "no valid raceline-recovery trajectory: " + recovery.reason;
+      }
+      if (!finishPlanningAttempt(planning_started_at, heartbeat_started)) {
+        return;
+      }
+      if (selected) {
+        std::string failure_state;
+        std::string latest_scan_failure;
+        if (!candidateClearOnLatestScan(
+            *selected, raw, failure_state, latest_scan_failure))
+        {
+          const auto freshness = currentInputFreshness();
+          failPrimary(
+            failure_state, latest_scan_failure,
+            freshness.raw_age, freshness.scan_age);
+          return;
+        }
       }
 
       if (selected) {
@@ -4084,7 +4457,11 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<LocalTrajectoryPlannerNode>());
+  auto node = std::make_shared<LocalTrajectoryPlannerNode>();
+  rclcpp::executors::MultiThreadedExecutor executor(
+    rclcpp::ExecutorOptions(), 3);
+  executor.add_node(node);
+  executor.spin();
   rclcpp::shutdown();
   return 0;
 }

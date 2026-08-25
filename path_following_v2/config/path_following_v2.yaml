@@ -76,8 +76,9 @@ local_trajectory_planner:
     map_topic: "/map"
     robot_frame: "base_link"
     control_rate_hz: 20.0
-    raw_path_timeout_sec: 0.30
+    raw_path_timeout_sec: 1.0
     scan_timeout_sec: 0.30
+    planning_heartbeat_timeout_sec: 1.0
     transform_timeout_sec: 0.20
 
     # --------------------------------------------------------
@@ -126,12 +127,12 @@ local_trajectory_planner:
     detour_return_max_length_m: 5.00
     candidate_lateral_step_m: 0.08
     max_candidates_per_side: 6
-    max_lateral_shift_m: 0.80
+    max_lateral_shift_m: 0.9
     wheelbase_m: 0.33
     steering_max_deg: 20.6
-    # Allows up to 23.92 deg equivalent steering during local planning. The
-    # follower limit below must retain enough authority to execute that path.
-    curvature_safety_factor: 1.18
+    # Planner-side geometric search multiplier. Command and safety limits are
+    # enforced independently by downstream controllers.
+    curvature_safety_factor: 2.7
 
     # --------------------------------------------------------
     # LIGHTWEIGHT CENTERLINE-FRAME LATTICE

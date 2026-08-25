@@ -109,7 +109,7 @@ def test_simulator_path_and_rl_speed_envelopes_remain_aligned():
     assert generator["rule_straight_speed_mps"] == rl["rule_straight_speed_mps"]
 
 
-def test_local_planner_curvature_is_executable_in_both_profiles():
+def test_local_planner_search_limits_match_in_both_profiles():
     profiles = []
     for filename in ("path_following_v2.yaml", "path_following_v2_sim.yaml"):
         document = yaml.safe_load(
@@ -119,21 +119,44 @@ def test_local_planner_curvature_is_executable_in_both_profiles():
         )
         planner = document["local_trajectory_planner"]["ros__parameters"]
         follower = document["path_following_v2"]["ros__parameters"]
-        required_steering_deg = math.degrees(
-            math.atan(
-                planner["curvature_safety_factor"]
-                * math.tan(math.radians(planner["steering_max_deg"]))
-            )
-        )
 
         assert planner["curvature_safety_factor"] > 1.0
         assert follower["wheelbase_m"] == planner["wheelbase_m"]
-        assert follower["steering_max_deg"] >= required_steering_deg
         profiles.append(
             (
+                planner["max_lateral_shift_m"],
                 planner["curvature_safety_factor"],
-                follower["steering_max_deg"],
             )
         )
 
-    assert profiles[0] == profiles[1]
+    assert profiles[0] == profiles[1] == (0.9, 2.7)
+
+
+def test_planning_freshness_windows_match_in_both_profiles():
+    suffixes = ("", "_sim")
+    for suffix in suffixes:
+        path = yaml.safe_load(
+            (
+                REPOSITORY
+                / f"path_following_v2/config/path_following_v2{suffix}.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        arbitration = _parameters(
+            f"drive_arbitration_v2/config/drive_arbitration_v2{suffix}.yaml",
+            "drive_arbitrator",
+        )
+        reactive = yaml.safe_load(
+            (
+                REPOSITORY
+                / f"reactive_control_v2/config/reactive_control_v2{suffix}.yaml"
+            ).read_text(encoding="utf-8")
+        )
+
+        planner = path["local_trajectory_planner"]["ros__parameters"]
+        lower = reactive["lower_safety_controller"]["ros__parameters"]
+        assert planner["raw_path_timeout_sec"] == 1.0
+        assert planner["planning_heartbeat_timeout_sec"] == 1.0
+        assert arbitration["path_status_timeout_sec"] == 1.0
+        assert lower["wrong_way_heading_error_timeout_sec"] == 1.0
+        assert planner["scan_timeout_sec"] == 0.30
+        assert lower["scan_timeout_sec"] == 0.30

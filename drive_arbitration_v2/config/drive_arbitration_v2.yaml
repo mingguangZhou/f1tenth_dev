@@ -54,7 +54,7 @@ drive_arbitrator:
 
     control_rate_hz: 20.0
     primary_startup_timeout_sec: 3.0
-    path_status_timeout_sec: 0.30
+    path_status_timeout_sec: 1.0
     follower_status_timeout_sec: 0.30
     guard_status_timeout_sec: 0.30
     raceline_command_timeout_sec: 0.25

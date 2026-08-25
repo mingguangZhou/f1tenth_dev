@@ -148,7 +148,7 @@ lower_safety_controller:
     # false so FTG/reverse can operate without the arbitrator topic.
     require_arbitration_mode: false
     arbitration_mode_timeout_sec: 0.50
-    wrong_way_heading_error_timeout_sec: 0.20
+    wrong_way_heading_error_timeout_sec: 1.0
     wrong_way_max_raceline_distance_m: 4.0
     enable_sim_reverse_swept_gate: false
     reverse_swept_map_topic: "/map"
