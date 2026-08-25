@@ -1,4 +1,4 @@
-# Path Following V2 — onboard parameters
+# Path Following V2 — canonical production behavior
 #
 # START TUNING HERE
 #   Normal speed:      rule_straight_speed_mps, rule_curve_min_speed_mps,
@@ -17,7 +17,7 @@
 /**:
   ros__parameters:
     command_speed_min_mps: 0.5
-    command_speed_max_mps: 10.0
+    command_speed_max_mps: 4.0
 
 path_generator:
   ros__parameters:
@@ -44,7 +44,7 @@ path_generator:
     # The legacy point-count fallback remains internal and is used only if the
     # metric target is set <= 0.
     # --------------------------------------------------------
-    local_path_target_length_m: 6.0
+    local_path_target_length_m: 10.0
     local_path_max_points: 350
 
     # --------------------------------------------------------
@@ -54,8 +54,8 @@ path_generator:
     # The 0.09 m preview preserves the previous three-waypoint behavior for
     # the current ~0.03 m raceline spacing. Tune it separately if desired.
     # --------------------------------------------------------
-    rule_curve_min_speed_mps: 1.0
-    rule_straight_speed_mps: 4.0
+    rule_curve_min_speed_mps: 0.8
+    rule_straight_speed_mps: 2.5
     rule_speed_curvature_gain: 2.0
     rule_speed_curvature_preview_m: 0.50
 
@@ -82,15 +82,14 @@ local_trajectory_planner:
     raw_path_timeout_sec: 1.0
     scan_timeout_sec: 0.30
     planning_heartbeat_timeout_sec: 1.0
-    transform_timeout_sec: 0.40
+    transform_timeout_sec: 0.20
 
     # --------------------------------------------------------
     # PLANNING AND SENSOR DISTANCES
-    # The onboard raw path is currently 6 m. These 10 m ceilings do not create
-    # extra path; runtime planning is bounded by the actually available path.
+    # Runtime planning is bounded by the 10 m raw path actually available.
     # --------------------------------------------------------
     scan_range_cap_m: 10.0
-    planning_distance_m: 14.0
+    planning_distance_m: 10.0
 
     # --------------------------------------------------------
     # VEHICLE ENVELOPE AND OBSTACLE EVIDENCE
@@ -139,7 +138,7 @@ local_trajectory_planner:
 
     # --------------------------------------------------------
     # LIGHTWEIGHT RACING-LINE-FRAME LATTICE
-    # These smaller limits target the lower-power onboard computer. The global
+    # These shared limits remain practical on the onboard computer. The global
     # racing-line topic is the Frenet frame. Legacy curves are allowed only
     # while opening a new maneuver, never during a latched-side replan.
     # --------------------------------------------------------
@@ -162,7 +161,7 @@ local_trajectory_planner:
     lattice_preferred_clearance_m: 0.45
     lattice_terminal_distance_m: 1.0
     lattice_terminal_weight_multiplier: 5.0
-    # Shorter onboard alignment tail preserves compute/path-window margin while
+    # The alignment tail preserves compute/path-window margin while
     # still constraining at least three 0.25 m lattice stations.
     lattice_rejoin_alignment_length_m: 0.75
     side_clearance_tie_m: 0.03
@@ -181,9 +180,9 @@ local_trajectory_planner:
     # --------------------------------------------------------
     # These are upper ceilings. Remaining-path curvature lowers the active cap
     # when needed to respect the lateral-acceleration limit.
-    avoidance_speed_cap_mps: 3.5
-    recovery_speed_cap_mps: 3.5
-    replan_pending_speed_cap_mps: 2.5
+    avoidance_speed_cap_mps: 2.2
+    recovery_speed_cap_mps: 2.2
+    replan_pending_speed_cap_mps: 1.5
     maneuver_lateral_acceleration_limit_mps2: 2.0
     # Stop safely and retry when neither overtake corridor is available.
     enable_primary_safe_yield: true

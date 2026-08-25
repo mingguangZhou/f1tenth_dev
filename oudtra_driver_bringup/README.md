@@ -19,9 +19,10 @@ Run `f1 sim` in a separate container terminal for the IFAC Roboracer simulator
 with three fixed obstacles and one moving traffic car. Use
 `f1 sim --no-agents` to remove the moving car.
 
-In simulation, `f1 auto` follows the validated optimized IFAC Roboracer
-raceline by default. The retained Spielberg line remains available for an
-explicit regression run:
+In simulation, `f1 auto` follows the optimized IFAC Roboracer racing line at
+`/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/`
+`raceline_points_optimized.csv`. The retained Spielberg line remains available
+as an explicit override for a regression run:
 
 ```bash
 f1 auto \
@@ -38,16 +39,60 @@ Onboard:
 ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
 ```
 
+The onboard wrapper reads the fixed racing line at
+`/f1tenth_ws/src/f1tenth_dev/centerline_tools/output_backup/ifac_roboracer/`
+`raceline_points_optimized.csv`. The centerline and offline optimization tools
+are not runtime planning inputs. `centerline_tools` only needs to remain
+installed for its `raceline_publisher`; replacing the fixed CSV and restarting
+the stack does not require rebuilding that package.
+
+Routine code deployment copies and rebuilds these four packages:
+
+```text
+path_following_v2
+reactive_control_v2
+drive_arbitration_v2
+oudtra_driver_bringup
+```
+
+After copying them under `/f1tenth_ws/src/f1tenth_dev`, rebuild from
+`/f1tenth_ws` and source `/f1tenth_ws/install/setup.bash` before launching.
+
+```bash
+cd /f1tenth_ws
+source /opt/ros/foxy/setup.bash
+test -r /f1tenth_ws/src/f1tenth_dev/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+colcon build --packages-select \
+  path_following_v2 reactive_control_v2 \
+  drive_arbitration_v2 oudtra_driver_bringup
+source /f1tenth_ws/install/setup.bash
+```
+
 Simulator (no particle filter and no `/pf/health` requirement):
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
+Both compatibility launches include the same `full_stack_launch.py`. The
+non-`_sim` component YAML files are the canonical production behavior profile.
+The `_sim.yaml` files contain only simulated clock, frame, odometry, particle-
+filter availability, and simulator-only recovery gates; do not put speed,
+planning, geometry, or smoothing tuning in those adapters. Parameter order is:
+
+```text
+production behavior -> platform adapter -> integrated safety -> platform safety
+```
+
+Supplying `raceline_csv_path:=...` remains supported for experiments. Platform
+wrappers deliberately own the `/sim_ws` versus `/f1tenth_ws` path difference;
+the shared launch contains no workspace-specific path.
+
 Both launches preserve the direction stored in the racing-line CSV by default
 (`raceline_direction:=csv`). The racing-line publisher applies the selected
 direction once, and both the local path generator and planner consume that same
-published geometry. To traverse the selected racing line in reverse:
+published geometry. There is no runtime `centerline_direction` to synchronize.
+To traverse the selected racing line in reverse:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
@@ -108,7 +153,6 @@ change after a material replan request.
 `/drive` must still have only one publisher:
 `reactive_control_v2/lower_safety_controller`.
 
-The optional RL speed-inference package was not present in this integration
-archive, so it is not guessed or launched here. It can continue to run
-separately and publish `/rl_speed_inference/speed_residual_mps`; the existing
-path follower retains its current rule-only or rule-plus-residual configuration.
+The optional RL speed-inference package is not launched by this stack. The
+canonical production profile remains in rule-only mode; RL configuration files
+and executables are outside this migration.

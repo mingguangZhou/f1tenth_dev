@@ -1,77 +1,14 @@
+# Simulator runtime adapter.
+#
+# Arbitration behavior comes from drive_arbitration_v2.yaml. The simulator
+# supplies ground-truth localization and therefore has no particle-filter
+# health topic.
+
 raceline_guard:
   ros__parameters:
     use_sim_time: true
 
-    scan_topic: "/scan"
-    local_path_topic: "/path_following_v2/local_path"
-    status_topic: "/drive_arbitration_v2/raceline_guard_status"
-
-    control_rate_hz: 20.0
-    scan_timeout_sec: 0.30
-    path_timeout_sec: 0.30
-    transform_timeout_sec: 0.05
-    scan_range_cap_m: 6.0
-
-    guard_distance_m: 4.0
-    guard_path_step_m: 0.10
-    # Same measured footprint and per-side margin as local_trajectory_planner and
-    # Reactive upper: 0.14 + 0.10 = 0.24 m per side.
-    vehicle_width_m: 0.28
-    lateral_safety_margin_m: 0.10
-    min_valid_beam_ratio: 0.35
-    blocked_min_points: 3
-    blocked_confirmation_scans: 3
-    clear_confirmation_scans: 3
-    critical_block_distance_m: 0.80
-
 drive_arbitrator:
   ros__parameters:
     use_sim_time: true
-
-    raceline_command_topic: "/path_following_v2/nominal_cmd"
-    reactive_command_topic: "/reactive_control_v2/nominal_cmd"
-    path_status_topic: "/path_following_v2/path_status"
-    follower_status_topic: "/path_following_v2/status"
-    guard_status_topic: "/drive_arbitration_v2/raceline_guard_status"
-    reactive_status_topic: "/reactive_control_v2/status"
-    pf_health_topic: "/pf/health"
-    reset_topic: "/drive_arbitration_v2/reset"
-
-    selected_command_topic: "/drive_arbitration_v2/selected_cmd"
-    selected_mode_topic: "/drive_arbitration_v2/selected_mode"
-    status_topic: "/drive_arbitration_v2/status"
-
-    # Visualization only: show the local path that is actually authorized
-    # through the lower controller. Dark blue=raceline, light blue=executed
-    # local replan, red=reactive upper.
-    raceline_local_path_topic: "/path_following_v2/local_path"
-    reactive_local_path_topic: "/reactive_control_v2/local_path"
-    lower_status_topic: "/reactive_control_v2/lower_safety_status"
-    ultimate_trajectory_topic: "/drive_arbitration_v2/ultimate_chosen_local_trajectory"
-    publish_ultimate_chosen_trajectory: true
-    ultimate_trajectory_line_width_m: 0.05
-    ultimate_trajectory_timeout_sec: 0.30
-
-    control_rate_hz: 20.0
-    primary_startup_timeout_sec: 3.0
-    path_status_timeout_sec: 1.0
-    follower_status_timeout_sec: 0.30
-    guard_status_timeout_sec: 0.30
-    raceline_command_timeout_sec: 0.25
-    reactive_status_timeout_sec: 0.50
-    reactive_command_timeout_sec: 0.30
-    pf_health_timeout_sec: 0.50
-
-    # Simulator uses the simulator's ground-truth map -> base transform and
-    # intentionally does not require /pf/health.
     require_pf_health: false
-    latch_reactive_mode: true
-    allow_auto_recovery_from_blocked: true
-    allow_auto_recovery_from_pf_invalid: true
-    allow_auto_recovery_from_raceline_unavailable: true
-    raceline_recovery_stable_sec: 0.5
-
-    # Same recovery coordination as onboard. This affects only mode handover;
-    # the lower controller's reverse-entry and reverse-exit logic is unchanged.
-    enable_lower_safety_recovery_coordination: true
-    lower_status_timeout_sec: 0.30

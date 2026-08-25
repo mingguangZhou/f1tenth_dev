@@ -30,6 +30,10 @@ active, its remaining modified section is joined to the newest raw racing-line
 window so the controller continues to receive a full forward trajectory.
 Existing follower, guard, and arbitrator topic interfaces remain unchanged.
 
+`config/path_following_v2.yaml` is the canonical behavior profile for both
+simulation and onboard operation. `path_following_v2_sim.yaml` changes only
+simulated time, frames, and TF timing; it contains no planning or speed tuning.
+
 ## Common vehicle envelope
 
 The measured car width is `0.28 m`. The planner, final guard, and Reactive upper
@@ -48,10 +52,10 @@ vehicle_width_m: 0.28
 lateral_safety_margin_m: 0.10
 ```
 
-Candidate planning adds a small hard reserve outside that physical envelope.
-The simulator uses `0.06 m`, so its planned path stays at least `0.30 m` from
-connected obstacle returns. This reserve absorbs scan noise and newly exposed
-obstacle surfaces before they reach the physical safety boundary.
+Candidate planning adds a `0.05 m` hard reserve outside that physical envelope,
+so planned paths stay at least `0.29 m` from connected obstacle returns. This
+reserve absorbs scan noise and newly exposed obstacle surfaces before they
+reach the physical safety boundary.
 
 ## Metric horizon
 
@@ -59,34 +63,28 @@ obstacle surfaces before they reach the physical safety boundary.
 point spacing:
 
 ```yaml
-local_path_target_length_m: 14.0
-local_path_max_points: 600
+local_path_target_length_m: 10.0
+local_path_max_points: 350
 ```
 
-At roughly `0.03 m` spacing, 14 m is about 467 points. The simulator keeps the
-10 m LiDAR cap while allowing the known racing-line horizon to extend
-farther:
+At roughly `0.03 m` spacing, 10 m is about 334 points. Both platforms use the
+same 10 m known-path, LiDAR, and planning ceilings:
 
 ```yaml
 scan_range_cap_m: 10.0
-planning_distance_m: 14.0
+planning_distance_m: 10.0
 ```
 
 The requested detection reach is automatically reduced only when the current
 raw path would otherwise be too short to contain the detected obstacle model,
-buffers, post-obstacle hold, minimum smooth return, and final aligned tail. With the
-simulator defaults and a complete 14 m raw path, the effective trigger is about
-6.9 m. Scan returns farther ahead
-are still available for candidate validation, but they do not cause a
-predictable premature `NO_SAFE_PATH` before a complete maneuver can fit. The old
+buffers, post-obstacle hold, minimum smooth return, and final aligned tail.
+Scan returns farther ahead remain available for candidate validation, but do
+not trigger a maneuver that cannot fit in the current raw window. The old
 point-count behavior remains as the internal `legacy_local_path_points`
-fallback when the metric target is set to zero or less. It is intentionally not
-shown in the shipped YAML because the positive metric target is authoritative.
+fallback when the metric target is set to zero or less.
 
 The generator stops at the physical target, one unique lap, or the point
-ceiling—whichever is reached first. The simulator uses a 14 m target. The
-onboard target is 6 m: long enough to fit a held pass and smooth return, while
-still materially smaller than the simulator window.
+ceiling—whichever is reached first. Both platforms use the same 10 m target.
 
 Parameter-interface rename map:
 
@@ -178,40 +176,40 @@ recovery_length_gain: 3.0
 For example, a `0.30 m` lateral error requests approximately
 `2.5 + 3.0 * 0.30 = 3.4 m` to converge.
 
-For a centered `0.50 m` obstacle, the simulator hard passing boundary is about `0.55 m`
+For a centered `0.50 m` obstacle, the hard passing boundary is about `0.54 m`
 from the obstacle centreline because the obstacle half-width is `0.25 m` and
-the planning half-envelope is `0.24 + 0.06 = 0.30 m`. The search may choose a
+the planning half-envelope is `0.24 + 0.05 = 0.29 m`. The search may choose a
 wider sample when that improves clearance without creating excessive curvature.
 
 ## Candidate safety and side choice
 
 Candidate validation uses the same connected-return concept as the final
-trajectory guard, plus the planning reserve. In simulation, a candidate is
-rejected when at least `blocked_min_points` connected LiDAR returns enter its
-`0.30 m` planning half-band. One isolated beam does not reject the complete
-plan. The physical safety envelope remains `0.24 m`.
+trajectory guard, plus the planning reserve. A candidate is rejected when at
+least `blocked_min_points` connected LiDAR returns enter its `0.29 m` planning
+half-band. One isolated beam does not reject the complete plan. The physical
+safety envelope remains `0.24 m`.
 
 The planner searches left and right separately. Its primary computation limits
 are explicit:
 
 ```yaml
-lattice_station_step_m: 0.30       # simulator; 0.25 onboard
+lattice_station_step_m: 0.25
 lattice_lateral_step_m: 0.05
-lattice_beam_width: 90              # simulator; 70 onboard
+lattice_beam_width: 70
 lattice_max_final_candidates: 4
-lattice_max_compute_time_ms: 8.0    # per side; 6.0 onboard
-max_lateral_shift_m: 0.80
+lattice_max_compute_time_ms: 6.0
+max_lateral_shift_m: 0.90
 ```
 
 The main stability/smoothness weights are:
 
 ```yaml
 lattice_continuity_weight: 12.0
-lattice_curvature_rate_weight: 5.0  # simulator; 2.0 onboard
-corridor_smoothing_iterations: 12  # simulator; 8 onboard
+lattice_curvature_rate_weight: 2.0
+corridor_smoothing_iterations: 8
 corridor_continuity_weight: 12.0
-corridor_curvature_weight: 12.0     # simulator; 10.0 onboard
-corridor_curvature_rate_weight: 5.0 # simulator; 2.0 onboard
+corridor_curvature_weight: 10.0
+corridor_curvature_rate_weight: 2.0
 ```
 
 Continuity weights pull a material same-side replan toward the previous
@@ -228,24 +226,23 @@ geometry and the connected LiDAR evidence. Candidates must:
   after the rejoin is not part of candidate rejection);
 - retain a valid scan, TF, and raw path.
 
-The simulator keeps the passing offset for another `0.80 m` after the obstacle,
+The planner keeps the passing offset for another `0.60 m` after the obstacle,
 then uses the longest configured return that fits. After that return it follows
-the raceline exactly for `1.20 m`, which aligns both position and direction
+the raceline exactly for `0.75 m`, which aligns both position and direction
 before the stored path is joined to the refreshed raceline:
 
 ```yaml
-detour_post_obstacle_hold_m: 0.80
-detour_return_min_length_m: 4.0
-detour_return_max_length_m: 6.0
-lattice_rejoin_alignment_length_m: 1.20
+detour_post_obstacle_hold_m: 0.60
+detour_return_min_length_m: 2.5
+detour_return_max_length_m: 5.0
+lattice_rejoin_alignment_length_m: 0.75
 ```
 
-The onboard hold is `0.60 m`, its minimum return is `2.5 m`, and its aligned
-tail is `0.75 m`. The alignment tail deliberately uses multiple lattice
-stations; pinning only the endpoint can reach the raceline at an angle and
-produce an abrupt steering correction at handoff. Known raceline geometry may
-extend beyond current scan visibility, while the held trajectory is rechecked
-as new scan space becomes visible.
+The alignment tail deliberately uses multiple lattice stations; pinning only
+the endpoint can reach the raceline at an angle and produce an abrupt steering
+correction at handoff. Known raceline geometry may extend beyond current scan
+visibility, while the held trajectory is rechecked as new scan space becomes
+visible.
 
 When no maneuver is active, the direction decision is open: both sides are
 evaluated. A side whose minimum clearance is more than
@@ -332,7 +329,7 @@ does not by itself declare the physically clear path unsafe:
 plan_deviation_replan_m: 0.35
 active_path_blocked_confirmation_scans: 4
 no_safe_path_confirmation_scans: 5
-replan_pending_speed_cap_mps: 1.5   # onboard; 2.0 simulator
+replan_pending_speed_cap_mps: 1.5
 ```
 
 Only `NO_SAFE_PATH_CONFIRMED` or an immediate `CRITICAL_OBSTACLE` requests
@@ -366,12 +363,11 @@ full global racing line once through transient-local QoS and prepares a local
 Frenet window only when a new plan or material replan is requested. There is no
 second CSV parser, external optimization process, or nonlinear solver.
 
-Search work is bounded by station spacing, lateral spacing, beam width, final
-candidate count, and a per-side time budget. Corridor optimization uses 12
-fixed iterations in simulation and 8 onboard. The simulator search allows
-`8 ms` per side; the lower-power onboard defaults use a `70`-state beam and
-`6 ms` per side. The diagnostic fields `lattice_evaluated_transitions` and
-`lattice_compute_time_ms` expose actual search work.
+Search work is bounded by station spacing, lateral spacing, a `70`-state beam,
+final candidate count, and a `6 ms` per-side time budget. Corridor optimization
+uses eight fixed iterations on both platforms. The diagnostic fields
+`lattice_evaluated_transitions` and `lattice_compute_time_ms` expose actual
+search work.
 
 The normal held-plan loop only advances progress, appends the current raceline
 tail, and validates the stored path. It does not rerun candidate generation.
@@ -408,21 +404,21 @@ synchronized.
 Normal raceline demand is tuned only in `path_generator`:
 
 ```yaml
-rule_curve_min_speed_mps: 1.0
-rule_straight_speed_mps: 5.0
+rule_curve_min_speed_mps: 0.8
+rule_straight_speed_mps: 2.5
 rule_speed_curvature_gain: 2.0
 rule_speed_curvature_preview_m: 0.50
 ```
 
 The curvature preview is physical distance, not waypoint count.
 
-The simulator maneuver settings are:
+The shared maneuver settings are:
 
 ```yaml
-avoidance_speed_cap_mps: 4.5
-recovery_speed_cap_mps: 4.5
-replan_pending_speed_cap_mps: 2.0
-maneuver_lateral_acceleration_limit_mps2: 3.5
+avoidance_speed_cap_mps: 2.2
+recovery_speed_cap_mps: 2.2
+replan_pending_speed_cap_mps: 1.5
+maneuver_lateral_acceleration_limit_mps2: 2.0
 ```
 
 The avoidance and recovery values are ceilings, not fixed maneuver speeds. On
@@ -438,9 +434,8 @@ This lets a gentle detour approach the normal raceline demand while slowing a
 tight detour enough to keep estimated lateral acceleration bounded. As the car
 passes the curved part, only the remaining geometry is considered, so the cap
 rises progressively during a smooth return. The follower's existing command
-rate limiter controls the actual acceleration. Lower-power onboard defaults
-use `2.2 m/s` avoidance/recovery ceilings, a `1.5 m/s` pending cap, and a
-`2.0 m/s^2` lateral-acceleration limit.
+rate limiter controls the actual acceleration. These ceilings and the
+`2.0 m/s^2` lateral-acceleration limit are shared by both platforms.
 
 `speed_policy_mode` selects rule-only (`0`) or rule plus a fresh RL speed
 residual (`1`). The established future RL structure is unchanged: bounded

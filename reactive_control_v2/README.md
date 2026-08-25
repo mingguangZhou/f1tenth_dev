@@ -601,9 +601,10 @@ ros2 topic pub --once /reactive_control_v2/enable std_msgs/msg/Bool "{data: true
 
 ## YAML tuning guide
 
-The simulator and onboard YAML files use the same section order. Their opening
-comments list the small set of primary tuning controls; detailed sampling,
-hysteresis, and confirmation settings are marked advanced.
+`reactive_control_v2.yaml` is the canonical production behavior profile.
+`reactive_control_v2_sim.yaml` is a sparse adapter containing only simulated
+time, simulator odometry, and frame differences. Detailed sampling, hysteresis,
+and confirmation settings remain in the canonical file.
 
 The four speed groups have separate ownership and are not duplicates:
 
@@ -642,16 +643,16 @@ priority or recovery logic.
 4. Tune `spatial_smoothing_*` and `temporal_smoothing_alpha`.
 5. Tune pure-pursuit and speed parameters last.
 
-The supplied values are conservative simulator starting values, not final
-onboard racing values.
+The supplied values are shared conservative production settings and still
+require validation on the physical vehicle.
 
 ## Version
 
 `0.3.0` adds hysteretic bidirectional VESC low-speed assistance, using separate
 parameters for the eligible demand ceiling and forced output magnitude. Its
-shortfall is `max(0, |requested speed| - |measured speed|)`. It also raises the
-configured ordinary reverse attempt limit to ten and resets that budget after
-measured forward progress above the configured threshold for 0.30 s. The
+shortfall is `max(0, |requested speed| - |measured speed|)`. It resets the
+configured reverse-attempt budget after measured forward progress above the
+configured threshold for 0.30 s. The
 simulator-only wrong-way correction uses a separate four-attempt bound and
 fixed reverse steering; onboard wrong-way correction is disabled.
 

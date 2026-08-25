@@ -1,7 +1,6 @@
-"""Contracts that keep onboard configuration independent from simulation."""
+"""Contracts for canonical behavior plus sparse platform adapters."""
 
-import csv
-import math
+import ast
 from pathlib import Path
 
 import yaml
@@ -10,146 +9,139 @@ import yaml
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 
-def _parameters(relative_path, node_name):
-    document = yaml.safe_load(
+def _yaml(relative_path):
+    return yaml.safe_load(
         (REPOSITORY / relative_path).read_text(encoding="utf-8")
-    )
+    ) or {}
+
+
+def _parameters(document, node_name):
     return document[node_name]["ros__parameters"]
 
 
-def _closed_loop_length(csv_path):
-    with csv_path.open(newline="", encoding="utf-8") as stream:
-        rows = list(csv.DictReader(stream))
-    points = [(float(row["x"]), float(row["y"])) for row in rows]
-    assert len(points) >= 3
-    segments = [
-        math.hypot(
-            points[(index + 1) % len(points)][0] - point[0],
-            points[(index + 1) % len(points)][1] - point[1],
-        )
-        for index, point in enumerate(points)
-    ]
-    return sum(segments), max(segments)
+def _overlay_keys(document):
+    return {
+        f"{node_name}.{parameter_name}"
+        for node_name, node in document.items()
+        for parameter_name in node.get("ros__parameters", {})
+    }
 
 
-def test_onboard_topics_and_safety_gates_remain_hardware_specific():
-    reactive = yaml.safe_load(
-        (
-            REPOSITORY
-            / "reactive_control_v2/config/reactive_control_v2.yaml"
-        ).read_text(encoding="utf-8")
-    )
-    upper = reactive["upper_corridor_follower"]["ros__parameters"]
-    lower = reactive["lower_safety_controller"]["ros__parameters"]
-    integration = _parameters(
-        "oudtra_driver_bringup/config/full_stack.yaml",
-        "lower_safety_controller",
-    )
-    arbitration = _parameters(
-        "drive_arbitration_v2/config/drive_arbitration_v2.yaml",
-        "drive_arbitrator",
-    )
+def test_d5c70fb_parameter_tuning_is_reverted():
+    path = _yaml("path_following_v2/config/path_following_v2.yaml")
+    shared = _parameters(path, "/**")
+    generator = _parameters(path, "path_generator")
+    planner = _parameters(path, "local_trajectory_planner")
+    reactive = _yaml("reactive_control_v2/config/reactive_control_v2.yaml")
+    upper = _parameters(reactive, "upper_corridor_follower")
+    lower = _parameters(reactive, "lower_safety_controller")
 
-    assert upper["odom_topic"] == "/odom"
-    assert lower["odom_topic"] == "/odom"
-    assert lower["enable_wrong_way_recovery"] is False
-    assert lower["enable_sim_reverse_swept_gate"] is False
-    assert lower["enable_raceline_stall_handoff"] is False
-    assert "enable_wrong_way_recovery" not in integration
-    assert "enable_sim_reverse_swept_gate" not in integration
-    assert arbitration["require_pf_health"] is True
+    assert shared["command_speed_max_mps"] == 4.0
+    assert generator["rule_curve_min_speed_mps"] == 0.8
+    assert generator["rule_straight_speed_mps"] == 2.5
+    assert planner["transform_timeout_sec"] == 0.20
+    assert planner["planning_distance_m"] == 10.0
+    assert planner["avoidance_speed_cap_mps"] == 2.2
+    assert planner["recovery_speed_cap_mps"] == 2.2
+    assert planner["replan_pending_speed_cap_mps"] == 1.5
+    assert upper["forward_max_m"] == 1.5
+    assert upper["velocity_max_mps"] == 1.65
+    assert upper["velocity_min_mps"] == 0.75
+    assert lower["reverse_max_attempts"] == 50
+    assert lower["wrong_way_reverse_max_attempts"] == 4
 
 
-def test_onboard_horizon_fits_the_default_closed_loop_raceline():
-    generator = _parameters(
-        "path_following_v2/config/path_following_v2.yaml", "path_generator"
-    )
-    raceline = (
-        REPOSITORY
-        / "centerline_tools/centerline_output/raceline_points_smooth.csv"
-    )
-    loop_length, longest_segment = _closed_loop_length(raceline)
+def test_simulator_overlays_only_contain_runtime_or_capability_keys():
+    expected = {
+        "path_following_v2/config/path_following_v2_sim.yaml": {
+            "path_generator.use_sim_time",
+            "path_generator.robot_frame",
+            "path_generator.tf_timeout_sec",
+            "local_trajectory_planner.use_sim_time",
+            "local_trajectory_planner.robot_frame",
+            "local_trajectory_planner.transform_timeout_sec",
+            "path_following_v2.use_sim_time",
+            "path_following_v2.robot_frame",
+            "path_following_v2.marker_frame",
+        },
+        "reactive_control_v2/config/reactive_control_v2_sim.yaml": {
+            "upper_corridor_follower.use_sim_time",
+            "upper_corridor_follower.odom_topic",
+            "upper_corridor_follower.base_frame",
+            "lower_safety_controller.use_sim_time",
+            "lower_safety_controller.odom_topic",
+        },
+        "drive_arbitration_v2/config/drive_arbitration_v2_sim.yaml": {
+            "raceline_guard.use_sim_time",
+            "drive_arbitrator.use_sim_time",
+            "drive_arbitrator.require_pf_health",
+        },
+        "oudtra_driver_bringup/config/full_stack_sim.yaml": {
+            "lower_safety_controller.use_sim_time",
+            "lower_safety_controller.enable_wrong_way_recovery",
+            "lower_safety_controller.enable_sim_reverse_swept_gate",
+        },
+    }
+    for relative_path, allowed_keys in expected.items():
+        assert _overlay_keys(_yaml(relative_path)) == allowed_keys
 
-    # path_generator publishes at most one lap and omits one loop-closing
-    # segment, so every starting index must still be able to reach the target.
-    assert generator["local_path_target_length_m"] <= loop_length - longest_segment
 
-
-def test_onboard_speed_profiles_do_not_reference_simulator_artifacts():
-    path = yaml.safe_load(
-        (
-            REPOSITORY / "path_following_v2/config/path_following_v2.yaml"
-        ).read_text(encoding="utf-8")
-    )
-    follower = path["path_following_v2"]["ros__parameters"]
-    rl = _parameters(
-        "rl_speed_inference/config/rl_speed_inference.yaml", "ppo_speed_node"
-    )
-
+def test_simulation_inherits_production_behavior_and_does_not_enable_rl():
+    path = _yaml("path_following_v2/config/path_following_v2.yaml")
+    follower = _parameters(path, "path_following_v2")
     assert follower["speed_policy_mode"] == 0
-    assert not rl["model_path"].startswith("/sim_ws/")
-    assert not rl["centerline_csv"].startswith("/sim_ws/")
-    assert rl["odom_topic"] == "/pf/pose/odom"
-    assert rl["assist_gain"] <= 0.10
 
-
-def test_simulator_path_and_rl_speed_envelopes_remain_aligned():
-    path = yaml.safe_load(
-        (
-            REPOSITORY / "path_following_v2/config/path_following_v2_sim.yaml"
-        ).read_text(encoding="utf-8")
+    forbidden_tuning_fragments = (
+        "speed_mps",
+        "speed_cap",
+        "planning_distance",
+        "curvature",
+        "lookahead",
+        "lattice_",
+        "clearance",
+        "lateral_shift",
     )
-    shared = path["/**"]["ros__parameters"]
-    generator = path["path_generator"]["ros__parameters"]
-    rl = _parameters(
-        "rl_speed_inference/config/rl_speed_inference_sim.yaml", "ppo_speed_node"
+    for relative_path in (
+        "path_following_v2/config/path_following_v2_sim.yaml",
+        "reactive_control_v2/config/reactive_control_v2_sim.yaml",
+        "drive_arbitration_v2/config/drive_arbitration_v2_sim.yaml",
+    ):
+        for key in _overlay_keys(_yaml(relative_path)):
+            assert not any(fragment in key for fragment in forbidden_tuning_fragments)
+
+    master_source = (
+        REPOSITORY / "oudtra_driver_bringup/launch/full_stack_launch.py"
+    ).read_text(encoding="utf-8")
+    assert "rl_speed_inference" not in master_source
+    assert "ppo_speed" not in master_source
+
+
+def test_runtime_uses_the_published_raceline_as_its_only_frenet_reference():
+    path = _yaml("path_following_v2/config/path_following_v2.yaml")
+    generator = _parameters(path, "path_generator")
+    planner = _parameters(path, "local_trajectory_planner")
+    publisher = _parameters(
+        _yaml("centerline_tools/config/raceline_publisher.yaml"),
+        "raceline_publisher",
     )
 
-    assert shared["command_speed_max_mps"] == rl["command_speed_max_mps"]
-    assert generator["rule_straight_speed_mps"] == rl["rule_straight_speed_mps"]
+    assert planner["raceline_reference_topic"] == publisher["path_topic"]
+    assert generator["raceline_waypoints_topic"] == publisher["waypoints_topic"]
+    assert planner["require_raceline_reference"] is True
+    assert planner["raceline_reference_match_tolerance_m"] > 0.0
+    removed_parameters = {
+        "centerline_csv_path",
+        "centerline_direction",
+        "centerline_frame",
+        "centerline_closed_loop",
+        "require_centerline_reference",
+    }
+    assert removed_parameters.isdisjoint(planner)
 
-
-def test_local_planner_search_limits_match_in_both_profiles():
-    profiles = []
-    for filename in ("path_following_v2.yaml", "path_following_v2_sim.yaml"):
-        document = yaml.safe_load(
-            (REPOSITORY / "path_following_v2/config" / filename).read_text(
-                encoding="utf-8"
-            )
-        )
-        planner = document["local_trajectory_planner"]["ros__parameters"]
-        generator = document["path_generator"]["ros__parameters"]
-        follower = document["path_following_v2"]["ros__parameters"]
-
-        assert planner["curvature_safety_factor"] > 1.0
-        assert follower["wheelbase_m"] == planner["wheelbase_m"]
-        assert planner["raw_path_topic"] == generator["local_path_topic"]
-        assert planner["raceline_reference_topic"] == "/raceline_path"
-        assert planner["require_raceline_reference"] is True
-        assert planner["raceline_reference_match_tolerance_m"] > 0.0
-        assert planner["require_map_clearance"] is True
-        removed_centerline_contract = {
-            "centerline_csv_path",
-            "centerline_direction",
-            "centerline_frame",
-            "centerline_closed_loop",
-            "require_centerline_reference",
-        }
-        assert removed_centerline_contract.isdisjoint(planner)
-        profiles.append(
-            (
-                planner["max_lateral_shift_m"],
-                planner["curvature_safety_factor"],
-            )
-        )
-
-    assert profiles[0] == profiles[1] == (0.9, 2.7)
-
-
-def test_runtime_launches_have_no_centerline_planning_arguments():
     launch_files = (
         "path_following_v2/launch/path_following_v2_launch.py",
         "path_following_v2/launch/path_following_v2_sim_launch.py",
+        "oudtra_driver_bringup/launch/full_stack_launch.py",
         "oudtra_driver_bringup/launch/full_stack_onboard_launch.py",
         "oudtra_driver_bringup/launch/full_stack_sim_launch.py",
     )
@@ -159,53 +151,51 @@ def test_runtime_launches_have_no_centerline_planning_arguments():
         assert "centerline_direction" not in source
 
 
-def test_raceline_publisher_and_planner_share_one_reference():
-    for suffix in ("", "_sim"):
-        path_config = yaml.safe_load(
-            (
-                REPOSITORY
-                / f"path_following_v2/config/path_following_v2{suffix}.yaml"
-            ).read_text(encoding="utf-8")
-        )
-        publisher = _parameters(
-            f"centerline_tools/config/raceline_publisher{suffix}.yaml",
-            "raceline_publisher",
-        )
-        generator = path_config["path_generator"]["ros__parameters"]
-        planner = path_config["local_trajectory_planner"]["ros__parameters"]
+def test_onboard_safety_is_not_relaxed_by_the_common_integration_profile():
+    reactive = _yaml("reactive_control_v2/config/reactive_control_v2.yaml")
+    lower = _parameters(reactive, "lower_safety_controller")
+    integration = _parameters(
+        _yaml("oudtra_driver_bringup/config/full_stack.yaml"),
+        "lower_safety_controller",
+    )
+    arbitration = _parameters(
+        _yaml("drive_arbitration_v2/config/drive_arbitration_v2.yaml"),
+        "drive_arbitrator",
+    )
 
-        assert publisher["path_topic"] == planner["raceline_reference_topic"]
-        assert (
-            publisher["waypoints_topic"]
-            == generator["raceline_waypoints_topic"]
-        )
+    assert lower["enable_wrong_way_recovery"] is False
+    assert lower["enable_sim_reverse_swept_gate"] is False
+    assert lower["enable_raceline_stall_handoff"] is False
+    assert "enable_wrong_way_recovery" not in integration
+    assert "enable_sim_reverse_swept_gate" not in integration
+    assert arbitration["require_pf_health"] is True
 
 
-def test_planning_freshness_windows_match_in_both_profiles():
-    suffixes = ("", "_sim")
-    for suffix in suffixes:
-        path = yaml.safe_load(
-            (
-                REPOSITORY
-                / f"path_following_v2/config/path_following_v2{suffix}.yaml"
-            ).read_text(encoding="utf-8")
-        )
-        arbitration = _parameters(
-            f"drive_arbitration_v2/config/drive_arbitration_v2{suffix}.yaml",
-            "drive_arbitrator",
-        )
-        reactive = yaml.safe_load(
-            (
-                REPOSITORY
-                / f"reactive_control_v2/config/reactive_control_v2{suffix}.yaml"
-            ).read_text(encoding="utf-8")
-        )
+def test_master_and_compatibility_launches_only_compose_child_launches():
+    launch_directory = REPOSITORY / "oudtra_driver_bringup/launch"
+    for filename in (
+        "full_stack_launch.py",
+        "full_stack_sim_launch.py",
+        "full_stack_onboard_launch.py",
+    ):
+        tree = ast.parse((launch_directory / filename).read_text(encoding="utf-8"))
+        node_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Node"
+        ]
+        assert not node_calls
 
-        planner = path["local_trajectory_planner"]["ros__parameters"]
-        lower = reactive["lower_safety_controller"]["ros__parameters"]
-        assert planner["raw_path_timeout_sec"] == 1.0
-        assert planner["planning_heartbeat_timeout_sec"] == 1.0
-        assert arbitration["path_status_timeout_sec"] == 1.0
-        assert lower["wrong_way_heading_error_timeout_sec"] == 1.0
-        assert planner["scan_timeout_sec"] == 0.30
-        assert lower["scan_timeout_sec"] == 0.30
+    shared_source = (launch_directory / "full_stack_launch.py").read_text(
+        encoding="utf-8"
+    )
+    for child_launch in (
+        "raceline_publisher.launch.py",
+        "path_following_v2_launch.py",
+        "drive_arbitration_v2.launch.py",
+        "reactive_control_v2_launch.py",
+    ):
+        assert child_launch in shared_source
+    assert "scoped=True" in shared_source

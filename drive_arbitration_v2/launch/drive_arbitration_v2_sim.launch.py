@@ -2,36 +2,52 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 
 def generate_launch_description():
     package_share = get_package_share_directory("drive_arbitration_v2")
-    default_config = os.path.join(
-        package_share, "config", "drive_arbitration_v2_sim.yaml"
-    )
-    config = LaunchConfiguration("config")
-
-    return LaunchDescription([
+    arguments = [
         DeclareLaunchArgument(
             "config",
-            default_value=default_config,
-            description="Simulator drive_arbitration_v2 parameter YAML.",
+            default_value=os.path.join(
+                package_share, "config", "drive_arbitration_v2.yaml"
+            ),
         ),
-        Node(
-            package="drive_arbitration_v2",
-            executable="raceline_guard_node",
-            name="raceline_guard",
-            output="screen",
-            parameters=[config],
+        DeclareLaunchArgument(
+            "platform_config",
+            default_value=os.path.join(
+                package_share, "config", "drive_arbitration_v2_sim.yaml"
+            ),
         ),
-        Node(
-            package="drive_arbitration_v2",
-            executable="drive_arbitrator_node",
-            name="drive_arbitrator",
-            output="screen",
-            parameters=[config],
-        ),
-    ])
+        DeclareLaunchArgument("raceline_guard_log_level", default_value="warn"),
+        DeclareLaunchArgument("drive_arbitrator_log_level", default_value="info"),
+    ]
+    arguments.append(
+        GroupAction(
+            scoped=True,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(
+                            package_share,
+                            "launch",
+                            "drive_arbitration_v2.launch.py",
+                        )
+                    ),
+                    launch_arguments={
+                        name: LaunchConfiguration(name)
+                        for name in (
+                            "config",
+                            "platform_config",
+                            "raceline_guard_log_level",
+                            "drive_arbitrator_log_level",
+                        )
+                    }.items(),
+                )
+            ],
+        )
+    )
+    return LaunchDescription(arguments)
