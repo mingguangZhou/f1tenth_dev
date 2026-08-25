@@ -2465,9 +2465,9 @@ private:
       candidate.reason = avoidance ?
         "bounded centerline corridor detour passed final validation" :
         "bounded centerline corridor recovery passed final validation";
-      if (!best.valid || candidate.objective_cost < best.objective_cost) {
-        best = std::move(candidate);
-      }
+      // Solver results are cost-ordered, so later valid solutions cannot win.
+      best = std::move(candidate);
+      break;
     }
     if (!best.valid) {
       best.reason = "lattice solutions failed final validation; last: " +
