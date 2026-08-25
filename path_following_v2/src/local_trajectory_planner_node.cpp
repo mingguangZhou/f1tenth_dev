@@ -312,6 +312,7 @@ private:
     double start_lateral_offset{0.0};
     bool side_committed{true};
     bool rolling_pass{false};
+    bool raceline_handoff_started{false};
     ManeuverPhase phase{ManeuverPhase::OPEN};
     rclcpp::Time created_at{0, 0, RCL_STEADY_TIME};
   };
@@ -344,6 +345,19 @@ private:
     bool scan_received{false};
     double raw_age{std::numeric_limits<double>::infinity()};
     double scan_age{std::numeric_limits<double>::infinity()};
+  };
+
+  struct LatestCandidateValidation
+  {
+    active_path_safety::CandidateValidationOutcome outcome{
+      active_path_safety::CandidateValidationOutcome::INPUT_FAILURE};
+    std::string failure_state{"SCAN_INVALID"};
+    std::string failure_reason{"candidate has not been validated"};
+    std::vector<ScanHit> hits;
+    double valid_beam_ratio{0.0};
+    rclcpp::Time scan_time{0, 0, RCL_STEADY_TIME};
+    Point2 robot_position;
+    double robot_yaw{0.0};
   };
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
@@ -498,6 +512,7 @@ private:
   double last_effective_detection_distance_m_{0.0};
   rclcpp::Time last_processed_scan_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_terminal_safe_yield_scan_time_{0, 0, RCL_STEADY_TIME};
+  rclcpp::Time last_no_safe_path_scan_time_{0, 0, RCL_STEADY_TIME};
   std::vector<Point2> raceline_reference_points_;
   bool raceline_reference_valid_{false};
   std::string last_reference_source_{"raceline"};
@@ -1169,7 +1184,7 @@ private:
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
-    no_safe_path_cycles_ = 0;
+    resetNoSafePathConfirmation();
     terminal_safe_yield_cycles_ = 0;
     last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
@@ -2831,7 +2846,7 @@ private:
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
-    no_safe_path_cycles_ = 0;
+    resetNoSafePathConfirmation();
     terminal_safe_yield_cycles_ = 0;
     last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
@@ -2853,6 +2868,7 @@ private:
     rejoin_stable_cycles_ = 0;
     active_blocked_cycles_ = 0;
     active_physical_blocked_cycles_ = 0;
+    resetNoSafePathConfirmation();
     terminal_safe_yield_cycles_ = 0;
     last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     rolling_pass_clear_cycles_ = 0;
@@ -2884,7 +2900,9 @@ private:
   }
 
   nav_msgs::msg::Path continuousActivePath(
-    const nav_msgs::msg::Path & raw_path) const
+    const nav_msgs::msg::Path & raw_path,
+    const path_splice::ActivePathHandoffMode handoff_mode =
+    path_splice::ActivePathHandoffMode::STRICT_SPLICE) const
   {
     nav_msgs::msg::Path output;
     if (!active_plan_.valid || active_plan_.path.poses.size() < 2) {
@@ -2922,6 +2940,22 @@ private:
         output.poses.push_back(pose);
         return true;
       };
+
+    if (handoff_mode == path_splice::ActivePathHandoffMode::FRESH_RAW_PATH &&
+      raw_path.header.frame_id == output.header.frame_id)
+    {
+      // The active-plan release still waits for multi-scan convergence, but
+      // once the car is geometrically back on the raceline the old modified
+      // tail may be shorter than the follower lookahead. Keep the confirmation
+      // state while handing control geometry to the fresh forward raw window.
+      output.poses.reserve(raw_path.poses.size());
+      for (const auto & pose : raw_path.poses) {
+        if (!append_pose(pose)) {
+          break;
+        }
+      }
+      return output;
+    }
 
     const std::size_t start = active_plan_.progress_index > 0 ?
       active_plan_.progress_index - 1 : 0;
@@ -3141,25 +3175,38 @@ private:
     return yield;
   }
 
-  bool terminalSafeYieldFailureConfirmed(
-    const SafeYieldPlan & safe_yield, const bool fresh_scan,
-    const rclcpp::Time & scan_time,
-    const rclcpp::Time & previous_processed_scan_time)
+  void resetNoSafePathConfirmation()
   {
-    const bool follows_previous_processed_scan = terminal_safe_yield_cycles_ > 0 &&
-      last_terminal_safe_yield_scan_time_.nanoseconds() ==
-      previous_processed_scan_time.nanoseconds();
-    const auto update = active_path_safety::updateSafeYieldConfirmation(
-      follows_previous_processed_scan ? terminal_safe_yield_cycles_ : 0,
-      fresh_scan, safe_yield.speed_cap,
-      safe_yield_terminal_speed_mps_, no_safe_path_confirmation_scans_);
-    terminal_safe_yield_cycles_ = update.consecutive_terminal_scans;
-    if (fresh_scan && terminal_safe_yield_cycles_ > 0) {
-      last_terminal_safe_yield_scan_time_ = scan_time;
-    } else if (terminal_safe_yield_cycles_ == 0) {
-      last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+    no_safe_path_cycles_ = 0;
+    last_no_safe_path_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+  }
+
+  bool noSafePathFailureConfirmed(
+    const bool confirmable, const rclcpp::Time & scan_time)
+  {
+    const auto update = active_path_safety::updateDistinctScanConfirmation(
+      {no_safe_path_cycles_, last_no_safe_path_scan_time_.nanoseconds()},
+      scan_time.nanoseconds(), confirmable, no_safe_path_confirmation_scans_);
+    no_safe_path_cycles_ = update.state.consecutive_scans;
+    if (update.consumed) {
+      last_no_safe_path_scan_time_ = scan_time;
     }
-    return update.primary_failure_confirmed;
+    return update.confirmed;
+  }
+
+  bool terminalSafeYieldFailureConfirmed(
+    const SafeYieldPlan & safe_yield, const rclcpp::Time & scan_time)
+  {
+    const bool terminal = !std::isfinite(safe_yield.speed_cap) ||
+      safe_yield.speed_cap <= std::max(0.0, safe_yield_terminal_speed_mps_);
+    const auto update = active_path_safety::updateDistinctScanConfirmation(
+      {terminal_safe_yield_cycles_, last_terminal_safe_yield_scan_time_.nanoseconds()},
+      scan_time.nanoseconds(), terminal, no_safe_path_confirmation_scans_);
+    terminal_safe_yield_cycles_ = update.state.consecutive_scans;
+    if (update.consumed) {
+      last_terminal_safe_yield_scan_time_ = scan_time;
+    }
+    return update.confirmed;
   }
 
   void updateActivePhase()
@@ -3267,14 +3314,14 @@ private:
 
   bool activePathBlocked(
     const std::vector<ScanHit> & hits, const double clearance_threshold,
-    const nav_msgs::msg::Path & raw_path) const
+    const nav_msgs::msg::Path & executable_path) const
   {
-    if (!active_plan_.valid || active_plan_.path.poses.size() < 2) {
+    if (!active_plan_.valid || executable_path.poses.size() < 2) {
       return true;
     }
-    // Validate the exact published path, including its refreshed tail.
+    // Validate the exact path that will be published for this control cycle.
     return pathBlockedByConnectedHits(
-      continuousActivePath(raw_path), hits, clearance_threshold);
+      executable_path, hits, clearance_threshold);
   }
 
   double remainingActiveMaximumCurvature() const
@@ -3442,6 +3489,9 @@ private:
       "plan_rejoin_index",
       active_plan_.valid ? std::to_string(active_plan_.rejoin_index) : "0");
     add("rejoin_stable_cycles", std::to_string(rejoin_stable_cycles_));
+    add(
+      "raceline_handoff_started",
+      active_plan_.valid && active_plan_.raceline_handoff_started ? "true" : "false");
     add("active_blocked_cycles", std::to_string(active_blocked_cycles_));
     add("active_margin_blocked_cycles", std::to_string(active_blocked_cycles_));
     add(
@@ -3680,10 +3730,10 @@ private:
     return heartbeat_valid;
   }
 
-  bool candidateClearOnLatestScan(
-    const Candidate & candidate, const PathModel & raw,
-    std::string & failure_state, std::string & failure_reason)
+  LatestCandidateValidation validateCandidateOnLatestScan(
+    const Candidate & candidate, const PathModel & raw)
   {
+    LatestCandidateValidation validation;
     sensor_msgs::msg::LaserScan::SharedPtr latest_scan;
     rclcpp::Time latest_scan_time(0, 0, RCL_STEADY_TIME);
     bool scan_received = false;
@@ -3693,35 +3743,107 @@ private:
       latest_scan_time = scan_time_;
       scan_received = scan_received_;
     }
+    validation.scan_time = latest_scan_time;
     const double scan_age = scan_received ?
       (steady_clock_.now() - latest_scan_time).seconds() :
       std::numeric_limits<double>::infinity();
     if (!scan_received || !latest_scan || scan_age > scan_timeout_sec_) {
-      failure_state = "SCAN_INVALID";
-      failure_reason = scan_received ?
+      validation.failure_state = "SCAN_INVALID";
+      validation.failure_reason = scan_received ?
         "LaserScan became stale before candidate acceptance" :
         "LaserScan is unavailable before candidate acceptance";
-      return false;
+      return validation;
     }
 
-    std::vector<ScanHit> latest_hits;
-    double valid_beam_ratio = 0.0;
-    if (!scanHitsInPathFrame(*latest_scan, raw, latest_hits, valid_beam_ratio)) {
-      failure_state = "TF_UNAVAILABLE";
-      failure_reason = "latest LaserScan cannot be transformed before candidate acceptance";
-      return false;
+    if (!scanHitsInPathFrame(
+        *latest_scan, raw, validation.hits, validation.valid_beam_ratio))
+    {
+      validation.failure_state = "TF_UNAVAILABLE";
+      validation.failure_reason =
+        "latest LaserScan cannot be transformed before candidate acceptance";
+      return validation;
     }
-    if (valid_beam_ratio < min_valid_beam_ratio_) {
-      failure_state = "SCAN_INVALID";
-      failure_reason = "latest LaserScan has insufficient valid beams";
-      return false;
+    if (validation.valid_beam_ratio < min_valid_beam_ratio_) {
+      validation.failure_state = "SCAN_INVALID";
+      validation.failure_reason = "latest LaserScan has insufficient valid beams";
+      return validation;
     }
-    if (pathBlockedByConnectedHits(candidate.path, latest_hits, safety_half_width_m_)) {
-      failure_state = "PLAN_INVALIDATED";
-      failure_reason = "fresh LaserScan blocks the newly generated candidate";
-      return false;
+    if (pathBlockedByConnectedHits(
+        candidate.path, validation.hits, safety_half_width_m_))
+    {
+      if (!lookupRobotPose(
+          raw.frame, latest_scan->header.stamp,
+          validation.robot_position, validation.robot_yaw))
+      {
+        validation.failure_state = "TF_UNAVAILABLE";
+        validation.failure_reason =
+          "latest LaserScan robot pose is unavailable before active-path fallback";
+        return validation;
+      }
+      validation.outcome = active_path_safety::CandidateValidationOutcome::COLLISION;
+      validation.failure_state = "PLAN_INVALIDATED";
+      validation.failure_reason = "fresh LaserScan blocks the newly generated candidate";
+      return validation;
     }
-    return true;
+    validation.outcome = active_path_safety::CandidateValidationOutcome::CLEAR;
+    validation.failure_state.clear();
+    validation.failure_reason.clear();
+    return validation;
+  }
+
+  active_path_safety::ActiveCandidateDisposition handleActiveCandidateValidation(
+    const LatestCandidateValidation & validation,
+    const nav_msgs::msg::Path & held_active_path,
+    const bool held_path_ended_without_rejoin,
+    const ObstacleCluster * obstacle = nullptr)
+  {
+    const bool held_path_physically_clear =
+      validation.outcome == active_path_safety::CandidateValidationOutcome::COLLISION &&
+      !pathBlockedByConnectedHits(
+        held_active_path, validation.hits, safety_half_width_m_);
+    const auto disposition = active_path_safety::activeCandidateDisposition(
+      validation.outcome, held_path_physically_clear,
+      held_path_ended_without_rejoin);
+    if (disposition ==
+      active_path_safety::ActiveCandidateDisposition::ACTIVATE_REPLACEMENT)
+    {
+      return disposition;
+    }
+    if (disposition ==
+      active_path_safety::ActiveCandidateDisposition::CONTINUE_FAILURE_HANDLING)
+    {
+      return disposition;
+    }
+
+    const auto freshness = currentInputFreshness();
+    if (disposition ==
+      active_path_safety::ActiveCandidateDisposition::RETAIN_ACTIVE_PATH)
+    {
+      resetNoSafePathConfirmation();
+      terminal_safe_yield_cycles_ = 0;
+      last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+      active_physical_blocked_cycles_ = 0;
+      publishSpeedCap(activeReplanPendingSpeedCap());
+      publishPath(held_active_path);
+      publishStatus(
+        "READY",
+        "fresh LaserScan rejected the replacement candidate; retaining the "
+        "physically clear active path at reduced speed",
+        "REPLAN_PENDING", active_plan_.side,
+        freshness.raw_age, freshness.scan_age,
+        validation.valid_beam_ratio, obstacle);
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "replacement candidate rejected by fresh LaserScan; retaining active plan %lu",
+        active_plan_.id);
+      return disposition;
+    }
+
+    failPrimary(
+      validation.failure_state, validation.failure_reason,
+      freshness.raw_age, freshness.scan_age,
+      validation.valid_beam_ratio, obstacle);
+    return disposition;
   }
 
   visualization_msgs::msg::Marker lineMarker(
@@ -3907,7 +4029,6 @@ private:
     }
     const double car_heading_error = angleDifference(robot_yaw, robot_on_raw.yaw);
 
-    const rclcpp::Time previous_processed_scan_time = last_processed_scan_time_;
     const bool new_scan = current_scan_time.nanoseconds() !=
       last_processed_scan_time_.nanoseconds();
     if (new_scan) {
@@ -3968,6 +4089,11 @@ private:
         active_plan_.progress_index >= active_plan_.rejoin_index &&
         std::abs(robot_on_raw.d) <= recovery_exit_lateral_error_m_ &&
         heading_error <= recovery_exit_heading_error_deg_ * M_PI / 180.0;
+      const auto handoff_mode = path_splice::activePathHandoffMode(
+        active_plan_.raceline_handoff_started, rejoin_geometry_reached,
+        active_plan_.progress_index, active_plan_.rejoin_index);
+      active_plan_.raceline_handoff_started =
+        handoff_mode == path_splice::ActivePathHandoffMode::FRESH_RAW_PATH;
       if (new_scan) {
         rejoin_stable_cycles_ = rejoin_geometry_reached ?
           rejoin_stable_cycles_ + 1 : 0;
@@ -3977,6 +4103,14 @@ private:
       }
 
       if (active_plan_.valid) {
+        const bool end_without_rejoin = path_splice::storedPathEndedWithoutRejoin(
+          active_plan_.raceline_handoff_started,
+          active_plan_.progress_index + 10 >= active_plan_.path.poses.size(),
+          rejoin_geometry_reached);
+        const auto held_active_path = continuousActivePath(
+          *raw_message, handoff_mode);
+        LatestCandidateValidation rejected_candidate_validation;
+        bool candidate_rejected_on_latest_scan = false;
         const double tracked_obstacle_s = trackedObstacleCurrentS(raw);
         const bool rolling_target_cleared = active_plan_.rolling_pass &&
           !obstacle_found &&
@@ -3992,7 +4126,7 @@ private:
         {
           const auto planning_started_at = steady_clock_.now();
           startPlanningHeartbeat(
-            continuousActivePath(*raw_message), activeReplanPendingSpeedCap(),
+            held_active_path, activeReplanPendingSpeedCap(),
             "computing smooth recovery while retaining the current clear path",
             active_plan_.side, raw_age, scan_age, valid_beam_ratio);
           Candidate recovery = bestAvailableRecoveryCandidate(
@@ -4002,15 +4136,21 @@ private:
             return;
           }
           if (recovery.valid) {
-            std::string failure_state;
-            std::string failure_reason;
-            if (!candidateClearOnLatestScan(
-                recovery, raw, failure_state, failure_reason))
+            auto validation = validateCandidateOnLatestScan(recovery, raw);
+            const auto disposition = handleActiveCandidateValidation(
+              validation, held_active_path, end_without_rejoin);
+            if (disposition ==
+              active_path_safety::ActiveCandidateDisposition::RETAIN_ACTIVE_PATH ||
+              disposition == active_path_safety::ActiveCandidateDisposition::FAIL_PRIMARY)
             {
-              const auto freshness = currentInputFreshness();
-              failPrimary(
-                failure_state, failure_reason, freshness.raw_age, freshness.scan_age);
               return;
+            }
+            if (disposition ==
+              active_path_safety::ActiveCandidateDisposition::CONTINUE_FAILURE_HANDLING)
+            {
+              rejected_candidate_validation = std::move(validation);
+              candidate_rejected_on_latest_scan = true;
+              recovery.valid = false;
             }
           }
           if (recovery.valid) {
@@ -4027,9 +4167,9 @@ private:
         }
 
         const bool margin_blocked_now = activePathBlocked(
-          hits, planningClearance(), *raw_message);
+          hits, planningClearance(), held_active_path);
         const bool physical_blocked_now = activePathBlocked(
-          hits, safety_half_width_m_, *raw_message);
+          hits, safety_half_width_m_, held_active_path);
         if (new_scan) {
           active_blocked_cycles_ = margin_blocked_now ? active_blocked_cycles_ + 1 : 0;
           active_physical_blocked_cycles_ = physical_blocked_now ?
@@ -4037,9 +4177,6 @@ private:
         }
         const bool stale_plan = plan_age >= maximum_plan_hold_sec_;
         const bool excessive_deviation = deviation > plan_deviation_replan_m_;
-        const bool end_without_rejoin =
-          active_plan_.progress_index + 10 >= active_plan_.path.poses.size() &&
-          !rejoin_geometry_reached;
         const bool blocked_confirmed =
           active_blocked_cycles_ >= active_path_blocked_confirmation_scans_;
         const bool physical_blocked_confirmed =
@@ -4056,12 +4193,13 @@ private:
         const bool update_requested = blocked_confirmed || stale_plan ||
           excessive_deviation || end_without_rejoin ||
           rolling_upgrade_requested || rolling_refresh_requested ||
-          rolling_continuation_requested;
+          rolling_continuation_requested || candidate_rejected_on_latest_scan;
 
         if (!update_requested) {
-          no_safe_path_cycles_ = 0;
-          const auto continuous_path = continuousActivePath(*raw_message);
-          publishPath(continuous_path);
+          resetNoSafePathConfirmation();
+          terminal_safe_yield_cycles_ = 0;
+          last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+          publishPath(held_active_path);
           if (margin_blocked_now) {
             publishSpeedCap(activeReplanPendingSpeedCap());
             publishStatus(
@@ -4092,8 +4230,16 @@ private:
         std::string update_reason;
         const auto planning_started_at = steady_clock_.now();
         bool heartbeat_started = false;
-        const auto held_active_path = continuousActivePath(*raw_message);
-        if (!physical_blocked_now) {
+        const bool latest_held_path_blocked = candidate_rejected_on_latest_scan &&
+          pathBlockedByConnectedHits(
+          held_active_path, rejected_candidate_validation.hits, safety_half_width_m_);
+        const auto & planning_safety_hits = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.hits : hits;
+        const auto & planning_safety_robot_position = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.robot_position : robot_position;
+        const double planning_safety_robot_yaw = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.robot_yaw : robot_yaw;
+        if (!physical_blocked_now && !latest_held_path_blocked) {
           startPlanningHeartbeat(
             held_active_path, activeReplanPendingSpeedCap(),
             "updating obstacle plan while retaining the physically clear active path",
@@ -4102,7 +4248,8 @@ private:
           heartbeat_started = true;
         } else {
           const auto planning_yield = buildSafeYieldPlan(
-            held_active_path, hits, robot_position, robot_yaw);
+            held_active_path, planning_safety_hits,
+            planning_safety_robot_position, planning_safety_robot_yaw);
           if (planning_yield.valid) {
             startPlanningHeartbeat(
               planning_yield.path,
@@ -4186,15 +4333,22 @@ private:
           return;
         }
         if (selected) {
-          std::string failure_state;
-          std::string failure_reason;
-          if (!candidateClearOnLatestScan(
-              *selected, raw, failure_state, failure_reason))
+          auto validation = validateCandidateOnLatestScan(*selected, raw);
+          const auto disposition = handleActiveCandidateValidation(
+            validation, held_active_path, end_without_rejoin,
+            obstacle_found ? &obstacle : nullptr);
+          if (disposition ==
+            active_path_safety::ActiveCandidateDisposition::RETAIN_ACTIVE_PATH ||
+            disposition == active_path_safety::ActiveCandidateDisposition::FAIL_PRIMARY)
           {
-            const auto freshness = currentInputFreshness();
-            failPrimary(
-              failure_state, failure_reason, freshness.raw_age, freshness.scan_age);
             return;
+          }
+          if (disposition ==
+            active_path_safety::ActiveCandidateDisposition::CONTINUE_FAILURE_HANDLING)
+          {
+            rejected_candidate_validation = std::move(validation);
+            candidate_rejected_on_latest_scan = true;
+            selected = nullptr;
           }
         }
 
@@ -4212,19 +4366,29 @@ private:
 
         // Yield on a safe prefix while retrying the committed side.
         SafeYieldPlan safe_yield;
-        if (blocked_confirmed) {
-          const auto active_path = continuousActivePath(*raw_message);
+        const auto & failure_safety_hits = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.hits : hits;
+        const auto & failure_robot_position = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.robot_position : robot_position;
+        const double failure_robot_yaw = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.robot_yaw : robot_yaw;
+        if (blocked_confirmed || candidate_rejected_on_latest_scan) {
           safe_yield = buildSafeYieldPlan(
-            active_path, hits, robot_position, robot_yaw);
+            held_active_path, failure_safety_hits,
+            failure_robot_position, failure_robot_yaw);
         }
+        const auto & failure_scan_time = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.scan_time : current_scan_time;
+        const auto failure_valid_beam_ratio = candidate_rejected_on_latest_scan ?
+          rejected_candidate_validation.valid_beam_ratio : valid_beam_ratio;
         if (safe_yield.valid) {
-          if (terminalSafeYieldFailureConfirmed(
-              safe_yield, new_scan, current_scan_time, previous_processed_scan_time))
+          resetNoSafePathConfirmation();
+          if (terminalSafeYieldFailureConfirmed(safe_yield, failure_scan_time))
           {
             failPrimary(
               "NO_SAFE_PATH_CONFIRMED",
               "active plan has only a terminal safe-yield prefix; transferring to Reactive",
-              raw_age, scan_age, valid_beam_ratio,
+              raw_age, scan_age, failure_valid_beam_ratio,
               obstacle_found ? &obstacle : nullptr);
             return;
           }
@@ -4232,12 +4396,16 @@ private:
           publishSpeedCap(safe_yield.speed_cap);
           publishStatus(
             "READY",
+            candidate_rejected_on_latest_scan ?
+            "replacement candidate rejected; following the held path's safe-yield prefix" :
             "committed pass corridor is temporarily occupied; holding a safe following gap",
             "FOLLOWING_OBSTACLE", active_plan_.side,
-            raw_age, scan_age, valid_beam_ratio,
+            raw_age, scan_age, failure_valid_beam_ratio,
             obstacle_found ? &obstacle : nullptr);
           return;
         }
+        terminal_safe_yield_cycles_ = 0;
+        last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
 
         const auto failure_disposition =
           active_path_safety::replacementFailureDisposition(
@@ -4245,29 +4413,29 @@ private:
         const bool update_failure_confirmable =
           failure_disposition ==
           active_path_safety::ReplacementFailureDisposition::CONFIRM_PRIMARY_FAILURE;
-        if (new_scan) {
-          no_safe_path_cycles_ = update_failure_confirmable ?
-            std::min(no_safe_path_cycles_ + 1, no_safe_path_confirmation_scans_) : 0;
-        }
-        if (update_failure_confirmable &&
-          no_safe_path_cycles_ >= no_safe_path_confirmation_scans_)
+        if (noSafePathFailureConfirmed(
+            update_failure_confirmable, failure_scan_time))
         {
           failPrimary(
             "NO_SAFE_PATH_CONFIRMED",
             "active plan remained blocked and no valid replacement was found",
-            raw_age, scan_age, valid_beam_ratio, obstacle_found ? &obstacle : nullptr);
+            raw_age, scan_age, failure_valid_beam_ratio,
+            obstacle_found ? &obstacle : nullptr);
           return;
         }
 
-        publishPath(continuousActivePath(*raw_message));
         publishSpeedCap(activeReplanPendingSpeedCap());
+        publishPath(held_active_path);
         publishStatus(
           "READY",
+          candidate_rejected_on_latest_scan ?
+          "replacement candidate rejected; active-path failure awaiting confirmation" :
           blocked_confirmed && !physical_blocked_confirmed ?
           "planning reserve encroached; holding physically clear active path at reduced speed" :
           "active-plan update pending multi-scan confirmation",
           "REPLAN_PENDING", active_plan_.side,
-          raw_age, scan_age, valid_beam_ratio, obstacle_found ? &obstacle : nullptr);
+          raw_age, scan_age, failure_valid_beam_ratio,
+          obstacle_found ? &obstacle : nullptr);
         return;
       }
     }
@@ -4328,15 +4496,16 @@ private:
         return;
       }
       if (selected) {
-        std::string failure_state;
-        std::string latest_scan_failure;
-        if (!candidateClearOnLatestScan(
-            *selected, raw, failure_state, latest_scan_failure))
+        const auto validation = validateCandidateOnLatestScan(*selected, raw);
+        if (validation.outcome !=
+          active_path_safety::CandidateValidationOutcome::CLEAR)
         {
           const auto freshness = currentInputFreshness();
           failPrimary(
-            failure_state, latest_scan_failure,
-            freshness.raw_age, freshness.scan_age);
+            validation.failure_state, validation.failure_reason,
+            freshness.raw_age, freshness.scan_age,
+            validation.valid_beam_ratio,
+            obstacle_found ? &obstacle : nullptr, selected);
           return;
         }
       }
@@ -4360,8 +4529,8 @@ private:
       const SafeYieldPlan safe_yield = buildSafeYieldPlan(
         *raw_message, hits, robot_position, robot_yaw);
       if (obstacle_found && safe_yield.valid) {
-        if (terminalSafeYieldFailureConfirmed(
-            safe_yield, new_scan, current_scan_time, previous_processed_scan_time))
+        resetNoSafePathConfirmation();
+        if (terminalSafeYieldFailureConfirmed(safe_yield, current_scan_time))
         {
           failPrimary(
             "NO_SAFE_PATH_CONFIRMED",
@@ -4378,12 +4547,10 @@ private:
           raw_age, scan_age, valid_beam_ratio, &obstacle);
         return;
       }
+      terminal_safe_yield_cycles_ = 0;
+      last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
 
-      if (new_scan) {
-        no_safe_path_cycles_ = std::min(
-          no_safe_path_cycles_ + 1, no_safe_path_confirmation_scans_);
-      }
-      if (no_safe_path_cycles_ >= no_safe_path_confirmation_scans_) {
+      if (noSafePathFailureConfirmed(true, current_scan_time)) {
         failPrimary(
           "NO_SAFE_PATH_CONFIRMED", failure_reason,
           raw_age, scan_age, valid_beam_ratio, obstacle_found ? &obstacle : nullptr);
@@ -4402,7 +4569,7 @@ private:
       return;
     }
 
-    no_safe_path_cycles_ = 0;
+    resetNoSafePathConfirmation();
     terminal_safe_yield_cycles_ = 0;
     last_terminal_safe_yield_scan_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
     active_blocked_cycles_ = 0;

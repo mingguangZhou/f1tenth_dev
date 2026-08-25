@@ -45,3 +45,41 @@ TEST(PathSplice, RejectsAHeadingDiscontinuityAtANearbyBranch)
 
   EXPECT_FALSE(match.valid);
 }
+
+TEST(PathSplice, GeometricRejoinUsesFreshRawPathDuringConfirmation)
+{
+  EXPECT_EQ(
+    splice::activePathHandoffMode(false, true, 329, 328),
+    splice::ActivePathHandoffMode::FRESH_RAW_PATH);
+}
+
+TEST(PathSplice, UnconfirmedRejoinPreservesStrictSplice)
+{
+  EXPECT_EQ(
+    splice::activePathHandoffMode(false, false, 329, 328),
+    splice::ActivePathHandoffMode::STRICT_SPLICE);
+}
+
+TEST(PathSplice, RejoinAnchorItselfStillUsesStrictSplice)
+{
+  EXPECT_EQ(
+    splice::activePathHandoffMode(false, true, 328, 328),
+    splice::ActivePathHandoffMode::STRICT_SPLICE);
+}
+
+TEST(PathSplice, FreshRawHandoffDoesNotRevertOnOneNoisyGeometrySample)
+{
+  EXPECT_EQ(
+    splice::activePathHandoffMode(true, false, 330, 328),
+    splice::ActivePathHandoffMode::FRESH_RAW_PATH);
+}
+
+TEST(PathSplice, LatchedFreshRawHandoffIgnoresExhaustedStoredTail)
+{
+  EXPECT_FALSE(splice::storedPathEndedWithoutRejoin(true, true, false));
+}
+
+TEST(PathSplice, ExhaustedStoredTailBeforeHandoffRequiresRecovery)
+{
+  EXPECT_TRUE(splice::storedPathEndedWithoutRejoin(false, true, false));
+}

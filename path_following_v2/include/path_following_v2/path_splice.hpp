@@ -27,6 +27,29 @@ struct Match
   double maximum_curvature_inv_m{std::numeric_limits<double>::infinity()};
 };
 
+enum class ActivePathHandoffMode
+{
+  STRICT_SPLICE,
+  FRESH_RAW_PATH,
+};
+
+inline ActivePathHandoffMode activePathHandoffMode(
+  const bool handoff_started, const bool rejoin_geometry_reached,
+  const std::size_t progress_index, const std::size_t rejoin_index)
+{
+  return handoff_started ||
+    (rejoin_geometry_reached && progress_index > rejoin_index) ?
+    ActivePathHandoffMode::FRESH_RAW_PATH :
+    ActivePathHandoffMode::STRICT_SPLICE;
+}
+
+inline bool storedPathEndedWithoutRejoin(
+  const bool handoff_started, const bool stored_path_near_end,
+  const bool rejoin_geometry_reached)
+{
+  return !handoff_started && stored_path_near_end && !rejoin_geometry_reached;
+}
+
 inline double distance(const Point2 & first, const Point2 & second)
 {
   return std::hypot(second.x - first.x, second.y - first.y);
