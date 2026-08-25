@@ -47,8 +47,7 @@ For a manual ego-only check, run the simulator and autonomy stack in separate
 container terminals:
 
 ```bash
-f1 sim --no-agents \
-  config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
+f1 sim --no-obstacle
 ```
 
 ```bash

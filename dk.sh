@@ -38,6 +38,8 @@ Inside the container:
   f1 sim           Run IFAC with 3 static obstacles + 1 moving agent.
   f1 sim --no-agents
                    Run the same IFAC map without the moving agent.
+  f1 sim --no-obstacle
+                   Run clean IFAC without agents or added static obstacles.
   f1 auto          Run autonomy stack; Ctrl+C returns to the shell.
 EOF
 }

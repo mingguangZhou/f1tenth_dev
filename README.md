@@ -38,6 +38,13 @@ one moving traffic car. To remove only the moving car, use:
 f1 sim --no-agents
 ```
 
+To run the clean IFAC map with neither the moving car nor the three added static
+obstacles, use:
+
+```bash
+f1 sim --no-obstacle
+```
+
 Use a second host terminal to enter the same container and launch autonomy:
 
 ```bash

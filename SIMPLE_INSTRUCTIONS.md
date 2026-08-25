@@ -52,6 +52,12 @@ moving traffic car. Remove the moving car while keeping the obstacle map with:
 f1 sim --no-agents
 ```
 
+Run the clean IFAC map without moving agents or added static obstacles with:
+
+```bash
+f1 sim --no-obstacle
+```
+
 Open another host terminal, enter the same container, and run autonomy:
 
 ```bash

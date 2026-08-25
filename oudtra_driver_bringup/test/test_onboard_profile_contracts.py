@@ -27,7 +27,7 @@ def _overlay_keys(document):
     }
 
 
-def test_d5c70fb_parameter_tuning_is_reverted():
+def test_race_ready_parameter_profile_is_canonical():
     path = _yaml("path_following_v2/config/path_following_v2.yaml")
     shared = _parameters(path, "/**")
     generator = _parameters(path, "path_generator")
@@ -36,18 +36,21 @@ def test_d5c70fb_parameter_tuning_is_reverted():
     upper = _parameters(reactive, "upper_corridor_follower")
     lower = _parameters(reactive, "lower_safety_controller")
 
-    assert shared["command_speed_max_mps"] == 4.0
-    assert generator["rule_curve_min_speed_mps"] == 0.8
-    assert generator["rule_straight_speed_mps"] == 2.5
-    assert planner["transform_timeout_sec"] == 0.20
+    assert shared["command_speed_max_mps"] == 10.0
+    assert generator["rule_curve_min_speed_mps"] == 1.0
+    assert generator["rule_straight_speed_mps"] == 5.0
+    assert planner["transform_timeout_sec"] == 0.40
     assert planner["planning_distance_m"] == 10.0
-    assert planner["avoidance_speed_cap_mps"] == 2.2
-    assert planner["recovery_speed_cap_mps"] == 2.2
-    assert planner["replan_pending_speed_cap_mps"] == 1.5
-    assert upper["forward_max_m"] == 1.5
-    assert upper["velocity_max_mps"] == 1.65
-    assert upper["velocity_min_mps"] == 0.75
-    assert lower["reverse_max_attempts"] == 50
+    assert planner["curvature_safety_factor"] == 1.2
+    assert planner["avoidance_speed_cap_mps"] == 3.5
+    assert planner["recovery_speed_cap_mps"] == 4.0
+    assert planner["replan_pending_speed_cap_mps"] == 2.5
+    assert planner["maneuver_lateral_acceleration_limit_mps2"] == 4.0
+    assert planner["yield_max_speed_mps"] == 2.5
+    assert upper["forward_max_m"] == 3.0
+    assert upper["velocity_max_mps"] == 2.0
+    assert upper["velocity_min_mps"] == 1.0
+    assert lower["reverse_max_attempts"] == 500
     assert lower["wrong_way_reverse_max_attempts"] == 4
 
 

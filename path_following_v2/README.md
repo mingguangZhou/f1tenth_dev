@@ -329,7 +329,7 @@ does not by itself declare the physically clear path unsafe:
 plan_deviation_replan_m: 0.35
 active_path_blocked_confirmation_scans: 4
 no_safe_path_confirmation_scans: 5
-replan_pending_speed_cap_mps: 1.5
+replan_pending_speed_cap_mps: 2.5
 ```
 
 Only `NO_SAFE_PATH_CONFIRMED` or an immediate `CRITICAL_OBSTACLE` requests
@@ -385,6 +385,16 @@ planner state (`FOLLOWING_OBSTACLE`) and avoids a reactive steering handoff.
 Refreshed raceline tails are appended only through a gap-, heading-, and
 curvature-continuous splice.
 
+The current safe-yield profile uses a `1.0 m` standoff, retains `0.5 m` of
+terminal path for controlled braking, and permits at most `2.5 m/s`:
+
+```yaml
+yield_standoff_m: 1.00
+yield_min_path_length_m: 0.50
+yield_max_speed_mps: 2.5
+yield_deceleration_mps2: 2.0
+```
+
 ## Speed and visualization
 
 The physical command envelope is configured once at the top of each YAML:
@@ -404,8 +414,8 @@ synchronized.
 Normal raceline demand is tuned only in `path_generator`:
 
 ```yaml
-rule_curve_min_speed_mps: 0.8
-rule_straight_speed_mps: 2.5
+rule_curve_min_speed_mps: 1.0
+rule_straight_speed_mps: 5.0
 rule_speed_curvature_gain: 2.0
 rule_speed_curvature_preview_m: 0.50
 ```
@@ -415,10 +425,10 @@ The curvature preview is physical distance, not waypoint count.
 The shared maneuver settings are:
 
 ```yaml
-avoidance_speed_cap_mps: 2.2
-recovery_speed_cap_mps: 2.2
-replan_pending_speed_cap_mps: 1.5
-maneuver_lateral_acceleration_limit_mps2: 2.0
+avoidance_speed_cap_mps: 3.5
+recovery_speed_cap_mps: 4.0
+replan_pending_speed_cap_mps: 2.5
+maneuver_lateral_acceleration_limit_mps2: 4.0
 ```
 
 The avoidance and recovery values are ceilings, not fixed maneuver speeds. On
@@ -435,7 +445,7 @@ tight detour enough to keep estimated lateral acceleration bounded. As the car
 passes the curved part, only the remaining geometry is considered, so the cap
 rises progressively during a smooth return. The follower's existing command
 rate limiter controls the actual acceleration. These ceilings and the
-`2.0 m/s^2` lateral-acceleration limit are shared by both platforms.
+`4.0 m/s^2` lateral-acceleration limit are shared by both platforms.
 
 `speed_policy_mode` selects rule-only (`0`) or rule plus a fresh RL speed
 residual (`1`). The established future RL structure is unchanged: bounded

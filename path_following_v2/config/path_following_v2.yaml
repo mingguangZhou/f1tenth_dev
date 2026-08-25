@@ -134,7 +134,7 @@ local_trajectory_planner:
     steering_max_deg: 20.6
     # Planner-side geometric search multiplier. Command and safety limits are
     # enforced independently by downstream controllers.
-    curvature_safety_factor: 2.7
+    curvature_safety_factor: 1.2
 
     # --------------------------------------------------------
     # LIGHTWEIGHT RACING-LINE-FRAME LATTICE
@@ -183,12 +183,12 @@ local_trajectory_planner:
     avoidance_speed_cap_mps: 3.5
     recovery_speed_cap_mps: 4.0
     replan_pending_speed_cap_mps: 2.5
-    maneuver_lateral_acceleration_limit_mps2: 2.0
+    maneuver_lateral_acceleration_limit_mps2: 4.0
     # Stop safely and retry when neither overtake corridor is available.
     enable_primary_safe_yield: true
     yield_standoff_m: 1.00
     yield_min_path_length_m: 0.50
-    yield_max_speed_mps: 1.0
+    yield_max_speed_mps: 2.5
     yield_deceleration_mps2: 2.0
     safe_yield_terminal_speed_mps: 0.05
 

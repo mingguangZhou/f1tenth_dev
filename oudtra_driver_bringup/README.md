@@ -17,7 +17,8 @@ system dependency to a package manifest.
 
 Run `f1 sim` in a separate container terminal for the IFAC Roboracer simulator
 with three fixed obstacles and one moving traffic car. Use
-`f1 sim --no-agents` to remove the moving car.
+`f1 sim --no-agents` to remove the moving car while retaining the fixed
+obstacles, or `f1 sim --no-obstacle` to run the clean map with neither.
 
 In simulation, `f1 auto` follows the optimized IFAC Roboracer racing line at
 `/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/`

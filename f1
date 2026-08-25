@@ -32,7 +32,7 @@ Build:
   build all       Build both groups.
 
 Run:
-  sim [--agents|--no-agents] [ARGS...]
+  sim [--agents|--no-agents|--no-obstacle] [ARGS...]
                   Launch IFAC with three fixed obstacles and one moving agent.
   auto [ARGS...]  Launch autonomy stack only.
 
@@ -41,9 +41,11 @@ Inspect:
   help            Show this help.
 
 Use `sim --no-agents` to keep the IFAC static obstacles but remove the moving
-agent. Each run command accepts normal ROS launch arguments. Press Ctrl+C to
-stop a launch and return to the same container shell. Rendering mode comes
-from the host-side dk.sh command: GPU by default, or --cpu for software/noVNC.
+agent. Use `sim --no-obstacle` for the clean IFAC map with neither agents nor
+added static obstacles. Each run command accepts normal ROS launch arguments.
+Press Ctrl+C to stop a launch and return to the same container shell. Rendering
+mode comes from the host-side dk.sh command: GPU by default, or --cpu for
+software/noVNC.
 EOF
 }
 
@@ -183,18 +185,26 @@ run_sim() {
     if [[ "${parse_options}" == true ]]; then
       case "${argument}" in
         --agents)
-          if [[ "${requested_mode}" == "no-agents" ]]; then
-            echo "Cannot combine --agents and --no-agents." >&2
+          if [[ -n "${requested_mode}" && "${requested_mode}" != "agents" ]]; then
+            echo "Cannot combine --agents, --no-agents, and --no-obstacle." >&2
             return 2
           fi
           requested_mode="agents"
           ;;
         --no-agents)
-          if [[ "${requested_mode}" == "agents" ]]; then
-            echo "Cannot combine --agents and --no-agents." >&2
+          if [[ -n "${requested_mode}" && "${requested_mode}" != "no-agents" ]]; then
+            echo "Cannot combine --agents, --no-agents, and --no-obstacle." >&2
             return 2
           fi
           requested_mode="no-agents"
+          launch_file="gym_bridge_launch.py"
+          ;;
+        --no-obstacle)
+          if [[ -n "${requested_mode}" && "${requested_mode}" != "no-obstacle" ]]; then
+            echo "Cannot combine --agents, --no-agents, and --no-obstacle." >&2
+            return 2
+          fi
+          requested_mode="no-obstacle"
           launch_file="gym_bridge_launch.py"
           ;;
         --)
@@ -209,9 +219,13 @@ run_sim() {
     fi
   done
 
-  if [[ "${requested_mode}" == "no-agents" ]]; then
+  if [[ "${requested_mode}" == "no-agents" || "${requested_mode}" == "no-obstacle" ]]; then
     local has_config_override=false
     local has_rviz_override=false
+    local default_config="/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+    if [[ "${requested_mode}" == "no-obstacle" ]]; then
+      default_config="/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml"
+    fi
     for argument in "${launch_args[@]}"; do
       if [[ "${argument}" == config_file:=* ]]; then
         has_config_override=true
@@ -222,13 +236,13 @@ run_sim() {
     if [[ "${has_config_override}" == false ]]; then
       if [[ "${has_rviz_override}" == false ]]; then
         launch_args=(
-          "config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+          "config_file:=${default_config}"
           "rviz_config:=/sim_ws/src/f1tenth_gym_ros/launch/gym_bridge_ifac_roboracer.rviz"
           "${launch_args[@]}"
         )
       else
         launch_args=(
-          "config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer_obstacles.yaml"
+          "config_file:=${default_config}"
           "${launch_args[@]}"
         )
       fi
