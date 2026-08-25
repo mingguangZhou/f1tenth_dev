@@ -150,9 +150,10 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
 ```
 
-The `centerline_csv_path` remains `centerline_points_smooth.csv`; it defines the
-planner's Frenet frame and is intentionally independent of the driven global
-raceline.
+The selected racing-line CSV is published as both `/raceline_waypoints` and
+`/raceline_path`. The local path generator consumes the former and the planner
+uses the latter as its sole Frenet frame, so no separate runtime centerline CSV
+or direction setting is required.
 
 The current Phase-9 centerline generator assumes a zero map-origin yaw. The
 optimizer's coordinate conversion supports rotated maps, but a rotated-map

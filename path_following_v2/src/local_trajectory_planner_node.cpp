@@ -4,13 +4,10 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -112,8 +109,6 @@ public:
   {
     declareParameters();
     loadParameters();
-    loadCenterlineReference();
-
     planning_callback_group_ = create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
     input_callback_group_ = create_callback_group(
@@ -129,6 +124,10 @@ public:
     raw_path_sub_ = create_subscription<nav_msgs::msg::Path>(
       raw_path_topic_, rclcpp::QoS(1).reliable().transient_local(),
       std::bind(&LocalTrajectoryPlannerNode::rawPathCallback, this, _1), input_options);
+    raceline_reference_sub_ = create_subscription<nav_msgs::msg::Path>(
+      raceline_reference_topic_, rclcpp::QoS(1).reliable().transient_local(),
+      std::bind(&LocalTrajectoryPlannerNode::racelineReferenceCallback, this, _1),
+      planning_options);
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
       std::bind(&LocalTrajectoryPlannerNode::scanCallback, this, _1), input_options);
@@ -170,10 +169,9 @@ public:
       recovery_exit_lateral_error_m_);
     RCLCPP_INFO(
       get_logger(),
-      "lightweight Frenet lattice: %s centerline=%s points=%zu",
+      "lightweight Frenet lattice: %s; waiting for transient reference on %s",
       enable_frenet_lattice_planner_ ? "enabled" : "disabled",
-      centerline_reference_valid_ ? "ready" : "unavailable",
-      centerline_points_.size());
+      raceline_reference_topic_.c_str());
   }
 
 private:
@@ -301,6 +299,7 @@ private:
     int side{0};
     std::string source_mode{"NONE"};
     std::string planning_reference{"raceline"};
+    selection::ObjectiveDomain objective_domain{selection::ObjectiveDomain::NONE};
     std::string reason;
     nav_msgs::msg::Path path;
     std::size_t pass_start_index{0};
@@ -317,7 +316,7 @@ private:
     rclcpp::Time created_at{0, 0, RCL_STEADY_TIME};
   };
 
-  struct CenterlinePlanningContext
+  struct RacelinePlanningContext
   {
     bool valid{false};
     bool obstacle_valid{false};
@@ -348,6 +347,7 @@ private:
   };
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raw_path_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr raceline_reference_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr reset_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
@@ -378,6 +378,7 @@ private:
   PlanningHeartbeat planning_heartbeat_;
 
   std::string raw_path_topic_;
+  std::string raceline_reference_topic_;
   std::string final_path_topic_;
   std::string scan_topic_;
   std::string speed_cap_topic_;
@@ -426,11 +427,10 @@ private:
   double wheelbase_m_{0.33};
   double steering_max_deg_{20.6};
   double curvature_safety_factor_{0.95};
-  std::string centerline_csv_path_;
-  std::string centerline_direction_{"auto"};
-  std::string centerline_frame_{"map"};
-  bool centerline_closed_loop_{true};
-  bool require_centerline_reference_{true};
+  std::string raceline_frame_{"map"};
+  bool raceline_closed_loop_{false};
+  bool require_raceline_reference_{true};
+  double raceline_reference_match_tolerance_m_{0.10};
   bool enable_frenet_lattice_planner_{true};
   bool lattice_fallback_to_legacy_planner_{true};
   double lattice_station_step_m_{0.25};
@@ -498,8 +498,8 @@ private:
   double last_effective_detection_distance_m_{0.0};
   rclcpp::Time last_processed_scan_time_{0, 0, RCL_STEADY_TIME};
   rclcpp::Time last_terminal_safe_yield_scan_time_{0, 0, RCL_STEADY_TIME};
-  std::vector<Point2> centerline_points_;
-  bool centerline_reference_valid_{false};
+  std::vector<Point2> raceline_reference_points_;
+  bool raceline_reference_valid_{false};
   std::string last_reference_source_{"raceline"};
   std::size_t last_lattice_evaluated_transitions_{0};
   double last_lattice_compute_time_ms_{0.0};
@@ -516,6 +516,7 @@ private:
   {
     declare_parameter<std::string>(
       "raw_path_topic", "/path_following_v2/raceline_local_path");
+    declare_parameter<std::string>("raceline_reference_topic", "/raceline_path");
     declare_parameter<std::string>("final_path_topic", "/path_following_v2/local_path");
     declare_parameter<std::string>("scan_topic", "/scan");
     declare_parameter<std::string>(
@@ -576,15 +577,11 @@ private:
     declare_parameter<double>("steering_max_deg", 20.6);
     declare_parameter<double>("curvature_safety_factor", 0.95);
 
-    // Lightweight centerline-frame planning.  The centerline is loaded once
-    // at startup, so no additional runtime publisher or optimizer process is
-    // required on the vehicle computer.  A bounded beam-search lattice chooses
-    // lateral offsets while the raceline remains the preferred attraction line.
-    declare_parameter<std::string>("centerline_csv_path", "");
-    declare_parameter<std::string>("centerline_direction", "auto");
-    declare_parameter<std::string>("centerline_frame", "map");
-    declare_parameter<bool>("centerline_closed_loop", true);
-    declare_parameter<bool>("require_centerline_reference", true);
+    // The global path emitted by the racing-line CSV publisher is the sole
+    // Frenet reference. Consuming the transient-local topic avoids parsing the
+    // same CSV twice with potentially different direction/closure semantics.
+    declare_parameter<bool>("require_raceline_reference", true);
+    declare_parameter<double>("raceline_reference_match_tolerance_m", 0.10);
     declare_parameter<bool>("enable_frenet_lattice_planner", true);
     declare_parameter<bool>("lattice_fallback_to_legacy_planner", true);
     declare_parameter<double>("lattice_station_step_m", 0.25);
@@ -657,6 +654,7 @@ private:
   void loadParameters()
   {
     raw_path_topic_ = get_parameter("raw_path_topic").as_string();
+    raceline_reference_topic_ = get_parameter("raceline_reference_topic").as_string();
     final_path_topic_ = get_parameter("final_path_topic").as_string();
     scan_topic_ = get_parameter("scan_topic").as_string();
     speed_cap_topic_ = get_parameter("speed_cap_topic").as_string();
@@ -731,11 +729,9 @@ private:
     steering_max_deg_ = std::max(0.1, get_parameter("steering_max_deg").as_double());
     curvature_safety_factor_ = std::clamp(
       get_parameter("curvature_safety_factor").as_double(), 0.1, 100.0);
-    centerline_csv_path_ = get_parameter("centerline_csv_path").as_string();
-    centerline_direction_ = get_parameter("centerline_direction").as_string();
-    centerline_frame_ = get_parameter("centerline_frame").as_string();
-    centerline_closed_loop_ = get_parameter("centerline_closed_loop").as_bool();
-    require_centerline_reference_ = get_parameter("require_centerline_reference").as_bool();
+    require_raceline_reference_ = get_parameter("require_raceline_reference").as_bool();
+    raceline_reference_match_tolerance_m_ = std::max(
+      0.01, get_parameter("raceline_reference_match_tolerance_m").as_double());
     enable_frenet_lattice_planner_ =
       get_parameter("enable_frenet_lattice_planner").as_bool();
     lattice_fallback_to_legacy_planner_ =
@@ -850,135 +846,77 @@ private:
     publish_markers_ = get_parameter("publish_markers").as_bool();
   }
 
-  static std::vector<std::string> splitCsvRow(const std::string & row)
+  void racelineReferenceCallback(const nav_msgs::msg::Path::SharedPtr path)
   {
-    std::vector<std::string> fields;
-    std::stringstream stream(row);
-    std::string field;
-    while (std::getline(stream, field, ',')) {
-      fields.push_back(field);
-    }
-    return fields;
-  }
-
-  void loadCenterlineReference()
-  {
-    centerline_points_.clear();
-    centerline_reference_valid_ = false;
-    if (!enable_frenet_lattice_planner_) {
-      return;
-    }
-    if (centerline_csv_path_.empty()) {
-      RCLCPP_WARN(
-        get_logger(),
-        "centerline_csv_path is empty; lightweight Frenet planning cannot use the centerline");
+    if (!path || path->header.frame_id.empty()) {
+      RCLCPP_WARN(get_logger(), "received global racing line without a frame");
       return;
     }
 
-    std::ifstream input(centerline_csv_path_);
-    if (!input.is_open()) {
-      RCLCPP_ERROR(
-        get_logger(), "cannot open centerline CSV: %s", centerline_csv_path_.c_str());
-      return;
-    }
-
-    std::string header_line;
-    if (!std::getline(input, header_line)) {
-      RCLCPP_ERROR(get_logger(), "centerline CSV is empty: %s", centerline_csv_path_.c_str());
-      return;
-    }
-    const auto headers = splitCsvRow(header_line);
-    int x_column = -1;
-    int y_column = -1;
-    for (std::size_t index = 0; index < headers.size(); ++index) {
-      if (headers[index] == "x") {
-        x_column = static_cast<int>(index);
-      } else if (headers[index] == "y") {
-        y_column = static_cast<int>(index);
-      }
-    }
-    if (x_column < 0 || y_column < 0) {
-      RCLCPP_ERROR(
-        get_logger(), "centerline CSV must contain x and y columns: %s",
-        centerline_csv_path_.c_str());
-      return;
-    }
-
-    std::string row;
-    std::size_t row_number = 1;
-    while (std::getline(input, row)) {
-      ++row_number;
-      if (row.empty()) {
-        continue;
-      }
-      const auto fields = splitCsvRow(row);
-      const std::size_t required = static_cast<std::size_t>(std::max(x_column, y_column));
-      if (fields.size() <= required) {
-        RCLCPP_ERROR(
-          get_logger(), "malformed centerline CSV row %zu in %s",
-          row_number, centerline_csv_path_.c_str());
-        centerline_points_.clear();
+    std::vector<Point2> points;
+    points.reserve(path->poses.size());
+    for (const auto & pose : path->poses) {
+      const Point2 point{pose.pose.position.x, pose.pose.position.y};
+      if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+        RCLCPP_WARN(get_logger(), "received non-finite global racing-line point");
         return;
       }
-      try {
-        const Point2 point{
-          std::stod(fields[static_cast<std::size_t>(x_column)]),
-          std::stod(fields[static_cast<std::size_t>(y_column)])};
-        if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
-          throw std::runtime_error("non-finite point");
-        }
-        if (centerline_points_.empty() ||
-          distance(centerline_points_.back(), point) > 1e-6)
-        {
-          centerline_points_.push_back(point);
-        }
-      } catch (const std::exception & exception) {
-        RCLCPP_ERROR(
-          get_logger(), "invalid centerline CSV row %zu in %s: %s",
-          row_number, centerline_csv_path_.c_str(), exception.what());
-        centerline_points_.clear();
-        return;
+      if (points.empty() || distance(points.back(), point) > 1e-6) {
+        points.push_back(point);
       }
     }
-
-    if (centerline_points_.size() >= 2 &&
-      distance(centerline_points_.front(), centerline_points_.back()) <= 0.15)
-    {
-      centerline_points_.pop_back();
+    // The publisher owns loop-closure policy and represents a closed path by
+    // appending an exact copy of the first point. Only remove that explicit
+    // duplicate; do not reinterpret two distinct nearby endpoints here.
+    const bool closed_loop = points.size() >= 3 &&
+      distance(points.front(), points.back()) <= 1e-6;
+    if (closed_loop) {
+      points.pop_back();
     }
-    if (centerline_direction_ == "reverse") {
-      std::reverse(centerline_points_.begin(), centerline_points_.end());
-    } else if (centerline_direction_ != "csv" && centerline_direction_ != "normal" &&
-      centerline_direction_ != "auto")
-    {
-      RCLCPP_WARN(
-        get_logger(), "unknown centerline_direction '%s'; using CSV order",
-        centerline_direction_.c_str());
-    }
-
-    centerline_reference_valid_ = centerline_points_.size() >= 3;
-    if (!centerline_reference_valid_) {
-      RCLCPP_ERROR(
-        get_logger(), "centerline CSV has fewer than three usable points: %s",
-        centerline_csv_path_.c_str());
+    if (points.size() < 3) {
+      RCLCPP_WARN(get_logger(), "global racing-line path has fewer than three usable points");
       return;
     }
+
+    bool changed = !raceline_reference_valid_ ||
+      raceline_frame_ != path->header.frame_id ||
+      raceline_closed_loop_ != closed_loop ||
+      raceline_reference_points_.size() != points.size();
+    if (!changed) {
+      for (std::size_t index = 0; index < points.size(); ++index) {
+        if (distance(raceline_reference_points_[index], points[index]) > 1e-6) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (!changed) {
+      return;
+    }
+
+    if (raceline_reference_valid_ && active_plan_.valid) {
+      releaseActivePlan("global racing-line Frenet reference changed");
+    }
+    raceline_reference_points_ = std::move(points);
+    raceline_frame_ = path->header.frame_id;
+    raceline_closed_loop_ = closed_loop;
+    raceline_reference_valid_ = true;
     RCLCPP_INFO(
-      get_logger(), "loaded %zu centerline reference points from %s",
-      centerline_points_.size(), centerline_csv_path_.c_str());
+      get_logger(), "accepted %zu-point global racing-line Frenet reference from %s",
+      raceline_reference_points_.size(), raceline_reference_topic_.c_str());
   }
 
-  Projection projectToCenterlineReference(const Point2 & point) const
+  Projection projectToRacelineReference(const Point2 & point) const
   {
     Projection best;
-    const std::size_t size = centerline_points_.size();
+    const std::size_t size = raceline_reference_points_.size();
     if (size < 2) {
       return best;
     }
-    const std::size_t segment_count = centerline_closed_loop_ ? size : size - 1;
+    const std::size_t segment_count = raceline_closed_loop_ ? size : size - 1;
     for (std::size_t index = 0; index < segment_count; ++index) {
-      const Point2 & a = centerline_points_[index];
-      const Point2 & b = centerline_points_[(index + 1) % size];
+      const Point2 & a = raceline_reference_points_[index];
+      const Point2 & b = raceline_reference_points_[(index + 1) % size];
       const double dx = b.x - a.x;
       const double dy = b.y - a.y;
       const double length2 = dx * dx + dy * dy;
@@ -1003,22 +941,22 @@ private:
     return best;
   }
 
-  bool buildLocalCenterlineReference(
+  bool buildLocalRacelineReference(
     const Point2 & robot_position, const double target_length,
     PathModel & model, nav_msgs::msg::Path & path_message,
-    Projection & robot_projection, const bool reverse) const
+    Projection & robot_projection) const
   {
     model = PathModel{};
     path_message = nav_msgs::msg::Path{};
-    robot_projection = projectToCenterlineReference(robot_position);
-    if (!centerline_reference_valid_ || !robot_projection.valid || target_length < 0.5) {
+    robot_projection = projectToRacelineReference(robot_position);
+    if (!raceline_reference_valid_ || !robot_projection.valid || target_length < 0.5) {
       return false;
     }
 
-    const std::size_t size = centerline_points_.size();
+    const std::size_t size = raceline_reference_points_.size();
     const std::size_t segment_index = robot_projection.segment_index;
-    const Point2 & a = centerline_points_[segment_index];
-    const Point2 & b = centerline_points_[(segment_index + 1) % size];
+    const Point2 & a = raceline_reference_points_[segment_index];
+    const Point2 & b = raceline_reference_points_[(segment_index + 1) % size];
     const double segment_length = distance(a, b);
     const double ratio = segment_length > 1e-9 ?
       std::clamp(robot_projection.s / segment_length, 0.0, 1.0) : 0.0;
@@ -1026,28 +964,26 @@ private:
       a.x + ratio * (b.x - a.x),
       a.y + ratio * (b.y - a.y)};
 
-    model.frame = centerline_frame_;
+    model.frame = raceline_frame_;
     model.points.push_back(anchor);
     model.s.push_back(0.0);
-    std::size_t next_index = reverse ? segment_index : (segment_index + 1) % size;
-    const std::size_t maximum_points = centerline_closed_loop_ ? size + 1 : size;
+    std::size_t next_index = (segment_index + 1) % size;
+    const std::size_t maximum_points = raceline_closed_loop_ ? size + 1 : size;
     for (std::size_t count = 0; count < maximum_points && model.length < target_length; ++count) {
-      if (!centerline_closed_loop_ && next_index >= size) {
+      if (!raceline_closed_loop_ && next_index >= size) {
         break;
       }
-      const Point2 point = centerline_points_[next_index % size];
+      const Point2 point = raceline_reference_points_[next_index % size];
       const double segment = distance(model.points.back(), point);
       if (segment > 1e-6) {
         model.length += segment;
         model.points.push_back(point);
         model.s.push_back(model.length);
       }
-      if (!centerline_closed_loop_ &&
-        ((!reverse && next_index + 1 >= size) || (reverse && next_index == 0)))
-      {
+      if (!raceline_closed_loop_ && next_index + 1 >= size) {
         break;
       }
-      next_index = reverse ? (next_index + size - 1) % size : (next_index + 1) % size;
+      next_index = (next_index + 1) % size;
     }
     if (model.points.size() < 3 || model.length < std::min(1.0, target_length)) {
       return false;
@@ -1637,28 +1573,6 @@ private:
     return Point2{-dy / norm, dx / norm};
   }
 
-  double racelineOffsetAt(
-    const Point2 & center_point, const Point2 & center_normal,
-    const PathModel & raw) const
-  {
-    const Projection projection = projectToPath(center_point, raw);
-    if (!projection.valid || projection.segment_index + 1 >= raw.points.size()) {
-      return 0.0;
-    }
-    const std::size_t index = projection.segment_index;
-    const Point2 & a = raw.points[index];
-    const Point2 & b = raw.points[index + 1];
-    const double segment_length = distance(a, b);
-    const double ratio = segment_length > 1e-9 ?
-      std::clamp(
-      (projection.s - raw.s[index]) / segment_length, 0.0, 1.0) : 0.0;
-    const Point2 closest{
-      a.x + ratio * (b.x - a.x),
-      a.y + ratio * (b.y - a.y)};
-    return (closest.x - center_point.x) * center_normal.x +
-           (closest.y - center_point.y) * center_normal.y;
-  }
-
   std::vector<ScanHit> reprojectHits(
     const std::vector<ScanHit> & hits, const PathModel & reference) const
   {
@@ -1695,44 +1609,68 @@ private:
     return projected;
   }
 
-  CenterlinePlanningContext prepareCenterlinePlanningContext(
+  bool racelineReferenceMatchesRaw(
+    const PathModel & reference, const PathModel & raw) const
+  {
+    if (reference.frame != raw.frame || reference.points.empty() || raw.points.empty()) {
+      return false;
+    }
+    constexpr std::size_t maximum_checks = 16;
+    const std::size_t checks = std::min(maximum_checks, reference.points.size());
+    for (std::size_t check = 0; check < checks; ++check) {
+      const std::size_t index = checks == 1 ? 0 :
+        check * (reference.points.size() - 1) / (checks - 1);
+      const Projection projection = projectToPath(reference.points[index], raw);
+      if (!projection.valid ||
+        projection.distance > raceline_reference_match_tolerance_m_)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  RacelinePlanningContext prepareRacelinePlanningContext(
     const PathModel & raw, const std::vector<ScanHit> & raw_hits,
     const Point2 & robot_position, const double robot_yaw,
     const ObstacleCluster * raw_obstacle) const
   {
-    CenterlinePlanningContext context;
+    RacelinePlanningContext context;
     if (!enable_frenet_lattice_planner_) {
-      context.reason = "centerline lattice is disabled";
+      context.reason = "racing-line Frenet lattice is disabled";
       return context;
     }
-    if (!centerline_reference_valid_) {
-      context.reason = "centerline reference is unavailable";
+    if (!raceline_reference_valid_) {
+      context.reason = "global racing-line reference is unavailable";
       return context;
     }
-    if (raw.frame != centerline_frame_) {
-      context.reason = "centerline_frame does not match the raw path frame";
+    if (raw.frame != raceline_frame_) {
+      context.reason = "raceline_frame does not match the raw path frame";
       return context;
     }
 
-    Projection global_projection = projectToCenterlineReference(robot_position);
+    Projection global_projection = projectToRacelineReference(robot_position);
     const Projection raw_projection = projectToPath(robot_position, raw);
     if (!global_projection.valid || !raw_projection.valid) {
-      context.reason = "could not compare centerline and raceline directions";
+      context.reason = "could not compare global and local racing-line directions";
       return context;
     }
-    const bool reverse_centerline = centerline_direction_ == "auto" &&
-      std::abs(angleDifference(raw_projection.yaw, global_projection.yaw)) > M_PI / 2.0;
     const double target_length = std::min(planning_distance_m_, raw.length);
-    if (!buildLocalCenterlineReference(
+    if (!buildLocalRacelineReference(
         robot_position, target_length, context.reference,
-        context.reference_message, global_projection, reverse_centerline))
+        context.reference_message, global_projection))
     {
-      context.reason = "could not construct a forward centerline window";
+      context.reason = "could not construct a forward global racing-line window";
       return context;
     }
     context.robot_projection = projectToPath(robot_position, context.reference);
     if (!context.robot_projection.valid) {
-      context.reason = "robot pose cannot be projected onto the local centerline";
+      context.reason = "robot pose cannot be projected onto the racing-line reference";
+      return context;
+    }
+    if (!racelineReferenceMatchesRaw(context.reference, raw)) {
+      context.reason =
+        "global racing-line reference does not match the local raw racing line";
       return context;
     }
     context.robot_heading_error = angleDifference(
@@ -1740,7 +1678,7 @@ private:
     if (std::abs(angleDifference(raw_projection.yaw, context.robot_projection.yaw)) >
       M_PI / 2.0)
     {
-      context.reason = "centerline direction is opposite to the raceline direction";
+      context.reason = "global racing-line direction is opposite to the local raw path";
       return context;
     }
     if (std::abs(context.robot_heading_error) > M_PI / 2.0) {
@@ -1755,13 +1693,13 @@ private:
         context.obstacle.hits.size() >= static_cast<std::size_t>(blocked_min_points_) &&
         std::isfinite(context.obstacle.s_min) && std::isfinite(context.obstacle.d_min);
       if (!context.obstacle_valid) {
-        context.reason = "raw obstacle could not be associated with the centerline";
+        context.reason = "raw obstacle could not be associated with the racing-line reference";
         return context;
       }
     }
 
     context.valid = true;
-    context.reason = "centerline planning context is ready";
+    context.reason = "racing-line Frenet planning context is ready";
     return context;
   }
 
@@ -2077,7 +2015,8 @@ private:
             }
             const double clearance =
               station.sample_clearances[static_cast<std::size_t>(sample)];
-            return !std::isfinite(clearance) || clearance > planningClearance();
+            return clearance == std::numeric_limits<double>::infinity() ||
+                   (std::isfinite(clearance) && clearance > planningClearance());
           };
         int first_safe = selected_sample;
         int last_safe = selected_sample;
@@ -2113,7 +2052,7 @@ private:
   }
 
   std::vector<double> interpolateLatticeOffsets(
-    const PathModel & reference, const PathModel & raw,
+    const PathModel & reference,
     const path_following_v2::lattice::Problem & problem,
     const std::vector<double> & station_offsets) const
   {
@@ -2159,8 +2098,9 @@ private:
     for (std::size_t index = 0; index < reference.points.size(); ++index) {
       const double s = reference.s[index];
       if (s > problem.stations.back().s + 1e-9) {
-        dense_offsets[index] = racelineOffsetAt(
-          reference.points[index], pathNormal(reference, index), raw);
+        // The global racing line is the Frenet reference, so its desired
+        // lateral offset is exactly zero outside the locally modified section.
+        dense_offsets[index] = 0.0;
         continue;
       }
       while (interval + 2 < count && s > problem.stations[interval + 1].s) {
@@ -2208,18 +2148,23 @@ private:
   }
 
   Candidate bestLatticeCandidate(
-    const CenterlinePlanningContext & context, const PathModel & raw,
-    const Point2 & robot_position, const double robot_yaw,
-    const double raw_car_lateral_offset, const int side,
+    const RacelinePlanningContext & context,
+    const Point2 & robot_position, const double robot_yaw, const int side,
     const bool avoidance, const bool force_open_end = false)
   {
     Candidate best;
     best.side = side;
     best.trajectory_mode = avoidance ? "AVOIDING" : "RECOVERING_TO_RACELINE";
-    best.planning_reference = "centerline_corridor";
-    best.start_lateral_offset = raw_car_lateral_offset;
+    best.planning_reference = "racingline_frenet_corridor";
+    best.start_lateral_offset = context.robot_projection.d;
     if (!context.valid || (avoidance && !context.obstacle_valid)) {
       best.reason = context.reason;
+      return best;
+    }
+    if (require_map_clearance_ &&
+      (!map_clearance_.valid || map_clearance_.frame != context.reference.frame))
+    {
+      best.reason = "occupancy-map corridor constraint is unavailable";
       return best;
     }
 
@@ -2250,7 +2195,7 @@ private:
           detour_return_min_length_m_ + lattice_rejoin_alignment_length_m_;
         if (available_after_pass < required_after_pass) {
           best.reason =
-            "centerline window is too short for the smooth return and aligned handoff";
+            "racing-line window is too short for the smooth return and aligned handoff";
           return best;
         }
         const double return_length = std::min(
@@ -2264,16 +2209,16 @@ private:
         lateral_extent.second + planningClearance() + detour_extra_clearance_m_ :
         lateral_extent.first - planningClearance() - detour_extra_clearance_m_;
       if (std::abs(required_offset) > max_lateral_shift_m_ + 1e-9) {
-        best.reason = "required centerline offset exceeds max_lateral_shift_m";
+        best.reason = "required racing-line offset exceeds max_lateral_shift_m";
         return best;
       }
     } else {
       plan_end_s = std::clamp(
         recovery_min_rejoin_length_m_ +
-        recovery_length_gain_ * std::abs(raw_car_lateral_offset),
+        recovery_length_gain_ * std::abs(context.robot_projection.d),
         recovery_min_rejoin_length_m_, recovery_max_rejoin_length_m_);
       if (plan_end_s > reference.length - 0.20) {
-        best.reason = "centerline window is too short for lateral recovery";
+        best.reason = "racing-line window is too short for lateral recovery";
         return best;
       }
       pass_end_s = 0.5 * plan_end_s;
@@ -2292,7 +2237,7 @@ private:
       station_indices.push_back(plan_end_index);
     }
     if (station_indices.size() < 3) {
-      best.reason = "centerline window produced fewer than three lattice stations";
+      best.reason = "racing-line window produced fewer than three lattice stations";
       return best;
     }
 
@@ -2324,9 +2269,10 @@ private:
       station.y = reference.points[index].y;
       station.normal_x = normal.x;
       station.normal_y = normal.y;
-      const double raw_reference_offset = racelineOffsetAt(
-        reference.points[index], normal, raw);
-      station.reference_offset = raw_reference_offset;
+      // The static global racing line is the Frenet reference and desired
+      // nominal trajectory, so every unmodified station targets d=0.
+      constexpr double raceline_offset = 0.0;
+      station.reference_offset = raceline_offset;
       station.continuity_offset = activePlanOffsetAt(
         reference.points[index], normal, side);
       if (avoidance) {
@@ -2337,7 +2283,7 @@ private:
           const double blend = quinticSmoothstep(
             station.s / std::max(pass_start_s, 1e-6));
           station.reference_offset =
-            raw_reference_offset + blend * (required_offset - raw_reference_offset);
+            raceline_offset + blend * (required_offset - raceline_offset);
         } else if (station.s <= pass_end_s) {
           station.reference_offset = required_offset;
         } else if (station.s < return_end_s) {
@@ -2345,15 +2291,16 @@ private:
             (station.s - pass_end_s) /
             std::max(return_end_s - pass_end_s, 1e-6));
           station.reference_offset =
-            required_offset + blend * (raw_reference_offset - required_offset);
+            required_offset + blend * (raceline_offset - required_offset);
         } else {
-          station.reference_offset = raw_reference_offset;
+          station.reference_offset = raceline_offset;
         }
       }
       station.lower_offset = -max_lateral_shift_m_;
       station.upper_offset = max_lateral_shift_m_;
-      if (avoidance && station.s + 1e-9 >= pass_start_s &&
-        station.s <= pass_end_s + 1e-9)
+      const bool passing_section = avoidance &&
+        station.s + 1e-9 >= pass_start_s && station.s <= pass_end_s + 1e-9;
+      if (passing_section)
       {
         if (side > 0) {
           station.lower_offset = std::max(station.lower_offset, required_offset);
@@ -2367,8 +2314,8 @@ private:
         station.s + 1e-9 >= plan_end_s - lattice_rejoin_alignment_length_m_;
       if (avoidance_alignment || recovery_alignment) {
         // Pin the terminal interval to align position and tangent.
-        station.lower_offset = raw_reference_offset;
-        station.upper_offset = raw_reference_offset;
+        station.lower_offset = raceline_offset;
+        station.upper_offset = raceline_offset;
       }
       if (index == plan_end_index) {
         station.lower_offset = station.reference_offset;
@@ -2382,10 +2329,26 @@ private:
         const Point2 shifted{
           station.x + station.normal_x * offset,
           station.y + station.normal_y * offset};
+        auto & sample_clearance =
+          station.sample_clearances[static_cast<std::size_t>(sample)];
+        if (require_map_clearance_) {
+          const double map_clearance = mapClearanceAt(shifted, reference.frame);
+          if (!std::isfinite(map_clearance)) {
+            // Unknown, out-of-map, and frame-mismatched samples are forbidden.
+            sample_clearance = 0.0;
+          } else {
+            const double required_map_clearance = passing_section ?
+              planningClearance() : safety_half_width_m_;
+            // Normalize the physical-only departure/return allowance into the
+            // lattice's planning-clearance comparison domain.
+            const double normalized_map_clearance = map_clearance +
+              (planningClearance() - required_map_clearance);
+            sample_clearance = std::min(sample_clearance, normalized_map_clearance);
+          }
+        }
         for (const auto & obstacle_point : trusted_points) {
-          station.sample_clearances[static_cast<std::size_t>(sample)] = std::min(
-            station.sample_clearances[static_cast<std::size_t>(sample)],
-            distance(shifted, obstacle_point));
+          sample_clearance = std::min(
+            sample_clearance, distance(shifted, obstacle_point));
         }
       }
       problem.stations.push_back(std::move(station));
@@ -2414,7 +2377,7 @@ private:
           candidate.side = side;
           candidate.trajectory_mode = best.trajectory_mode;
           candidate.planning_reference = planning_reference;
-          candidate.start_lateral_offset = raw_car_lateral_offset;
+          candidate.start_lateral_offset = context.robot_projection.d;
           candidate.objective_cost = solution.cost;
           candidate.objective_domain = selection::ObjectiveDomain::LATTICE;
           candidate.rolling_pass = best.rolling_pass;
@@ -2423,7 +2386,7 @@ private:
           candidate.rejoin_index = plan_end_index;
           candidate.rejoin_s = reference.s[plan_end_index];
           auto dense_offsets = interpolateLatticeOffsets(
-            reference, raw, problem, station_offsets);
+            reference, problem, station_offsets);
           if (avoidance) {
             for (std::size_t index = candidate.pass_start_index;
               index <= candidate.pass_end_index && index < dense_offsets.size(); ++index)
@@ -2436,9 +2399,7 @@ private:
 
           double peak_displacement = 0.0;
           for (std::size_t index = 0; index <= candidate.rejoin_index; ++index) {
-            const double raw_offset = racelineOffsetAt(
-              reference.points[index], pathNormal(reference, index), raw);
-            const double displacement = dense_offsets[index] - raw_offset;
+            const double displacement = dense_offsets[index];
             if (std::abs(displacement) > std::abs(peak_displacement)) {
               peak_displacement = displacement;
             }
@@ -2451,11 +2412,11 @@ private:
         };
 
       Candidate candidate = smoothing.valid ?
-        evaluate_station_offsets(smoothing.offsets, "centerline_corridor") :
-        evaluate_station_offsets(solution.offsets, "centerline_lattice");
+        evaluate_station_offsets(smoothing.offsets, "racingline_frenet_corridor") :
+        evaluate_station_offsets(solution.offsets, "racingline_frenet_lattice");
       if (!candidate.valid && smoothing.valid) {
         last_validation_reason = "corridor: " + candidate.reason;
-        candidate = evaluate_station_offsets(solution.offsets, "centerline_lattice");
+        candidate = evaluate_station_offsets(solution.offsets, "racingline_frenet_lattice");
       }
       if (!candidate.valid) {
         last_validation_reason += "; lattice: " + candidate.reason;
@@ -2463,8 +2424,8 @@ private:
       }
       candidate.valid = true;
       candidate.reason = avoidance ?
-        "bounded centerline corridor detour passed final validation" :
-        "bounded centerline corridor recovery passed final validation";
+        "bounded racing-line corridor detour passed final validation" :
+        "bounded racing-line corridor recovery passed final validation";
       // Solver results are cost-ordered, so later valid solutions cannot win.
       best = std::move(candidate);
       break;
@@ -2676,7 +2637,7 @@ private:
   }
 
   Candidate bestAvailableDetourCandidateForSide(
-    const CenterlinePlanningContext & context,
+    const RacelinePlanningContext & context,
     const PathModel & raw, const nav_msgs::msg::Path & raw_message,
     const ObstacleCluster & obstacle, const std::vector<ScanHit> & all_hits,
     const Point2 & robot_position, const double robot_yaw,
@@ -2684,19 +2645,17 @@ private:
     const int side, const bool allow_legacy_fallback = true)
   {
     if (enable_frenet_lattice_planner_ && context.valid && context.obstacle_valid) {
-      last_reference_source_ = "centerline_corridor";
+      last_reference_source_ = "racingline_frenet_corridor";
       Candidate lattice = bestLatticeCandidate(
-        context, raw, robot_position, robot_yaw,
-        car_lateral_offset, side, true);
+        context, robot_position, robot_yaw, side, true);
       if (lattice.valid) {
         return lattice;
       }
       Candidate extended_lattice = bestLatticeCandidate(
-        context, raw, robot_position, robot_yaw,
-        car_lateral_offset, side, true, true);
+        context, robot_position, robot_yaw, side, true, true);
       if (extended_lattice.valid) {
         extended_lattice.reason =
-          "full-return candidate unavailable; open-ended centerline pass is valid";
+          "full-return candidate unavailable; open-ended racing-line pass is valid";
         return extended_lattice;
       }
       if (!lattice_fallback_to_legacy_planner_ || !allow_legacy_fallback) {
@@ -2707,7 +2666,7 @@ private:
       Candidate legacy = bestDetourCandidateForSide(
         raw, raw_message, obstacle, all_hits, robot_position, robot_yaw,
         car_lateral_offset, car_heading_error, side);
-      last_reference_source_ = "raceline_legacy_fallback";
+      last_reference_source_ = "racingline_legacy_fallback";
       if (legacy.valid) {
         return legacy;
       }
@@ -2725,15 +2684,15 @@ private:
         "; extended legacy: " + extended_legacy.reason;
       return extended_legacy;
     }
-    if (enable_frenet_lattice_planner_ && require_centerline_reference_) {
+    if (enable_frenet_lattice_planner_ && require_raceline_reference_) {
       Candidate unavailable;
       unavailable.side = side;
       unavailable.trajectory_mode = "AVOIDING";
       unavailable.reason = context.reason;
-      last_reference_source_ = "centerline_unavailable";
+      last_reference_source_ = "racingline_reference_unavailable";
       return unavailable;
     }
-    last_reference_source_ = "raceline_legacy";
+    last_reference_source_ = "racingline_legacy";
     Candidate legacy = bestDetourCandidateForSide(
       raw, raw_message, obstacle, all_hits, robot_position, robot_yaw,
       car_lateral_offset, car_heading_error, side);
@@ -2746,17 +2705,16 @@ private:
   }
 
   Candidate bestAvailableRecoveryCandidate(
-    const CenterlinePlanningContext & context,
+    const RacelinePlanningContext & context,
     const PathModel & raw, const nav_msgs::msg::Path & raw_message,
     const std::vector<ScanHit> & all_hits, const Point2 & robot_position,
     const double robot_yaw, const double car_lateral_offset,
     const double car_heading_error, const bool allow_legacy_fallback = true)
   {
     if (enable_frenet_lattice_planner_ && context.valid) {
-      last_reference_source_ = "centerline_corridor";
+      last_reference_source_ = "racingline_frenet_corridor";
       Candidate lattice = bestLatticeCandidate(
-        context, raw, robot_position, robot_yaw,
-        car_lateral_offset, 0, false);
+        context, robot_position, robot_yaw, 0, false);
       if (lattice.valid || !lattice_fallback_to_legacy_planner_ ||
         !allow_legacy_fallback)
       {
@@ -2765,21 +2723,21 @@ private:
       Candidate legacy = buildRecoveryCandidate(
         raw, raw_message, all_hits, robot_position, robot_yaw,
         car_lateral_offset, car_heading_error);
-      last_reference_source_ = "raceline_legacy_fallback";
+      last_reference_source_ = "racingline_legacy_fallback";
       if (!legacy.valid) {
         legacy.reason = "lattice: " + lattice.reason + "; legacy: " + legacy.reason;
       }
       return legacy;
     }
-    if (enable_frenet_lattice_planner_ && require_centerline_reference_) {
+    if (enable_frenet_lattice_planner_ && require_raceline_reference_) {
       Candidate unavailable;
       unavailable.side = 0;
       unavailable.trajectory_mode = "RECOVERING_TO_RACELINE";
       unavailable.reason = context.reason;
-      last_reference_source_ = "centerline_unavailable";
+      last_reference_source_ = "racingline_reference_unavailable";
       return unavailable;
     }
-    last_reference_source_ = "raceline_legacy";
+    last_reference_source_ = "racingline_legacy";
     return buildRecoveryCandidate(
       raw, raw_message, all_hits, robot_position, robot_yaw,
       car_lateral_offset, car_heading_error);
@@ -2851,6 +2809,7 @@ private:
     active_plan_.side = candidate.side;
     active_plan_.source_mode = candidate.trajectory_mode;
     active_plan_.planning_reference = candidate.planning_reference;
+    active_plan_.objective_domain = candidate.objective_domain;
     active_plan_.reason = reason;
     active_plan_.path = candidate.path;
     active_plan_.pass_start_index = candidate.pass_start_index;
@@ -3431,8 +3390,11 @@ private:
       "planning_reference",
       candidate ? candidate->planning_reference :
       (active_plan_.valid ? active_plan_.planning_reference : last_reference_source_));
-    add("centerline_loaded", centerline_reference_valid_ ? "true" : "false");
-    add("centerline_point_count", std::to_string(centerline_points_.size()));
+    add("raceline_reference_loaded", raceline_reference_valid_ ? "true" : "false");
+    add("raceline_reference_point_count", std::to_string(raceline_reference_points_.size()));
+    add(
+      "raceline_reference_match_tolerance_m",
+      std::to_string(raceline_reference_match_tolerance_m_));
     add(
       "lattice_evaluated_transitions",
       std::to_string(last_lattice_evaluated_transitions_));
@@ -3970,19 +3932,19 @@ private:
     updateObstacleTrack(
       clusters, obstacle_found ? &obstacle : nullptr, raw,
       current_scan_time, new_scan);
-    CenterlinePlanningContext centerline_context;
-    bool centerline_context_prepared = false;
-    const auto getCenterlineContext = [&]() -> const CenterlinePlanningContext & {
-        if (!centerline_context_prepared) {
+    RacelinePlanningContext raceline_context;
+    bool raceline_context_prepared = false;
+    const auto getRacelineContext = [&]() -> const RacelinePlanningContext & {
+        if (!raceline_context_prepared) {
           last_lattice_evaluated_transitions_ = 0;
           last_lattice_compute_time_ms_ = 0.0;
           last_lattice_reason_ = "not run";
-          centerline_context = prepareCenterlinePlanningContext(
+          raceline_context = prepareRacelinePlanningContext(
             raw, hits, robot_position, robot_yaw,
             obstacle_found ? &obstacle : nullptr);
-          centerline_context_prepared = true;
+          raceline_context_prepared = true;
         }
-        return centerline_context;
+        return raceline_context;
       };
     if (!active_plan_.valid && obstacle_found &&
       obstacle.minimum_range <= critical_obstacle_distance_m_)
@@ -4034,7 +3996,7 @@ private:
             "computing smooth recovery while retaining the current clear path",
             active_plan_.side, raw_age, scan_age, valid_beam_ratio);
           Candidate recovery = bestAvailableRecoveryCandidate(
-            getCenterlineContext(), raw, *raw_message, hits,
+            getRacelineContext(), raw, *raw_message, hits,
             robot_position, robot_yaw, robot_on_raw.d, car_heading_error);
           if (!finishPlanningAttempt(planning_started_at, true)) {
             return;
@@ -4152,11 +4114,11 @@ private:
           }
         }
         if (obstacle_found && enable_detour_planning_ && obstacle_size_valid) {
-          const bool preserve_raceline_frame =
-            active_plan_.planning_reference.rfind("raceline", 0) == 0;
+          const bool preserve_legacy_backend =
+            active_plan_.objective_domain == selection::ObjectiveDomain::NONE;
           const auto active_side_candidate = [&](const int side) {
-              if (preserve_raceline_frame) {
-                last_reference_source_ = "raceline_continuous_replan";
+              if (preserve_legacy_backend) {
+                last_reference_source_ = "racingline_legacy_continuous_replan";
                 Candidate candidate = bestDetourCandidateForSide(
                   raw, *raw_message, obstacle, hits,
                   robot_position, robot_yaw, robot_on_raw.d,
@@ -4170,7 +4132,7 @@ private:
                 return candidate;
               }
               return bestAvailableDetourCandidateForSide(
-                getCenterlineContext(), raw, *raw_message, obstacle, hits,
+                getRacelineContext(), raw, *raw_message, obstacle, hits,
                 robot_position, robot_yaw, robot_on_raw.d, car_heading_error,
                 side, false);
             };
@@ -4212,7 +4174,7 @@ private:
             active_plan_.phase == ManeuverPhase::RETURNING)
           {
             replacement = bestAvailableRecoveryCandidate(
-              getCenterlineContext(), raw, *raw_message, hits,
+              getRacelineContext(), raw, *raw_message, hits,
               robot_position, robot_yaw, robot_on_raw.d, car_heading_error, false);
             selected = replacement.valid ? &replacement : nullptr;
             update_reason = "active return path update toward raceline";
@@ -4334,10 +4296,10 @@ private:
           heartbeat_started = true;
         }
         left = bestAvailableDetourCandidateForSide(
-          getCenterlineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
+          getRacelineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error, +1);
         right = bestAvailableDetourCandidateForSide(
-          getCenterlineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
+          getRacelineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error, -1);
         selected = chooseCandidate(left, right);
         recordCandidateDecision(
@@ -4357,7 +4319,7 @@ private:
           0, raw_age, scan_age, valid_beam_ratio);
         heartbeat_started = true;
         recovery = bestAvailableRecoveryCandidate(
-          getCenterlineContext(), raw, *raw_message, hits, robot_position, robot_yaw,
+          getRacelineContext(), raw, *raw_message, hits, robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error);
         selected = recovery.valid ? &recovery : nullptr;
         failure_reason = "no valid raceline-recovery trajectory: " + recovery.reason;

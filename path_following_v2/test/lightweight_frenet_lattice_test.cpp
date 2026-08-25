@@ -54,6 +54,93 @@ TEST(LightweightFrenetLattice, KeepsStraightReferenceWhenItIsOpen)
   }
 }
 
+TEST(LightweightFrenetLattice, KeepsRacelineZeroInsideAsymmetricMapCorridor)
+{
+  auto problem = straightProblem(13, 0.5);
+  for (auto & station : problem.stations) {
+    station.lower_offset = -0.10;
+    station.upper_offset = 0.70;
+  }
+
+  const lattice::Solver solver(testConfig());
+  const auto result = solver.solve(problem);
+
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_FALSE(result.solutions.empty());
+  for (const double offset : result.solutions.front().offsets) {
+    EXPECT_NEAR(offset, 0.0, 1e-9);
+  }
+}
+
+TEST(LightweightFrenetLattice, RejectsMapBlockedSamplesDuringSearch)
+{
+  auto problem = straightProblem(17, 0.5);
+  const lattice::Solver solver(testConfig());
+  for (auto & station : problem.stations) {
+    station.sample_clearances.assign(
+      static_cast<std::size_t>(solver.sampleCount()),
+      std::numeric_limits<double>::infinity());
+    if (station.s < 2.0 || station.s > 3.0) {
+      continue;
+    }
+    for (int sample = 0; sample < solver.sampleCount(); ++sample) {
+      if (solver.sampleOffset(station, sample) < 0.30 - 1e-9) {
+        station.sample_clearances[static_cast<std::size_t>(sample)] = 0.0;
+      }
+    }
+  }
+
+  const auto result = solver.solve(problem);
+
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_FALSE(result.solutions.empty());
+  for (std::size_t index = 0; index < problem.stations.size(); ++index) {
+    if (problem.stations[index].s >= 2.0 && problem.stations[index].s <= 3.0) {
+      EXPECT_GE(result.solutions.front().offsets[index], 0.30 - 1e-9);
+    }
+  }
+}
+
+TEST(LightweightFrenetLattice, RejectsNegativeInfinityClearance)
+{
+  auto problem = straightProblem(7, 0.5);
+  const lattice::Solver solver(testConfig());
+  auto & required = problem.stations[1];
+  required.lower_offset = 0.0;
+  required.upper_offset = 0.0;
+  required.sample_clearances.assign(
+    static_cast<std::size_t>(solver.sampleCount()),
+    std::numeric_limits<double>::infinity());
+  for (int sample = 0; sample < solver.sampleCount(); ++sample) {
+    if (std::abs(solver.sampleOffset(required, sample)) <= 1e-9) {
+      required.sample_clearances[static_cast<std::size_t>(sample)] =
+        -std::numeric_limits<double>::infinity();
+    }
+  }
+
+  const auto result = solver.solve(problem);
+  EXPECT_FALSE(result.valid);
+}
+
+TEST(LightweightFrenetLattice, AllowsPositiveInfinityAsUnboundedClearance)
+{
+  auto problem = straightProblem(7, 0.5);
+  const lattice::Solver solver(testConfig());
+  for (auto & station : problem.stations) {
+    station.sample_clearances.assign(
+      static_cast<std::size_t>(solver.sampleCount()),
+      std::numeric_limits<double>::infinity());
+  }
+
+  const auto result = solver.solve(problem);
+
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_FALSE(result.solutions.empty());
+  for (const double offset : result.solutions.front().offsets) {
+    EXPECT_NEAR(offset, 0.0, 1e-9);
+  }
+}
+
 TEST(LightweightFrenetLattice, FindsBoundedLeftPassageAndReturns)
 {
   auto problem = straightProblem(17, 0.5);

@@ -118,10 +118,24 @@ def test_local_planner_search_limits_match_in_both_profiles():
             )
         )
         planner = document["local_trajectory_planner"]["ros__parameters"]
+        generator = document["path_generator"]["ros__parameters"]
         follower = document["path_following_v2"]["ros__parameters"]
 
         assert planner["curvature_safety_factor"] > 1.0
         assert follower["wheelbase_m"] == planner["wheelbase_m"]
+        assert planner["raw_path_topic"] == generator["local_path_topic"]
+        assert planner["raceline_reference_topic"] == "/raceline_path"
+        assert planner["require_raceline_reference"] is True
+        assert planner["raceline_reference_match_tolerance_m"] > 0.0
+        assert planner["require_map_clearance"] is True
+        removed_centerline_contract = {
+            "centerline_csv_path",
+            "centerline_direction",
+            "centerline_frame",
+            "centerline_closed_loop",
+            "require_centerline_reference",
+        }
+        assert removed_centerline_contract.isdisjoint(planner)
         profiles.append(
             (
                 planner["max_lateral_shift_m"],
@@ -130,6 +144,41 @@ def test_local_planner_search_limits_match_in_both_profiles():
         )
 
     assert profiles[0] == profiles[1] == (0.9, 2.7)
+
+
+def test_runtime_launches_have_no_centerline_planning_arguments():
+    launch_files = (
+        "path_following_v2/launch/path_following_v2_launch.py",
+        "path_following_v2/launch/path_following_v2_sim_launch.py",
+        "oudtra_driver_bringup/launch/full_stack_onboard_launch.py",
+        "oudtra_driver_bringup/launch/full_stack_sim_launch.py",
+    )
+    for relative_path in launch_files:
+        source = (REPOSITORY / relative_path).read_text(encoding="utf-8")
+        assert "centerline_csv_path" not in source
+        assert "centerline_direction" not in source
+
+
+def test_raceline_publisher_and_planner_share_one_reference():
+    for suffix in ("", "_sim"):
+        path_config = yaml.safe_load(
+            (
+                REPOSITORY
+                / f"path_following_v2/config/path_following_v2{suffix}.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        publisher = _parameters(
+            f"centerline_tools/config/raceline_publisher{suffix}.yaml",
+            "raceline_publisher",
+        )
+        generator = path_config["path_generator"]["ros__parameters"]
+        planner = path_config["local_trajectory_planner"]["ros__parameters"]
+
+        assert publisher["path_topic"] == planner["raceline_reference_topic"]
+        assert (
+            publisher["waypoints_topic"]
+            == generator["raceline_waypoints_topic"]
+        )
 
 
 def test_planning_freshness_windows_match_in_both_profiles():

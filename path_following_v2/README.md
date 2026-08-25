@@ -9,8 +9,8 @@ trajectory planner.
 /raceline_waypoints
         -> path_generator
         -> /path_following_v2/raceline_local_path  (raw, metric horizon)
-centerline_points_smooth.csv (loaded once at planner startup)
-                         + /scan + map->base TF
+/raceline_path (full static path from the same racing-line CSV)
+                         + /scan + map + map->base TF
                          -> local_trajectory_planner
                          -> /path_following_v2/local_path          (final)
                          -> /path_following_v2/path_status
@@ -22,13 +22,13 @@ centerline_points_smooth.csv (loaded once at planner startup)
                                       -> /path_following_v2/nominal_cmd
 ```
 
-The final local path is the raw raceline or a persistent map-frame trajectory
-planned in centerline-relative coordinates. The centerline supplies a stable
-track frame, while the raceline remains the path the planner prefers whenever
-clearance permits. While a local plan is active, its remaining modified section
-is joined to the newest raw raceline so the controller continues to receive a
-full forward trajectory. Existing follower, guard, and arbitrator topic
-interfaces remain unchanged.
+The final local path is the raw racing line or a persistent map-frame trajectory
+planned directly in racing-line-relative coordinates. The transient-local full
+`/raceline_path` is the sole Frenet reference, so the normal and rejoin target is
+always `d=0`; no centerline CSV is loaded by the planner. While a local plan is
+active, its remaining modified section is joined to the newest raw racing-line
+window so the controller continues to receive a full forward trajectory.
+Existing follower, guard, and arbitrator topic interfaces remain unchanged.
 
 ## Common vehicle envelope
 
@@ -64,7 +64,7 @@ local_path_max_points: 600
 ```
 
 At roughly `0.03 m` spacing, 14 m is about 467 points. The simulator keeps the
-10 m LiDAR cap while allowing the known path and centerline horizon to extend
+10 m LiDAR cap while allowing the known racing-line horizon to extend
 farther:
 
 ```yaml
@@ -113,17 +113,18 @@ The node is named `local_trajectory_planner`, because it has two related jobs:
    raceline.
 
 The obstacle trigger still checks whether a LiDAR cluster intersects the raw
-raceline. Once triggered, candidate search uses centerline-relative coordinates:
+racing line. Once triggered, candidate search uses racing-line-relative coordinates:
 
-- `s`: distance forward along the centerline;
-- `d`: signed lateral offset from the centerline, positive to the left.
+- `s`: distance forward along the global racing line;
+- `d`: signed lateral offset from the racing line, positive to the left.
 
-At every planning station, the raw raceline is converted into its corresponding
-centerline offset. That offset is the preferred target, not a hard requirement,
-so the planner can move across the track to pass an obstacle and then return.
-`centerline_direction: auto` compares the local centerline tangent with the
-published raceline and reverses the centerline window when necessary. This
-handles generated centerline/raceline CSVs whose stored point orders differ.
+At every unmodified planning station the preferred target is exactly `d=0`.
+The planner may move across the track to pass an obstacle, then returns to zero.
+The runtime racing-line publisher is the single owner of CSV parsing, traversal
+direction, and loop closure; both the raw-window generator and planner consume
+its outputs. Before lattice search, the planner samples the global reference
+against the raw window and fails closed if their geometry differs by more than
+`raceline_reference_match_tolerance_m` (default `0.10 m`).
 
 The recovery hysteresis is:
 
@@ -142,11 +143,12 @@ raceline.
 Each plan starts from the actual localized car pose. It does not assume that
 the car is already on the raceline. The primary planner then:
 
-1. Extracts one forward centerline window; the CSV is already in memory.
+1. Extracts one forward window from the full transient-local racing-line path.
 2. Places longitudinal stations at a fixed physical spacing.
 3. Samples a fixed grid of lateral offsets at each station.
-4. Removes samples that violate the selected passing side, vehicle envelope,
-   maximum lateral shift, slope, or steering-derived curvature limit.
+4. Removes samples that violate the selected passing side, map-derived
+   asymmetric corridor, vehicle envelope, maximum lateral shift, slope, or
+   steering-derived curvature limit.
 5. Uses a bounded dynamic-programming beam search to retain only the cheapest
    partial paths.
 6. Optimizes each promising offset sequence inside its connected safe corridor.
@@ -258,9 +260,10 @@ This open/closed rule prevents scan noise or incomparable solver scores from
 flipping the avoidance direction.
 
 For a brand-new maneuver only, `lattice_fallback_to_legacy_planner` still lets
-the bounded quintic generator make one deterministic attempt if centerline
-search cannot produce a final-valid path. Once a centerline maneuver is active,
-that fallback is disabled so replanning cannot create a discontinuous swerve.
+the bounded quintic generator make one deterministic attempt if racing-line
+Frenet search cannot produce a final-valid path. Once a lattice maneuver is
+active, that fallback is disabled so replanning cannot create a discontinuous
+swerve.
 
 ## Exactly how a plan is held
 
@@ -358,10 +361,10 @@ curvature, remaining-path maximum curvature, `side_committed`,
 
 ## Bounded computation
 
-Pure raceline following does not run lattice search. The centerline CSV is read
-once at startup, and a local centerline window is prepared only when a new plan
-or material replan is actually requested. There is no external optimization
-process or nonlinear solver.
+Pure racing-line following does not run lattice search. The planner receives the
+full global racing line once through transient-local QoS and prepares a local
+Frenet window only when a new plan or material replan is requested. There is no
+second CSV parser, external optimization process, or nonlinear solver.
 
 Search work is bounded by station spacing, lateral spacing, beam width, final
 candidate count, and a per-side time budget. Corridor optimization uses 12
@@ -472,9 +475,10 @@ Publishes the raw metric raceline window, rule speed index, and upstream status.
 Inputs:
 
 - `/path_following_v2/raceline_local_path`
+- `/raceline_path` (full global Frenet reference from the same CSV publisher)
 - `/scan`
+- `/map`
 - TF from the raw-path frame to `robot_frame`
-- `centerline_csv_path`, loaded locally once rather than subscribed as a topic
 
 Outputs:
 
@@ -501,13 +505,12 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
 The simulator full-stack launch drives the validated optimized IFAC Roboracer
-raceline by default while retaining its `centerline_points_smooth.csv` as the
-planner's Frenet frame. To select another generated pair explicitly:
+racing line by default and uses that same published path as the planner's Frenet
+frame. To select another racing line explicitly:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
-  raceline_csv_path:=/absolute/path/raceline_points_smooth.csv \
-  centerline_csv_path:=/absolute/path/centerline_points_smooth.csv
+  raceline_csv_path:=/absolute/path/raceline_points_smooth.csv
 ```
 
 The retained manually tuned Spielberg simulator raceline remains at

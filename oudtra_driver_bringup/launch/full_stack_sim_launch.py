@@ -9,7 +9,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    centerline_share = get_package_share_directory("centerline_tools")
+    raceline_tools_share = get_package_share_directory("centerline_tools")
     path_share = get_package_share_directory("path_following_v2")
     reactive_share = get_package_share_directory("reactive_control_v2")
     arbitration_share = get_package_share_directory("drive_arbitration_v2")
@@ -40,16 +40,6 @@ def generate_launch_description():
             "raceline_direction",
             default_value="csv",
             description="Raceline traversal direction: csv/normal or reverse.",
-        ),
-        DeclareLaunchArgument(
-            "centerline_csv_path",
-            default_value="/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/centerline_points_smooth.csv",
-            description="Centerline CSV used as the lightweight planning frame.",
-        ),
-        DeclareLaunchArgument(
-            "centerline_direction",
-            default_value="auto",
-            description="Centerline traversal: auto-align, csv/normal, or reverse.",
         ),
         DeclareLaunchArgument(
             "path_config",
@@ -95,7 +85,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(
-                    centerline_share, "launch", "raceline_publisher_sim_launch.py"
+                    raceline_tools_share, "launch", "raceline_publisher_sim_launch.py"
                 )
             ),
             launch_arguments={
@@ -122,17 +112,7 @@ def generate_launch_description():
             executable="local_trajectory_planner_node",
             name="local_trajectory_planner",
             output="screen",
-            parameters=[
-                path_config,
-                {
-                    "centerline_csv_path": LaunchConfiguration(
-                        "centerline_csv_path"
-                    ),
-                    "centerline_direction": LaunchConfiguration(
-                        "centerline_direction"
-                    ),
-                },
-            ],
+            parameters=[path_config],
             arguments=[
                 "--ros-args",
                 "--log-level",

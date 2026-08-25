@@ -17,7 +17,7 @@ CENTERLINE_RELATIVE = IFAC_DIRECTORY / "centerline_points_smooth.csv"
 REPORT_RELATIVE = IFAC_DIRECTORY / "raceline_points_optimized_validation.yaml"
 
 
-def _launch_argument_defaults():
+def _launch_arguments():
     tree = ast.parse(LAUNCH_FILE.read_text(encoding="utf-8"))
     defaults = {}
     for node in ast.walk(tree):
@@ -28,11 +28,12 @@ def _launch_argument_defaults():
         if node.func.id != "DeclareLaunchArgument" or not node.args:
             continue
         name = ast.literal_eval(node.args[0])
-        if name not in {"raceline_csv_path", "centerline_csv_path"}:
-            continue
         for keyword in node.keywords:
             if keyword.arg == "default_value":
-                defaults[name] = ast.literal_eval(keyword.value)
+                try:
+                    defaults[name] = ast.literal_eval(keyword.value)
+                except (TypeError, ValueError):
+                    defaults[name] = None
                 break
     return defaults
 
@@ -42,12 +43,11 @@ def _sha256(path):
 
 
 def test_simulator_defaults_to_validated_optimized_raceline():
-    defaults = _launch_argument_defaults()
+    defaults = _launch_arguments()
     expected_runtime_path = f"/sim_ws/src/{OPTIMIZED_RELATIVE.as_posix()}"
     assert defaults["raceline_csv_path"] == expected_runtime_path
-    assert defaults["centerline_csv_path"] == (
-        f"/sim_ws/src/{CENTERLINE_RELATIVE.as_posix()}"
-    )
+    assert "centerline_csv_path" not in defaults
+    assert "centerline_direction" not in defaults
 
     optimized = REPOSITORY / OPTIMIZED_RELATIVE
     centerline = REPOSITORY / CENTERLINE_RELATIVE
@@ -57,6 +57,8 @@ def test_simulator_defaults_to_validated_optimized_raceline():
 
     assert optimized.is_file()
     assert centerline.is_file()
+    # The centerline remains valid offline optimizer provenance, but it is no
+    # longer a runtime planning input or launch argument.
     assert optimized.read_bytes() != centerline.read_bytes()
     assert report["outputs"]["raceline"] == OPTIMIZED_RELATIVE.as_posix()
     assert report["outputs"]["raceline_sha256"] == _sha256(optimized)

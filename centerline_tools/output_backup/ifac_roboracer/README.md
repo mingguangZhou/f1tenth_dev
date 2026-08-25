@@ -53,6 +53,8 @@ f1 sim --no-agents \
 
 ```bash
 f1 auto \
-  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv \
-  centerline_csv_path:=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/centerline_points_smooth.csv
+  raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
 ```
+
+That racing line supplies both the driven path and the planner's Frenet frame.
+The smooth centerline is retained only as offline optimizer provenance.

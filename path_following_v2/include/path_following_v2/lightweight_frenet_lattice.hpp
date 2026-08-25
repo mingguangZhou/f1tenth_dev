@@ -347,7 +347,12 @@ private:
     }
     if (!station.sample_clearances.empty()) {
       const double clearance = station.sample_clearances[static_cast<std::size_t>(sample_index)];
-      if (std::isfinite(clearance) && clearance <= config_.collision_clearance_m) {
+      // +infinity means no observed/map limitation. NaN and -infinity mean
+      // unavailable or out-of-map evidence and must fail closed.
+      if (std::isnan(clearance) ||
+        clearance == -std::numeric_limits<double>::infinity() ||
+        (std::isfinite(clearance) && clearance <= config_.collision_clearance_m))
+      {
         return false;
       }
     }

@@ -28,8 +28,9 @@ f1 auto \
   raceline_csv_path:=/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
 ```
 
-This changes only the driven raceline. The smooth centerline remains the local
-planner's Frenet reference.
+This changes both the driven path and the local planner's Frenet reference. The
+published racing line is the single reference, with its nominal/rejoin target at
+`d=0`; the planner does not load a separate centerline CSV.
 
 Onboard:
 
@@ -43,11 +44,10 @@ Simulator (no particle filter and no `/pf/health` requirement):
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
-Both launches preserve the direction stored in the CSV by default
-(`raceline_direction:=csv`). The centerline uses
-`centerline_direction:=auto`, which matches its local direction to the
-published raceline even when the two generated CSV files have opposite point
-order. To traverse the selected raceline in reverse:
+Both launches preserve the direction stored in the racing-line CSV by default
+(`raceline_direction:=csv`). The racing-line publisher applies the selected
+direction once, and both the local path generator and planner consume that same
+published geometry. To traverse the selected racing line in reverse:
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \

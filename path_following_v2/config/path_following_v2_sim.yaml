@@ -65,6 +65,9 @@ local_trajectory_planner:
     # INTERFACES, FRAME AND FRESHNESS
     # --------------------------------------------------------
     raw_path_topic: "/path_following_v2/raceline_local_path"
+    # Full static path published from the same racing-line CSV. This is the
+    # planner's sole Frenet reference; normal/rejoin offset is d=0.
+    raceline_reference_topic: "/raceline_path"
     final_path_topic: "/path_following_v2/local_path"
     scan_topic: "/scan"
     speed_cap_topic: "/path_following_v2/trajectory_speed_cap_mps"
@@ -134,15 +137,14 @@ local_trajectory_planner:
     curvature_safety_factor: 2.7
 
     # --------------------------------------------------------
-    # LIGHTWEIGHT CENTERLINE-FRAME LATTICE
-    # The launch file supplies the centerline CSV and direction. Search is
-    # discrete and explicitly bounded; the existing geometric validator is
-    # still the final authority. Legacy curves are allowed only while opening
-    # a new maneuver, never during a latched-side replan.
+    # LIGHTWEIGHT RACING-LINE-FRAME LATTICE
+    # The global racing-line topic is the Frenet frame. Search is discrete and
+    # explicitly bounded; the existing geometric validator is still the final
+    # authority. Legacy curves are allowed only while opening a new maneuver,
+    # never during a latched-side replan.
     # --------------------------------------------------------
-    centerline_frame: "map"
-    centerline_closed_loop: true
-    require_centerline_reference: true
+    require_raceline_reference: true
+    raceline_reference_match_tolerance_m: 0.10
     enable_frenet_lattice_planner: true
     lattice_fallback_to_legacy_planner: true
     lattice_station_step_m: 0.30

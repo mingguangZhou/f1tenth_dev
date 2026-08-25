@@ -45,7 +45,7 @@ struct Result
   std::string reason{"not solved"};
 };
 
-// Solves a small convex least-squares problem directly in centerline-relative
+// Solves a small convex least-squares problem directly in Frenet-reference-relative
 // offsets. Every coordinate update is projected back into its local corridor,
 // so smoothing can never trade away a hard lateral boundary. The dense matrix
 // is intentionally used here: local plans contain only a few dozen stations,
