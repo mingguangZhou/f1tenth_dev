@@ -56,7 +56,7 @@ upper_corridor_follower:
     # ADVANCED: smaller slice/sample steps cost more CPU.
     # ========================================================
     forward_start_m: 0.30
-    forward_max_m: 1.5
+    forward_max_m: 3.0
     forward_slice_step_m: 0.20
     lateral_limit_m: 1.2
     lateral_sample_step_m: 0.05
@@ -92,8 +92,8 @@ upper_corridor_follower:
     wheelbase_m: 0.33
     steering_max_deg: 20.6
     steering_filter_alpha: 0.40
-    velocity_max_mps: 1.65
-    velocity_min_mps: 0.75
+    velocity_max_mps: 2.0
+    velocity_min_mps: 1.0
     slow_reach_distance_m: 1.00
     stop_reach_distance_m: 0.50
 
@@ -241,12 +241,12 @@ lower_safety_controller:
     reverse_min_duration_sec: 0.30
     reverse_max_distance_m: 0.50
     reverse_max_duration_sec: 2.0
-    reverse_max_attempts: 50
+    reverse_max_attempts: 500
     reverse_attempt_reset_forward_time_sec: 0.30
     reverse_attempt_reset_speed_mps: 0.20
     wrong_way_reverse_steering_deg: 25.0
     wrong_way_reverse_min_side_clearance_m: 0.50
-    wrong_way_reverse_max_attempts: 4
+    wrong_way_reverse_max_attempts: 40
 
     # ========================================================
     # 8. REVERSE EXIT AND FORWARD HANDOFF
