@@ -1401,39 +1401,6 @@ private:
     return true;
   }
 
-  std::vector<ScanHit> minimumRangePoolPlanningHits(
-    const std::vector<ScanHit> & full_resolution_hits,
-    const std::size_t requested_pool_size) const
-  {
-    const std::size_t pool_size = std::max<std::size_t>(1, requested_pool_size);
-    if (pool_size == 1 || full_resolution_hits.empty()) {
-      return full_resolution_hits;
-    }
-
-    std::vector<ScanHit> pooled;
-    pooled.reserve((full_resolution_hits.size() + pool_size - 1) / pool_size);
-    std::size_t current_bin = std::numeric_limits<std::size_t>::max();
-    for (const auto & hit : full_resolution_hits) {
-      const std::size_t bin = hit.beam_index / pool_size;
-      if (pooled.empty() || bin != current_bin) {
-        pooled.push_back(hit);
-        pooled.back().beam_index = bin;
-        current_bin = bin;
-        continue;
-      }
-
-      auto & selected = pooled.back();
-      const std::size_t accumulated_support =
-        selected.support_count + hit.support_count;
-      if (hit.range < selected.range) {
-        selected = hit;
-        selected.beam_index = bin;
-      }
-      selected.support_count = accumulated_support;
-    }
-    return pooled;
-  }
-
   std::vector<ObstacleCluster> clusterScanHits(
     const std::vector<ScanHit> & hits, const double detection_distance) const
   {
@@ -3022,7 +2989,8 @@ private:
       last_reference_source_ = "racingline_frenet_corridor";
       Candidate lattice = bestLatticeCandidate(
         context, robot_position, robot_yaw, 0, false);
-      if (lattice.valid || !lattice_fallback_to_legacy_planner_ ||
+      if (lattice.valid || static_obstacle_fast_mode_ ||
+        !lattice_fallback_to_legacy_planner_ ||
         !allow_legacy_fallback)
       {
         return lattice;
@@ -3042,6 +3010,15 @@ private:
       unavailable.trajectory_mode = "RECOVERING_TO_RACELINE";
       unavailable.reason = context.reason;
       last_reference_source_ = "racingline_reference_unavailable";
+      return unavailable;
+    }
+    if (static_obstacle_fast_mode_) {
+      Candidate unavailable;
+      unavailable.side = 0;
+      unavailable.trajectory_mode = "RECOVERING_TO_RACELINE";
+      unavailable.reason = enable_frenet_lattice_planner_ ? context.reason :
+        "static-obstacle fast mode requires the bounded Frenet recovery lattice";
+      last_reference_source_ = "racingline_static_recovery_unavailable";
       return unavailable;
     }
     last_reference_source_ = "racingline_legacy";
@@ -4381,9 +4358,10 @@ private:
         if (!planning_hits_prepared) {
           // Reuse already transformed/projected endpoints. This avoids a
           // second TF lookup and a second trigonometric/projection pass.
-          pooled_planning_hits = minimumRangePoolPlanningHits(
-            full_resolution_hits,
-            static_cast<std::size_t>(planning_scan_pool_size_));
+          pooled_planning_hits =
+            path_following_v2::scan_pooling::minimumRangePoolProjectedHits(
+              full_resolution_hits,
+              static_cast<std::size_t>(planning_scan_pool_size_));
           planning_hits_prepared = true;
         }
         return pooled_planning_hits;

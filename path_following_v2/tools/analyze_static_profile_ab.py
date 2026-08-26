@@ -58,6 +58,9 @@ COMPARISON_METRICS = {
     "plan_latency_p95_ms": "All accepted plan latency p95 (ms)",
     "plan_grid_median_ms": "Clearance-grid median (ms)",
     "plan_dp_median_ms": "Lattice DP median (ms)",
+    "static_planning_total_median_ms": "Static planning total median (ms)",
+    "static_analytic_time_median_ms": "Static analytic time median (ms)",
+    "static_side_score_time_median_ms": "Static side-score time median (ms)",
     "minimum_plan_clearance_m": "Minimum accepted clearance (m)",
     "maximum_plan_curvature_inv_m": "Maximum accepted curvature (1/m)",
     "straight_cte_p95_m": "Straight-raceline CTE p95 (m)",
@@ -91,6 +94,21 @@ def finite_int(value: Any) -> int | None:
     if number is None:
         return None
     return int(number)
+
+
+def optional_bool(value: Any) -> bool | None:
+    """Parse diagnostic boolean spellings without treating missing as false."""
+
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    lowered = str(value).strip().lower()
+    if lowered in ("true", "1", "yes", "on"):
+        return True
+    if lowered in ("false", "0", "no", "off"):
+        return False
+    return None
 
 
 def percentile(values: Sequence[float], quantile: float) -> float | None:
@@ -307,6 +325,24 @@ def extract_plan_attempts(events: Sequence[Mapping[str, Any]]) -> list[dict[str,
                 "maximum_curvature_inv_m": finite_float(
                     planner.get("maximum_curvature_inv_m")
                 ),
+                "static_obstacle_fast_mode": optional_bool(
+                    planner.get("static_obstacle_fast_mode")
+                ),
+                "static_planning_backend": (
+                    str(planner.get("static_planning_backend", "")).strip() or None
+                ),
+                "static_analytic_candidates_evaluated": finite_int(
+                    planner.get("static_analytic_candidates_evaluated")
+                ),
+                "static_analytic_time_ms": finite_float(
+                    planner.get("static_analytic_time_ms")
+                ),
+                "static_side_score_time_ms": finite_float(
+                    planner.get("static_side_score_time_ms")
+                ),
+                "static_planning_total_time_ms": finite_float(
+                    planner.get("static_planning_total_time_ms")
+                ),
             }
         )
         attempts.append(active)
@@ -328,6 +364,12 @@ def extract_plan_attempts(events: Sequence[Mapping[str, Any]]) -> list[dict[str,
                 "unattributed_latency_ms": None,
                 "minimum_clearance_m": None,
                 "maximum_curvature_inv_m": None,
+                "static_obstacle_fast_mode": None,
+                "static_planning_backend": None,
+                "static_analytic_candidates_evaluated": None,
+                "static_analytic_time_ms": None,
+                "static_side_score_time_ms": None,
+                "static_planning_total_time_ms": None,
             }
         )
         attempts.append(active)
@@ -366,9 +408,68 @@ def accepted_plan_rows(rows: Sequence[Mapping[str, str]]) -> list[dict[str, Any]
                 "maximum_curvature_inv_m": finite_float(
                     row.get("planner_maximum_curvature_inv_m")
                 ),
+                "static_obstacle_fast_mode": optional_bool(
+                    row.get("planner_static_obstacle_fast_mode")
+                ),
+                "static_planning_backend": (
+                    str(row.get("planner_static_planning_backend", "")).strip()
+                    or None
+                ),
+                "static_analytic_candidates_evaluated": finite_int(
+                    row.get("planner_static_analytic_candidates_evaluated")
+                ),
+                "static_analytic_time_ms": finite_float(
+                    row.get("planner_static_analytic_time_ms")
+                ),
+                "static_side_score_time_ms": finite_float(
+                    row.get("planner_static_side_score_time_ms")
+                ),
+                "static_planning_total_time_ms": finite_float(
+                    row.get("planner_static_planning_total_time_ms")
+                ),
             }
         )
     return plans
+
+
+def static_planning_metrics(plans: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize the optional static-fast diagnostics on a set of attempts."""
+
+    backend_counts: Counter[str] = Counter()
+    fast_mode_counts: Counter[str] = Counter()
+    for plan in plans:
+        backend = str(plan.get("static_planning_backend") or "").strip()
+        if backend:
+            backend_counts[backend] += 1
+        fast_mode = optional_bool(plan.get("static_obstacle_fast_mode"))
+        if fast_mode is True:
+            fast_mode_counts["true"] += 1
+        elif fast_mode is False:
+            fast_mode_counts["false"] += 1
+        else:
+            fast_mode_counts["missing"] += 1
+
+    return {
+        "plan_count": len(plans),
+        "backend_counts": dict(sorted(backend_counts.items())),
+        "backend_missing_count": len(plans) - sum(backend_counts.values()),
+        "fast_mode_counts": {
+            key: int(fast_mode_counts.get(key, 0))
+            for key in ("true", "false", "missing")
+        },
+        "analytic_candidates_evaluated": describe(
+            plan.get("static_analytic_candidates_evaluated") for plan in plans
+        ),
+        "analytic_time_ms": describe(
+            plan.get("static_analytic_time_ms") for plan in plans
+        ),
+        "side_score_time_ms": describe(
+            plan.get("static_side_score_time_ms") for plan in plans
+        ),
+        "total_time_ms": describe(
+            plan.get("static_planning_total_time_ms") for plan in plans
+        ),
+    }
 
 
 def plan_metrics(
@@ -398,6 +499,7 @@ def plan_metrics(
             "hold_to_accepted_ms": describe(
                 attempt.get("hold_to_outcome_ms") for attempt in selected
             ),
+            "static_planning": static_planning_metrics(selected),
         }
 
     return {
@@ -434,6 +536,10 @@ def plan_metrics(
         "maximum_curvature_inv_m": describe(
             item.get("maximum_curvature_inv_m") for item in plans
         ),
+        "static_planning": {
+            "accepted_plans": static_planning_metrics(plans),
+            "completed_attempts": static_planning_metrics(completed),
+        },
         "by_kind": by_kind,
         "attempts": list(attempts),
     }
@@ -821,6 +927,15 @@ def make_scorecard(trial: Mapping[str, Any]) -> dict[str, Any]:
             plan, "lattice_clearance_grid_time_ms.median"
         ),
         "plan_dp_median_ms": nested_value(plan, "lattice_compute_time_ms.median"),
+        "static_planning_total_median_ms": nested_value(
+            plan, "static_planning.accepted_plans.total_time_ms.median"
+        ),
+        "static_analytic_time_median_ms": nested_value(
+            plan, "static_planning.accepted_plans.analytic_time_ms.median"
+        ),
+        "static_side_score_time_median_ms": nested_value(
+            plan, "static_planning.accepted_plans.side_score_time_ms.median"
+        ),
         "minimum_plan_clearance_m": nested_value(plan, "minimum_clearance_m.minimum"),
         "maximum_plan_curvature_inv_m": nested_value(
             plan, "maximum_curvature_inv_m.maximum"
@@ -932,6 +1047,9 @@ def aggregate_profile(name: str, root: Path, trials: Sequence[Mapping[str, Any]]
         for attempt in trial["planning"]["attempts"]
         if attempt.get("outcome") == "accepted"
     ]
+    accepted_initial_attempts = [
+        attempt for attempt in accepted_attempts if attempt.get("kind") == "initial"
+    ]
     all_lap_durations = [
         duration
         for trial in trials
@@ -983,6 +1101,10 @@ def aggregate_profile(name: str, root: Path, trials: Sequence[Mapping[str, Any]]
             "maximum_curvature_inv_m": describe(
                 attempt.get("maximum_curvature_inv_m")
                 for attempt in accepted_attempts
+            ),
+            "static_planning": static_planning_metrics(accepted_attempts),
+            "static_planning_initial": static_planning_metrics(
+                accepted_initial_attempts
             ),
         },
         "lap_level": describe(all_lap_durations),
@@ -1223,6 +1345,54 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             overview_rows,
         )
     )
+    lines.extend(["", "## Static-fast backend diagnostics", ""])
+    static_rows = []
+    for profile in (baseline, candidate):
+        static = profile["plan_level"]["static_planning"]
+        initial_static = profile["plan_level"]["static_planning_initial"]
+
+        def backend_text(metrics: Mapping[str, Any]) -> str:
+            text = ", ".join(
+                f"{name}: {count}"
+                for name, count in metrics["backend_counts"].items()
+            )
+            if metrics["backend_missing_count"]:
+                missing = f"missing: {metrics['backend_missing_count']}"
+                text = f"{text}, {missing}" if text else missing
+            return text or "—"
+
+        fast = static["fast_mode_counts"]
+        static_rows.append(
+            [
+                profile["name"],
+                backend_text(static),
+                backend_text(initial_static),
+                f"{fast['true']} / {fast['false']} / {fast['missing']}",
+                format_number(static["analytic_candidates_evaluated"]["median"], 2),
+                format_number(static["analytic_time_ms"]["median"], 3),
+                format_number(static["analytic_time_ms"]["p95"], 3),
+                format_number(static["side_score_time_ms"]["median"], 3),
+                format_number(static["total_time_ms"]["median"], 3),
+                format_number(static["total_time_ms"]["p95"], 3),
+            ]
+        )
+    lines.extend(
+        markdown_table(
+            [
+                "Profile",
+                "Accepted backend counts",
+                "Initial backend counts",
+                "Fast true / false / missing",
+                "Analytic candidates p50",
+                "Analytic p50 ms",
+                "Analytic p95 ms",
+                "Side-score p50 ms",
+                "Static total p50 ms",
+                "Static total p95 ms",
+            ],
+            static_rows,
+        )
+    )
     lines.extend(["", "## Paired comparison", ""])
     comparison_rows = []
     for metric in COMPARISON_METRICS:
@@ -1304,9 +1474,21 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                         attempt.get("kind"),
                         attempt.get("outcome"),
                         attempt.get("plan_id") or "—",
+                        attempt.get("static_planning_backend") or "—",
+                        (
+                            str(attempt.get("static_obstacle_fast_mode")).lower()
+                            if attempt.get("static_obstacle_fast_mode") is not None
+                            else "—"
+                        ),
+                        attempt.get("static_analytic_candidates_evaluated")
+                        if attempt.get("static_analytic_candidates_evaluated") is not None
+                        else "—",
                         format_number(attempt.get("hold_to_outcome_ms"), 3),
                         format_number(attempt.get("lattice_clearance_grid_time_ms"), 3),
                         format_number(attempt.get("lattice_compute_time_ms"), 3),
+                        format_number(attempt.get("static_analytic_time_ms"), 3),
+                        format_number(attempt.get("static_side_score_time_ms"), 3),
+                        format_number(attempt.get("static_planning_total_time_ms"), 3),
                         format_number(attempt.get("unattributed_latency_ms"), 3),
                         format_number(attempt.get("minimum_clearance_m"), 4),
                         format_number(attempt.get("maximum_curvature_inv_m"), 4),
@@ -1323,9 +1505,15 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                     "Kind",
                     "Outcome",
                     "Plan",
+                    "Backend",
+                    "Fast",
+                    "Analytic candidates",
                     "Total ms",
                     "Grid ms",
                     "DP ms",
+                    "Analytic ms",
+                    "Side-score ms",
+                    "Static total ms",
                     "Other ms",
                     "Clearance m",
                     "Curvature 1/m",

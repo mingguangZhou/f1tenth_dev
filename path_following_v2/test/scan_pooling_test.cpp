@@ -12,6 +12,15 @@ namespace
 
 using path_following_v2::scan_pooling::RangeLimits;
 using path_following_v2::scan_pooling::minimumRangePool;
+using path_following_v2::scan_pooling::minimumRangePoolProjectedHits;
+
+struct ProjectedHit
+{
+  std::size_t beam_index{0};
+  std::size_t support_count{1};
+  double range{0.0};
+  int payload{0};
+};
 
 TEST(ScanPooling, FullResolutionPreservesEveryUsableSampleExactly)
 {
@@ -140,6 +149,63 @@ TEST(ScanPooling, EmptyInputHasZeroValidityRatio)
   EXPECT_EQ(result.raw_beam_count, 0U);
   EXPECT_EQ(result.valid_beam_count, 0U);
   EXPECT_DOUBLE_EQ(result.validBeamRatio(), 0.0);
+}
+
+TEST(ScanPooling, ProjectedHitsGroupByRawBinAndAccumulateSupportAtMinimum)
+{
+  const std::vector<ProjectedHit> hits{
+    {0U, 1U, 3.0, 10},
+    {1U, 2U, 2.0, 11},
+    {2U, 4U, 5.0, 12},
+    {3U, 1U, 1.0, 13},
+  };
+
+  const auto pooled = minimumRangePoolProjectedHits(hits, 2);
+
+  ASSERT_EQ(pooled.size(), 2U);
+  EXPECT_EQ(pooled[0].beam_index, 0U);
+  EXPECT_EQ(pooled[0].support_count, 3U);
+  EXPECT_DOUBLE_EQ(pooled[0].range, 2.0);
+  EXPECT_EQ(pooled[0].payload, 11);
+  EXPECT_EQ(pooled[1].beam_index, 1U);
+  EXPECT_EQ(pooled[1].support_count, 5U);
+  EXPECT_DOUBLE_EQ(pooled[1].range, 1.0);
+  EXPECT_EQ(pooled[1].payload, 13);
+}
+
+TEST(ScanPooling, ProjectedHitsPreserveGapsAsPooledBinOrdinals)
+{
+  const std::vector<ProjectedHit> hits{
+    {1U, 1U, 2.0, 20},
+    {6U, 1U, 3.0, 21},
+    {7U, 1U, 2.5, 22},
+  };
+
+  const auto pooled = minimumRangePoolProjectedHits(hits, 3);
+
+  ASSERT_EQ(pooled.size(), 2U);
+  EXPECT_EQ(pooled[0].beam_index, 0U);
+  EXPECT_EQ(pooled[0].payload, 20);
+  EXPECT_EQ(pooled[1].beam_index, 2U);
+  EXPECT_EQ(pooled[1].support_count, 2U);
+  EXPECT_DOUBLE_EQ(pooled[1].range, 2.5);
+  EXPECT_EQ(pooled[1].payload, 22);
+}
+
+TEST(ScanPooling, ProjectedHitsKeepEarliestPayloadOnTiedMinimum)
+{
+  const std::vector<ProjectedHit> hits{
+    {4U, 2U, 1.0, 30},
+    {5U, 3U, 1.0, 31},
+  };
+
+  const auto pooled = minimumRangePoolProjectedHits(hits, 2);
+
+  ASSERT_EQ(pooled.size(), 1U);
+  EXPECT_EQ(pooled.front().beam_index, 2U);
+  EXPECT_EQ(pooled.front().support_count, 5U);
+  EXPECT_DOUBLE_EQ(pooled.front().range, 1.0);
+  EXPECT_EQ(pooled.front().payload, 30);
 }
 
 }  // namespace

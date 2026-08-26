@@ -104,6 +104,49 @@ Result minimumRangePool(
   return result;
 }
 
+// Pool endpoints that have already been transformed/projected by the caller.
+// HitContainer::value_type must expose beam_index, support_count, and range.
+// Input hits are expected in ascending raw beam order. The selected endpoint
+// retains every other field from the minimum-range hit, while beam_index is
+// rewritten to the pooled-bin ordinal and support_count accumulates all usable
+// evidence represented by that bin.
+template<typename HitContainer>
+std::vector<typename HitContainer::value_type> minimumRangePoolProjectedHits(
+  const HitContainer & full_resolution_hits,
+  const std::size_t requested_pool_size)
+{
+  using Hit = typename HitContainer::value_type;
+  const std::size_t pool_size = std::max<std::size_t>(1, requested_pool_size);
+  if (pool_size == 1 || full_resolution_hits.empty()) {
+    return std::vector<Hit>(full_resolution_hits.begin(), full_resolution_hits.end());
+  }
+
+  std::vector<Hit> pooled;
+  pooled.reserve((full_resolution_hits.size() + pool_size - 1) / pool_size);
+  std::size_t current_bin = std::numeric_limits<std::size_t>::max();
+  for (const auto & hit : full_resolution_hits) {
+    const std::size_t bin = hit.beam_index / pool_size;
+    if (pooled.empty() || bin != current_bin) {
+      pooled.push_back(hit);
+      pooled.back().beam_index = bin;
+      current_bin = bin;
+      continue;
+    }
+
+    auto & selected = pooled.back();
+    const std::size_t accumulated_support =
+      selected.support_count + hit.support_count;
+    // Strict comparison preserves the earliest transformed endpoint on ties,
+    // matching minimumRangePool's raw-range behavior.
+    if (hit.range < selected.range) {
+      selected = hit;
+      selected.beam_index = bin;
+    }
+    selected.support_count = accumulated_support;
+  }
+  return pooled;
+}
+
 }  // namespace scan_pooling
 }  // namespace path_following_v2
 

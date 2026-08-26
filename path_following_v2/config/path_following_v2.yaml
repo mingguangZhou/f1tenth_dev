@@ -147,7 +147,8 @@ local_trajectory_planner:
     enable_frenet_lattice_planner: true
     # The competition fixture contains fixed obstacles. Try a bounded analytic
     # racing-line detour first, then one coarse full-return lattice per side.
-    # Moving/open-ended/legacy search remains available by disabling this mode.
+    # Disabling this mode restores moving/open-ended search. Legacy fallback is
+    # controlled independently by lattice_fallback_to_legacy_planner below.
     static_obstacle_fast_mode: true
     static_analytic_candidates_per_side: 2
     static_analytic_extra_clearance_m: 0.04

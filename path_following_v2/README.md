@@ -341,7 +341,7 @@ does not by itself declare the physically clear path unsafe:
 plan_deviation_replan_m: 0.35
 active_path_blocked_confirmation_scans: 4
 no_safe_path_confirmation_scans: 5
-replan_pending_speed_cap_mps: 2.5
+replan_pending_speed_cap_mps: 2.25
 ```
 
 Only `NO_SAFE_PATH_CONFIRMED` or an immediate `CRITICAL_OBSTACLE` requests
@@ -423,12 +423,12 @@ Refreshed raceline tails are appended only through a gap-, heading-, and
 curvature-continuous splice.
 
 The current safe-yield profile uses a `1.0 m` standoff, retains `0.5 m` of
-terminal path for controlled braking, and permits at most `2.5 m/s`:
+terminal path for controlled braking, and permits at most `2.25 m/s`:
 
 ```yaml
 yield_standoff_m: 1.00
 yield_min_path_length_m: 0.50
-yield_max_speed_mps: 2.5
+yield_max_speed_mps: 2.25
 yield_deceleration_mps2: 2.0
 ```
 
@@ -440,7 +440,7 @@ The physical command envelope is configured once at the top of each YAML:
 /**:
   ros__parameters:
     command_speed_min_mps: 0.5
-    command_speed_max_mps: 10.0
+    command_speed_max_mps: 9.0
 ```
 
 The generator and follower use the same range to encode/decode the normalized
@@ -451,8 +451,8 @@ synchronized.
 Normal raceline demand is tuned only in `path_generator`:
 
 ```yaml
-rule_curve_min_speed_mps: 1.0
-rule_straight_speed_mps: 5.0
+rule_curve_min_speed_mps: 0.9
+rule_straight_speed_mps: 4.5
 rule_speed_curvature_gain: 2.0
 rule_speed_curvature_preview_m: 0.50
 ```
@@ -462,10 +462,10 @@ The curvature preview is physical distance, not waypoint count.
 The shared maneuver settings are:
 
 ```yaml
-avoidance_speed_cap_mps: 3.5
-recovery_speed_cap_mps: 4.0
-replan_pending_speed_cap_mps: 2.5
-maneuver_lateral_acceleration_limit_mps2: 4.0
+avoidance_speed_cap_mps: 3.15
+recovery_speed_cap_mps: 3.6
+replan_pending_speed_cap_mps: 2.25
+maneuver_lateral_acceleration_limit_mps2: 3.24
 ```
 
 The avoidance and recovery values are ceilings, not fixed maneuver speeds. On
@@ -482,7 +482,7 @@ tight detour enough to keep estimated lateral acceleration bounded. As the car
 passes the curved part, only the remaining geometry is considered, so the cap
 rises progressively during a smooth return. The follower's existing command
 rate limiter controls the actual acceleration. These ceilings and the
-`4.0 m/s^2` lateral-acceleration limit are shared by both platforms.
+`3.24 m/s^2` lateral-acceleration limit are shared by both platforms.
 
 `speed_policy_mode` selects rule-only (`0`) or rule plus a fresh RL speed
 residual (`1`). The established future RL structure is unchanged: bounded
@@ -579,6 +579,21 @@ The ignored `path_following_v2/trial_logs/` directory receives a sampled CSV,
 state-change JSONL, and JSON summary for each trial. The summary reports side
 choice, arbitration/failure counts, planning-margin versus physical-blockage
 counters, and speed statistics for every planner mode.
+
+After collecting matching baseline and candidate directories, generate the
+paired latency/maneuverability report with:
+
+```bash
+python3 /sim_ws/src/path_following_v2/tools/analyze_static_profile_ab.py \
+  --baseline-dir /tmp/static_fast_ab/baseline \
+  --candidate-dir /tmp/static_fast_ab/candidate \
+  --raceline-csv /sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv \
+  --output /tmp/static_fast_ab/report.json
+```
+
+The command writes the JSON report plus a Markdown report at the same path with
+the `.md` suffix. Its planner compute timings remain separate from the
+`PLANNING_HOLD`-to-outcome end-to-end latency proxy.
 
 To verify complete laps rather than a single obstacle approach, run:
 

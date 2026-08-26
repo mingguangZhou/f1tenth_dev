@@ -19,7 +19,14 @@ SPEC.loader.exec_module(ANALYZER)
 
 
 class StaticProfileAnalyzerTest(unittest.TestCase):
-    def write_trial(self, root, latency_sec, steering_scale=1.0):
+    def write_trial(
+        self,
+        root,
+        latency_sec,
+        steering_scale=1.0,
+        backend="bounded_lattice",
+        static_total_time_ms=2.0,
+    ):
         csv_path = root / "west_uturn_1.csv"
         rows = []
         modes = [
@@ -80,6 +87,14 @@ class StaticProfileAnalyzerTest(unittest.TestCase):
                     "lattice_compute_time_ms": "1.0",
                     "minimum_clearance_m": "0.31",
                     "maximum_curvature_inv_m": "1.0",
+                    "static_obstacle_fast_mode": "true",
+                    "static_planning_backend": backend,
+                    "static_analytic_candidates_evaluated": (
+                        "1" if backend == "analytic" else "2"
+                    ),
+                    "static_analytic_time_ms": "0.08",
+                    "static_side_score_time_ms": "0.004",
+                    "static_planning_total_time_ms": str(static_total_time_ms),
                 },
             },
         ]
@@ -143,6 +158,10 @@ class StaticProfileAnalyzerTest(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["outcome"], "accepted")
         self.assertAlmostEqual(attempts[0]["hold_to_outcome_ms"], 8.0)
+        self.assertIsNone(attempts[0]["static_planning_backend"])
+        legacy_metrics = ANALYZER.static_planning_metrics(attempts)
+        self.assertEqual(legacy_metrics["backend_missing_count"], 1)
+        self.assertEqual(legacy_metrics["analytic_time_ms"]["count"], 0)
 
     def test_cli_builds_json_and_markdown_report(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -152,7 +171,13 @@ class StaticProfileAnalyzerTest(unittest.TestCase):
             baseline.mkdir()
             candidate.mkdir()
             self.write_trial(baseline, 0.012)
-            self.write_trial(candidate, 0.006, steering_scale=0.9)
+            self.write_trial(
+                candidate,
+                0.006,
+                steering_scale=0.9,
+                backend="analytic",
+                static_total_time_ms=0.45,
+            )
             raceline = root / "raceline.csv"
             self.write_raceline(raceline)
             output = root / "report.json"
@@ -181,17 +206,49 @@ class StaticProfileAnalyzerTest(unittest.TestCase):
             self.assertAlmostEqual(latency["baseline"]["median"], 12.0)
             self.assertAlmostEqual(latency["candidate"]["median"], 6.0)
             baseline_trial = report["trials"]["baseline"][0]
+            candidate_trial = report["trials"]["candidate"][0]
             self.assertAlmostEqual(
                 baseline_trial["scorecard"]["minimum_plan_clearance_m"], 0.31
+            )
+            self.assertEqual(
+                baseline_trial["planning"]["static_planning"]["accepted_plans"]
+                ["backend_counts"],
+                {"bounded_lattice": 1},
+            )
+            self.assertEqual(
+                candidate_trial["planning"]["static_planning"]["accepted_plans"]
+                ["backend_counts"],
+                {"analytic": 1},
+            )
+            self.assertEqual(
+                candidate_trial["planning"]["attempts"][0]
+                ["static_analytic_candidates_evaluated"],
+                1,
+            )
+            self.assertAlmostEqual(
+                candidate_trial["scorecard"]["static_planning_total_median_ms"],
+                0.45,
+            )
+            self.assertEqual(
+                report["profiles"]["candidate"]["plan_level"]["static_planning"]
+                ["fast_mode_counts"]["true"],
+                1,
+            )
+            self.assertEqual(
+                report["profiles"]["candidate"]["plan_level"]
+                ["static_planning_initial"]["backend_counts"],
+                {"analytic": 1},
             )
             self.assertGreater(
                 baseline_trial["tracking"]["steering"]["obstacle_maneuver"]
                 ["steering_rate_abs_radps"]["count"],
                 0,
             )
-            self.assertIn(
-                "Planning attempts", output.with_suffix(".md").read_text(encoding="utf-8")
-            )
+            markdown = output.with_suffix(".md").read_text(encoding="utf-8")
+            self.assertIn("Static-fast backend diagnostics", markdown)
+            self.assertIn("bounded_lattice: 1", markdown)
+            self.assertIn("analytic: 1", markdown)
+            self.assertIn("Planning attempts", markdown)
 
     def test_missing_sidecars_are_reported_without_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,6 +275,11 @@ class StaticProfileAnalyzerTest(unittest.TestCase):
             self.assertTrue(any("summary sidecar is missing" in item for item in warnings))
             self.assertEqual(
                 report["trials"]["baseline"][0]["planning"]["attempt_count"], 0
+            )
+            self.assertEqual(
+                report["trials"]["baseline"][0]["planning"]["static_planning"]
+                ["accepted_plans"]["backend_missing_count"],
+                0,
             )
 
 

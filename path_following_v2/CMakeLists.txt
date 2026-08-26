@@ -89,6 +89,7 @@ install(FILES README.md
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   ament_add_gtest(lightweight_frenet_lattice_test
     test/lightweight_frenet_lattice_test.cpp
   )
@@ -133,6 +134,11 @@ if(BUILD_TESTING)
     test/scan_pooling_test.cpp
   )
   target_include_directories(scan_pooling_test PRIVATE include)
+
+  ament_add_pytest_test(analyze_static_profile_ab_test
+    test/test_analyze_static_profile_ab.py
+    TIMEOUT 30
+  )
 endif()
 
 ament_package()
