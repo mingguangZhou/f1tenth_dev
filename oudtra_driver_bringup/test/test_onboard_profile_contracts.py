@@ -36,20 +36,20 @@ def test_race_ready_parameter_profile_is_canonical():
     upper = _parameters(reactive, "upper_corridor_follower")
     lower = _parameters(reactive, "lower_safety_controller")
 
-    assert shared["command_speed_max_mps"] == 10.0
-    assert generator["rule_curve_min_speed_mps"] == 1.0
-    assert generator["rule_straight_speed_mps"] == 5.0
+    assert shared["command_speed_max_mps"] == 9.0
+    assert generator["rule_curve_min_speed_mps"] == 0.9
+    assert generator["rule_straight_speed_mps"] == 4.5
     assert planner["transform_timeout_sec"] == 0.40
     assert planner["planning_distance_m"] == 10.0
     assert planner["curvature_safety_factor"] == 1.2
-    assert planner["avoidance_speed_cap_mps"] == 3.5
-    assert planner["recovery_speed_cap_mps"] == 4.0
-    assert planner["replan_pending_speed_cap_mps"] == 2.5
-    assert planner["maneuver_lateral_acceleration_limit_mps2"] == 4.0
-    assert planner["yield_max_speed_mps"] == 2.5
+    assert planner["avoidance_speed_cap_mps"] == 3.15
+    assert planner["recovery_speed_cap_mps"] == 3.6
+    assert planner["replan_pending_speed_cap_mps"] == 2.25
+    assert planner["maneuver_lateral_acceleration_limit_mps2"] == 3.24
+    assert planner["yield_max_speed_mps"] == 2.25
     assert upper["forward_max_m"] == 3.0
-    assert upper["velocity_max_mps"] == 2.0
-    assert upper["velocity_min_mps"] == 1.0
+    assert upper["velocity_max_mps"] == 1.8
+    assert upper["velocity_min_mps"] == 0.9
     assert lower["reverse_max_attempts"] == 500
     assert lower["wrong_way_reverse_max_attempts"] == 4
 
