@@ -54,6 +54,31 @@ def test_race_ready_parameter_profile_is_canonical():
     assert lower["wrong_way_reverse_max_attempts"] == 4
 
 
+def test_static_obstacle_fast_profile_is_bounded_and_canonical():
+    planner = _parameters(
+        _yaml("path_following_v2/config/path_following_v2.yaml"),
+        "local_trajectory_planner",
+    )
+
+    expected = {
+        "max_candidates_per_side": 3,
+        "static_obstacle_fast_mode": True,
+        "static_analytic_candidates_per_side": 2,
+        "static_analytic_extra_clearance_m": 0.04,
+        "static_first_valid_side": True,
+        "planning_scan_pool_size": 2,
+        "lattice_fallback_to_legacy_planner": False,
+        "lattice_station_step_m": 0.30,
+        "lattice_lateral_step_m": 0.075,
+        "lattice_beam_width": 40,
+        "lattice_max_final_candidates": 2,
+        "lattice_max_compute_time_ms": 6.0,
+        "corridor_smoothing_iterations": 4,
+        "publish_markers": False,
+    }
+    assert {key: planner[key] for key in expected} == expected
+
+
 def test_simulator_overlays_only_contain_runtime_or_capability_keys():
     expected = {
         "path_following_v2/config/path_following_v2_sim.yaml": {

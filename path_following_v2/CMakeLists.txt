@@ -128,6 +128,11 @@ if(BUILD_TESTING)
     test/polyline_query_test.cpp
   )
   target_include_directories(polyline_query_test PRIVATE include)
+
+  ament_add_gtest(scan_pooling_test
+    test/scan_pooling_test.cpp
+  )
+  target_include_directories(scan_pooling_test PRIVATE include)
 endif()
 
 ament_package()

@@ -139,7 +139,8 @@ raceline.
 ## Trajectory construction
 
 Each plan starts from the actual localized car pose. It does not assume that
-the car is already on the raceline. The primary planner then:
+the car is already on the raceline. In the general Frenet planner, the primary
+planner then:
 
 1. Extracts one forward window from the full transient-local racing-line path.
 2. Places longitudinal stations at a fixed physical spacing.
@@ -155,6 +156,14 @@ the car is already on the raceline. The primary planner then:
 7. Interpolates the optimized station offsets with a shape-preserving cubic.
 8. Runs the existing dense curvature and connected-LiDAR-band validator before
    accepting any result.
+
+The canonical fixed-obstacle profile enables `static_obstacle_fast_mode`. It
+first orders the two sides with a cheap occupancy-map clearance score and tries
+at most two analytic offsets on the preferred side. A side falls back to one
+bounded, full-return lattice attempt only when those analytic candidates fail.
+With `static_first_valid_side: true`, a valid result ends the search without
+evaluating the other side. The same dense map, curvature, and LiDAR validators
+remain mandatory regardless of which backend generated the candidate.
 
 For each side, a smooth guide leaves the raceline before the hard passing
 corridor and returns afterward. This lets the forward-only beam search retain
@@ -193,10 +202,16 @@ The planner searches left and right separately. Its primary computation limits
 are explicit:
 
 ```yaml
-lattice_station_step_m: 0.25
-lattice_lateral_step_m: 0.05
-lattice_beam_width: 70
-lattice_max_final_candidates: 4
+static_obstacle_fast_mode: true
+static_analytic_candidates_per_side: 2
+static_analytic_extra_clearance_m: 0.04
+static_first_valid_side: true
+planning_scan_pool_size: 2
+lattice_fallback_to_legacy_planner: false
+lattice_station_step_m: 0.30
+lattice_lateral_step_m: 0.075
+lattice_beam_width: 40
+lattice_max_final_candidates: 2
 lattice_max_compute_time_ms: 6.0
 max_lateral_shift_m: 0.90
 ```
@@ -206,7 +221,7 @@ The main stability/smoothness weights are:
 ```yaml
 lattice_continuity_weight: 12.0
 lattice_curvature_rate_weight: 2.0
-corridor_smoothing_iterations: 8
+corridor_smoothing_iterations: 4
 corridor_continuity_weight: 12.0
 corridor_curvature_weight: 10.0
 corridor_curvature_rate_weight: 2.0
@@ -244,23 +259,20 @@ correction at handoff. Known raceline geometry may extend beyond current scan
 visibility, while the held trajectory is rechecked as new scan space becomes
 visible.
 
-When no maneuver is active, the direction decision is open: both sides are
-evaluated. A side whose minimum clearance is more than
-`side_clearance_tie_m: 0.03` wider wins. When the clearances are comparable,
-objective costs are compared only if both candidates came from the same
-planning backend; otherwise the planner compares physical curvature and
-lateral offset. Publishing that path closes the decision immediately. The
-selected left/right side stays latched for the whole pass. A material replan
-searches only that same side and is attracted to the remaining accepted path.
-It never silently substitutes the geometrically different legacy generator.
-This open/closed rule prevents scan noise or incomparable solver scores from
-flipping the avoidance direction.
+With the canonical static profile, the direction decision starts by sampling
+map clearance on both sides. The higher-scoring side is searched first; the
+other side is searched only if the first side has no full-validation-safe
+candidate. Publishing a path closes the decision immediately. The selected
+left/right side stays latched for the whole pass, and a material replan searches
+only that same side. This avoids duplicate work in the common case without
+allowing a map score alone to accept a trajectory.
 
-For a brand-new maneuver only, `lattice_fallback_to_legacy_planner` still lets
-the bounded quintic generator make one deterministic attempt if racing-line
-Frenet search cannot produce a final-valid path. Once a lattice maneuver is
-active, that fallback is disabled so replanning cannot create a discontinuous
-swerve.
+The generic profile, selected with `static_obstacle_fast_mode: false`, retains
+the exhaustive two-side comparison and moving-obstacle logic. The canonical
+profile also sets `lattice_fallback_to_legacy_planner: false`; static fast mode
+therefore never enters the geometrically different legacy generator. The
+legacy fallback can be restored explicitly for generic experiments, but it is
+not part of the bounded onboard contract.
 
 ## Exactly how a plan is held
 
@@ -354,30 +366,55 @@ Diagnostics include `plan_id`, `plan_age_sec`, `plan_progress_index`,
 `plan_rejoin_index`, separate planning-margin and physical-blockage confirmation
 counters, side, obstacle geometry, clearance, candidate objective domain,
 curvature, remaining-path maximum curvature, `side_committed`,
-`maneuver_phase`, effective detection distance, and speed cap.
+`maneuver_phase`, effective detection distance, and speed cap. Static-profile
+diagnostics additionally report `static_planning_backend`, analytic candidate
+count, side-score/analytic/total search times, both map-side scores, lattice
+transition count, clearance-grid time, and lattice compute time. The obstacle
+trial logger records these fields in both its sampled CSV and event sidecar.
 
 ## Bounded computation
 
-Pure racing-line following does not run lattice search. The planner receives the
-full global racing line once through transient-local QoS and prepares a local
-Frenet window only when a new plan or material replan is requested. There is no
-second CSV parser, external optimization process, or nonlinear solver.
+Pure racing-line following does not run candidate or lattice search. The
+planner receives the full global racing line once through transient-local QoS
+and prepares a local Frenet window only when a new plan or material replan is
+requested. There is no second CSV parser, external optimization process, or
+nonlinear solver. Runtime visualization markers are disabled in the canonical
+profile.
 
-Search work is bounded by station spacing, lateral spacing, a `70`-state beam,
-final candidate count, and a `6 ms` per-side time budget. Corridor optimization
-uses eight fixed iterations on both platforms. The diagnostic fields
-`lattice_evaluated_transitions` and `lattice_compute_time_ms` expose actual
-search work.
+The canonical search first tries at most two analytic offsets per attempted
+side. A failed side gets exactly one full-return lattice attempt. Its search is
+bounded by `0.30 m` station spacing, `0.075 m` lateral spacing, a `40`-state
+beam, two final candidates, four fixed corridor-smoothing iterations, and a
+`6 ms` lattice compute budget. The budget applies to one lattice attempt; it is
+not a bound on the complete planning callback or scan-to-command reaction time.
+
+Planning-only geometry uses conservative two-beam minimum pooling: each pair
+contributes its nearest finite in-range return and its original support count.
+Obstacle detection, active-path safety checks, and final candidate acceptance
+continue to use the latest full-resolution scan. Thus pooling reduces downstream
+planning-context and clearance-grid work without weakening the final acceptance
+gate. Setting `planning_scan_pool_size: 1` restores exact full-resolution
+planning.
+
+The diagnostic fields `static_side_score_time_ms`,
+`static_analytic_time_ms`, `static_planning_total_time_ms`,
+`lattice_evaluated_transitions`, `lattice_clearance_grid_time_ms`, and
+`lattice_compute_time_ms` expose the bounded search work. The static total is
+planner candidate-search time, while a `PLANNING_HOLD`-to-outcome interval also
+contains callback scheduling, input waiting, and final validation.
 
 The normal held-plan loop only advances progress, appends the current raceline
 tail, and validates the stored path. It does not rerun candidate generation.
 
 ## Moving obstacles and safe waiting
 
-The planner tracks the selected obstacle in the map frame. A confirmed moving
-target keeps the chosen passing side open to the end of the current horizon;
-the return begins only after the target is confirmed behind the car. Candidate
-paths must remain inside the occupancy-map corridor.
+The canonical static profile deliberately skips velocity tracking and
+rolling/open-ended pass generation. Moving returns are treated as instantaneous
+obstacles by the normal collision validators, but their future motion is not
+predicted. Set `static_obstacle_fast_mode: false` when moving-obstacle behavior
+is required; that generic profile tracks the selected obstacle in the map frame
+and keeps the chosen side open until the target is confirmed behind the car.
+Candidate paths in both profiles must remain inside the occupancy-map corridor.
 
 If the committed side is temporarily blocked, the planner publishes a safe
 path prefix and slows to a stop while retrying that side. This remains a primary

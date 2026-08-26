@@ -128,7 +128,7 @@ local_trajectory_planner:
     detour_return_min_length_m: 2.50
     detour_return_max_length_m: 5.00
     candidate_lateral_step_m: 0.08
-    max_candidates_per_side: 6
+    max_candidates_per_side: 3
     max_lateral_shift_m: 0.9
     wheelbase_m: 0.33
     steering_max_deg: 20.6
@@ -145,12 +145,20 @@ local_trajectory_planner:
     require_raceline_reference: true
     raceline_reference_match_tolerance_m: 0.10
     enable_frenet_lattice_planner: true
-    lattice_fallback_to_legacy_planner: true
-    lattice_station_step_m: 0.25
-    lattice_lateral_step_m: 0.05
+    # The competition fixture contains fixed obstacles. Try a bounded analytic
+    # racing-line detour first, then one coarse full-return lattice per side.
+    # Moving/open-ended/legacy search remains available by disabling this mode.
+    static_obstacle_fast_mode: true
+    static_analytic_candidates_per_side: 2
+    static_analytic_extra_clearance_m: 0.04
+    static_first_valid_side: true
+    planning_scan_pool_size: 2
+    lattice_fallback_to_legacy_planner: false
+    lattice_station_step_m: 0.30
+    lattice_lateral_step_m: 0.075
     lattice_max_abs_slope: 0.55
-    lattice_beam_width: 70
-    lattice_max_final_candidates: 4
+    lattice_beam_width: 40
+    lattice_max_final_candidates: 2
     lattice_max_compute_time_ms: 6.0
     lattice_reference_weight: 4.0
     lattice_slope_weight: 1.0
@@ -162,10 +170,10 @@ local_trajectory_planner:
     lattice_terminal_distance_m: 1.0
     lattice_terminal_weight_multiplier: 5.0
     # The alignment tail preserves compute/path-window margin while
-    # still constraining at least three 0.25 m lattice stations.
+    # still constraining at least three 0.30 m lattice stations.
     lattice_rejoin_alignment_length_m: 0.75
     side_clearance_tie_m: 0.03
-    corridor_smoothing_iterations: 8
+    corridor_smoothing_iterations: 4
     corridor_smoothing_relaxation: 0.85
     corridor_reference_weight: 1.0
     corridor_continuity_weight: 12.0
@@ -211,7 +219,7 @@ local_trajectory_planner:
     rolling_pass_rear_clearance_m: 0.60
     rolling_pass_completion_scans: 4
     enable_detour_planning: true
-    publish_markers: true
+    publish_markers: false
 
 path_following_v2:
   ros__parameters:

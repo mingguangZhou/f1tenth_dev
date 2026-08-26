@@ -40,6 +40,7 @@
 #include "path_following_v2/maneuver_speed_policy.hpp"
 #include "path_following_v2/path_splice.hpp"
 #include "path_following_v2/polyline_query.hpp"
+#include "path_following_v2/scan_pooling.hpp"
 
 using std::placeholders::_1;
 namespace selection = path_following_v2::selection;
@@ -157,8 +158,10 @@ public:
       recovery_exit_lateral_error_m_);
     RCLCPP_INFO(
       get_logger(),
-      "lightweight Frenet lattice: %s; waiting for transient reference on %s",
+      "lightweight Frenet lattice: %s; static-obstacle fast mode: %s; "
+      "waiting for transient reference on %s",
       enable_frenet_lattice_planner_ ? "enabled" : "disabled",
+      static_obstacle_fast_mode_ ? "enabled" : "disabled",
       raceline_reference_topic_.c_str());
   }
 
@@ -202,6 +205,7 @@ private:
     Point2 point;
     Projection projection;
     std::size_t beam_index{0};
+    std::size_t support_count{1};
     double range{0.0};
   };
 
@@ -402,6 +406,7 @@ private:
   double transform_timeout_sec_{0.05};
   double scan_range_cap_m_{10.0};
   double planning_distance_m_{10.0};
+  int planning_scan_pool_size_{1};
   double vehicle_width_m_{0.28};
   double lateral_safety_margin_m_{0.10};
   double safety_half_width_m_{0.24};
@@ -429,6 +434,10 @@ private:
   double detour_return_max_length_m_{5.00};
   double candidate_lateral_step_m_{0.08};
   int max_candidates_per_side_{6};
+  bool static_obstacle_fast_mode_{false};
+  int static_analytic_candidates_per_side_{2};
+  double static_analytic_extra_clearance_m_{0.04};
+  bool static_first_valid_side_{true};
   double max_lateral_shift_m_{0.80};
   double wheelbase_m_{0.33};
   double steering_max_deg_{20.6};
@@ -513,6 +522,15 @@ private:
   double last_lattice_compute_time_ms_{0.0};
   double last_lattice_clearance_grid_time_ms_{0.0};
   std::string last_lattice_reason_{"not run"};
+  int last_static_analytic_candidates_{0};
+  double last_static_analytic_time_ms_{0.0};
+  double last_static_side_score_time_ms_{0.0};
+  double last_static_total_time_ms_{0.0};
+  double last_static_left_map_score_m_{
+    -std::numeric_limits<double>::infinity()};
+  double last_static_right_map_score_m_{
+    -std::numeric_limits<double>::infinity()};
+  std::string last_static_backend_{"not run"};
   unsigned long candidate_decision_id_{0};
   std::string candidate_decision_context_{"none"};
   int candidate_decision_selected_side_{0};
@@ -548,6 +566,9 @@ private:
     // necessary to leave room for a complete, curvature-valid return.
     declare_parameter<double>("scan_range_cap_m", 10.0);
     declare_parameter<double>("planning_distance_m", 10.0);
+    // Planning may conservatively min-pool adjacent beams. Candidate
+    // acceptance below always reprojects the latest scan at full resolution.
+    declare_parameter<int>("planning_scan_pool_size", 1);
 
     // Common footprint definition.  The effective per-side envelope is
     // vehicle_width / 2 + lateral_safety_margin = 0.24 m by default.
@@ -581,6 +602,10 @@ private:
     declare_parameter<double>("detour_return_max_length_m", 5.00);
     declare_parameter<double>("candidate_lateral_step_m", 0.08);
     declare_parameter<int>("max_candidates_per_side", 6);
+    declare_parameter<bool>("static_obstacle_fast_mode", false);
+    declare_parameter<int>("static_analytic_candidates_per_side", 2);
+    declare_parameter<double>("static_analytic_extra_clearance_m", 0.04);
+    declare_parameter<bool>("static_first_valid_side", true);
     declare_parameter<double>("max_lateral_shift_m", 0.80);
     declare_parameter<double>("wheelbase_m", 0.33);
     declare_parameter<double>("steering_max_deg", 20.6);
@@ -681,6 +706,8 @@ private:
     transform_timeout_sec_ = std::max(0.0, get_parameter("transform_timeout_sec").as_double());
     scan_range_cap_m_ = std::max(0.10, get_parameter("scan_range_cap_m").as_double());
     planning_distance_m_ = std::max(0.50, get_parameter("planning_distance_m").as_double());
+    planning_scan_pool_size_ = std::clamp(
+      static_cast<int>(get_parameter("planning_scan_pool_size").as_int()), 1, 8);
     vehicle_width_m_ = std::max(0.01, get_parameter("vehicle_width_m").as_double());
     lateral_safety_margin_m_ = std::max(
       0.0, get_parameter("lateral_safety_margin_m").as_double());
@@ -732,6 +759,14 @@ private:
       0.02, get_parameter("candidate_lateral_step_m").as_double());
     max_candidates_per_side_ = std::max(
       1, static_cast<int>(get_parameter("max_candidates_per_side").as_int()));
+    static_obstacle_fast_mode_ =
+      get_parameter("static_obstacle_fast_mode").as_bool();
+    static_analytic_candidates_per_side_ = std::clamp(
+      static_cast<int>(get_parameter("static_analytic_candidates_per_side").as_int()),
+      1, 2);
+    static_analytic_extra_clearance_m_ = std::max(
+      0.0, get_parameter("static_analytic_extra_clearance_m").as_double());
+    static_first_valid_side_ = get_parameter("static_first_valid_side").as_bool();
     max_lateral_shift_m_ = std::max(
       safety_half_width_m_, get_parameter("max_lateral_shift_m").as_double());
     wheelbase_m_ = std::max(0.01, get_parameter("wheelbase_m").as_double());
@@ -1312,7 +1347,8 @@ private:
 
   bool scanHitsInPathFrame(
     const sensor_msgs::msg::LaserScan & scan, const PathModel & path,
-    std::vector<ScanHit> & hits, double & valid_beam_ratio)
+    std::vector<ScanHit> & hits, double & valid_beam_ratio,
+    const std::size_t pool_size = 1)
   {
     hits.clear();
     valid_beam_ratio = 0.0;
@@ -1334,34 +1370,68 @@ private:
       return false;
     }
 
-    int valid_beams = 0;
     const double configured_min = std::isfinite(scan.range_min) ? scan.range_min : 0.0;
     const double sensor_max = std::isfinite(scan.range_max) && scan.range_max > 0.0 ?
       scan.range_max : scan_range_cap_m_;
     const double usable_max = std::min(sensor_max, scan_range_cap_m_);
-    for (std::size_t index = 0; index < scan.ranges.size(); ++index) {
-      const double range = scan.ranges[index];
-      if (!std::isnan(range) && range >= configured_min) {
-        ++valid_beams;
-      }
-      if (!std::isfinite(range) || range < configured_min || range > usable_max) {
-        continue;
-      }
-      const double angle = scan.angle_min + static_cast<double>(index) * scan.angle_increment;
+    const auto pooled = path_following_v2::scan_pooling::minimumRangePool(
+      scan.ranges,
+      path_following_v2::scan_pooling::RangeLimits{configured_min, usable_max},
+      pool_size);
+    hits.reserve(pooled.beams.size());
+    for (const auto & beam : pooled.beams) {
+      const double angle = scan.angle_min +
+        static_cast<double>(beam.source_index) * scan.angle_increment;
       const tf2::Vector3 transformed = path_from_scan * tf2::Vector3(
-        range * std::cos(angle), range * std::sin(angle), 0.0);
+        beam.range_m * std::cos(angle), beam.range_m * std::sin(angle), 0.0);
       ScanHit hit;
       hit.point = Point2{transformed.x(), transformed.y()};
       hit.projection = projectToPath(hit.point, path);
-      hit.beam_index = index;
-      hit.range = range;
+      // Use the bin ordinal for pooled scans so adjacent bins remain adjacent
+      // even when pool_size exceeds cluster_max_beam_gap_. Full-resolution
+      // scans have pool_size == 1 and retain their exact raw beam indices.
+      hit.beam_index = beam.bin_start_index / pooled.pool_size;
+      hit.support_count = beam.support_count;
+      hit.range = beam.range_m;
       if (hit.projection.valid) {
         hits.push_back(hit);
       }
     }
-    valid_beam_ratio = static_cast<double>(valid_beams) /
-      static_cast<double>(scan.ranges.size());
+    valid_beam_ratio = pooled.validBeamRatio();
     return true;
+  }
+
+  std::vector<ScanHit> minimumRangePoolPlanningHits(
+    const std::vector<ScanHit> & full_resolution_hits,
+    const std::size_t requested_pool_size) const
+  {
+    const std::size_t pool_size = std::max<std::size_t>(1, requested_pool_size);
+    if (pool_size == 1 || full_resolution_hits.empty()) {
+      return full_resolution_hits;
+    }
+
+    std::vector<ScanHit> pooled;
+    pooled.reserve((full_resolution_hits.size() + pool_size - 1) / pool_size);
+    std::size_t current_bin = std::numeric_limits<std::size_t>::max();
+    for (const auto & hit : full_resolution_hits) {
+      const std::size_t bin = hit.beam_index / pool_size;
+      if (pooled.empty() || bin != current_bin) {
+        pooled.push_back(hit);
+        pooled.back().beam_index = bin;
+        current_bin = bin;
+        continue;
+      }
+
+      auto & selected = pooled.back();
+      const std::size_t accumulated_support =
+        selected.support_count + hit.support_count;
+      if (hit.range < selected.range) {
+        selected = hit;
+        selected.beam_index = bin;
+      }
+      selected.support_count = accumulated_support;
+    }
+    return pooled;
   }
 
   std::vector<ObstacleCluster> clusterScanHits(
@@ -1386,7 +1456,7 @@ private:
       if (hit.projection.s >= 0.0 && hit.projection.s <= detection_distance &&
         std::abs(hit.projection.d) <= safety_half_width_m_)
       {
-        ++cluster.interfering_points;
+        cluster.interfering_points += static_cast<int>(hit.support_count);
       }
     }
     return clusters;
@@ -1398,14 +1468,25 @@ private:
     if (obstacle.hits.empty()) {
       return center;
     }
+    std::size_t support = 0;
     for (const auto & hit : obstacle.hits) {
-      center.x += hit.point.x;
-      center.y += hit.point.y;
+      center.x += static_cast<double>(hit.support_count) * hit.point.x;
+      center.y += static_cast<double>(hit.support_count) * hit.point.y;
+      support += hit.support_count;
     }
-    const double count = static_cast<double>(obstacle.hits.size());
+    const double count = static_cast<double>(std::max<std::size_t>(1, support));
     center.x /= count;
     center.y /= count;
     return center;
+  }
+
+  std::size_t scanSupportCount(const std::vector<ScanHit> & hits) const
+  {
+    std::size_t count = 0;
+    for (const auto & hit : hits) {
+      count += hit.support_count;
+    }
+    return count;
   }
 
   std::pair<double, double> conservativeObstacleLateralExtent(
@@ -1459,7 +1540,9 @@ private:
       const double gate = obstacle_track_match_distance_m_ +
         elapsed * std::hypot(obstacle_track_.velocity.x, obstacle_track_.velocity.y);
       for (const auto & cluster : clusters) {
-        if (cluster.hits.size() < static_cast<std::size_t>(blocked_min_points_)) {
+        if (scanSupportCount(cluster.hits) <
+          static_cast<std::size_t>(blocked_min_points_))
+        {
           continue;
         }
         const double separation = distance(predicted, obstacleCenter(cluster));
@@ -1688,7 +1771,9 @@ private:
     const auto trusted_clusters = clusterScanHits(context.hits, context.reference.length);
     context.trusted_points.reserve(context.hits.size());
     for (const auto & cluster : trusted_clusters) {
-      if (cluster.hits.size() < static_cast<std::size_t>(blocked_min_points_)) {
+      if (scanSupportCount(cluster.hits) <
+        static_cast<std::size_t>(blocked_min_points_))
+      {
         continue;
       }
       for (const auto & hit : cluster.hits) {
@@ -1698,7 +1783,8 @@ private:
     if (raw_obstacle) {
       context.obstacle = reprojectObstacle(*raw_obstacle, context.reference);
       context.obstacle_valid =
-        context.obstacle.hits.size() >= static_cast<std::size_t>(blocked_min_points_) &&
+        scanSupportCount(context.obstacle.hits) >=
+        static_cast<std::size_t>(blocked_min_points_) &&
         std::isfinite(context.obstacle.s_min) && std::isfinite(context.obstacle.d_min);
       if (!context.obstacle_valid) {
         context.reason = "raw obstacle could not be associated with the racing-line reference";
@@ -1922,7 +2008,8 @@ private:
         const bool connected_to_previous = previous_interfered &&
           hit.beam_index <= previous_beam + static_cast<std::size_t>(cluster_max_beam_gap_) &&
           distance(hit.point, previous_point) <= cluster_point_gap_m_;
-        connected = connected_to_previous ? connected + 1 : 1;
+        const int support = static_cast<int>(hit.support_count);
+        connected = connected_to_previous ? connected + support : support;
         candidate.maximum_connected_interference = std::max(
           candidate.maximum_connected_interference, connected);
         previous_beam = hit.beam_index;
@@ -2179,8 +2266,9 @@ private:
     double plan_end_s = reference.length;
     double required_offset = 0.0;
     if (avoidance) {
-      best.rolling_pass = force_open_end ||
-        (trackedObstacleMatches(context.obstacle) && obstacle_track_.moving);
+      best.rolling_pass = !static_obstacle_fast_mode_ &&
+        (force_open_end ||
+        (trackedObstacleMatches(context.obstacle) && obstacle_track_.moving));
       pass_start_s = std::max(
         0.0, context.obstacle.s_min - detour_longitudinal_buffer_m_);
       if (best.rolling_pass) {
@@ -2456,8 +2544,9 @@ private:
     candidate.trajectory_mode = "AVOIDING";
     candidate.peak_offset = peak_offset;
     candidate.start_lateral_offset = car_lateral_offset;
-    candidate.rolling_pass = force_open_end ||
-      (trackedObstacleMatches(obstacle) && obstacle_track_.moving);
+    candidate.rolling_pass = !static_obstacle_fast_mode_ &&
+      (force_open_end ||
+      (trackedObstacleMatches(obstacle) && obstacle_track_.moving));
 
     const double departure_end = std::max(
       0.25, obstacle.s_min - detour_longitudinal_buffer_m_);
@@ -2567,6 +2656,218 @@ private:
         " bounded offsets; last: " + last_reason;
     }
     return best;
+  }
+
+  bool staticAnalyticRequiredOffset(
+    const ObstacleCluster & obstacle, const int side,
+    double & required_offset) const
+  {
+    const auto lateral_extent = conservativeObstacleLateralExtent(obstacle);
+    const double extra_clearance =
+      detour_extra_clearance_m_ + static_analytic_extra_clearance_m_;
+    required_offset = side > 0 ?
+      lateral_extent.second + planningClearance() + extra_clearance :
+      lateral_extent.first - planningClearance() - extra_clearance;
+    return side * required_offset > 0.0 &&
+           std::abs(required_offset) <= max_lateral_shift_m_ + 1e-9;
+  }
+
+  Candidate firstValidStaticAnalyticCandidateForSide(
+    const PathModel & raw, const nav_msgs::msg::Path & raw_message,
+    const ObstacleCluster & obstacle, const std::vector<ScanHit> & all_hits,
+    const Point2 & robot_position, const double robot_yaw,
+    const double car_lateral_offset, const double car_heading_error,
+    const int side, int & evaluated) const
+  {
+    Candidate result;
+    result.side = side;
+    result.trajectory_mode = "AVOIDING";
+    result.planning_reference = "racingline_static_analytic";
+    evaluated = 0;
+
+    double required_offset = 0.0;
+    if (!staticAnalyticRequiredOffset(obstacle, side, required_offset)) {
+      result.reason = "static analytic required offset is outside the requested side/bounds";
+      return result;
+    }
+
+    const double required_magnitude = std::abs(required_offset);
+    std::string last_reason = "no static analytic offset evaluated";
+    for (int sample = 0; sample < static_analytic_candidates_per_side_; ++sample) {
+      const double magnitude = required_magnitude +
+        static_cast<double>(sample) * candidate_lateral_step_m_;
+      if (magnitude > max_lateral_shift_m_ + 1e-9) {
+        break;
+      }
+      ++evaluated;
+      Candidate candidate = buildDetourCandidateAtOffset(
+        raw, raw_message, obstacle, all_hits, robot_position, robot_yaw,
+        car_lateral_offset, car_heading_error, side,
+        static_cast<double>(side) * magnitude, false);
+      candidate.planning_reference = "racingline_static_analytic";
+      last_reason = candidate.reason;
+      if (candidate.valid) {
+        candidate.reason =
+          "first-valid static analytic detour passed full planning validation";
+        return candidate;
+      }
+    }
+
+    result.reason = "no valid static analytic path among " +
+      std::to_string(evaluated) + " bounded offsets; last: " + last_reason;
+    return result;
+  }
+
+  double staticSideMapScore(
+    const PathModel & raw, const ObstacleCluster & obstacle,
+    const int side) const
+  {
+    double required_offset = 0.0;
+    if (!staticAnalyticRequiredOffset(obstacle, side, required_offset)) {
+      return -std::numeric_limits<double>::infinity();
+    }
+
+    // This score only orders the two sides. Candidate construction below
+    // still checks every dense path point against the map and LiDAR envelope.
+    if (!map_clearance_.valid || map_clearance_.frame != raw.frame) {
+      return -std::abs(required_offset);
+    }
+    const double conservative_obstacle_end = std::max(
+      obstacle.s_max, obstacle.s_min + max_obstacle_size_m_);
+    const double score_start_s = std::clamp(obstacle.s_min, 0.0, raw.length);
+    const double score_end_s = std::clamp(
+      conservative_obstacle_end + detour_longitudinal_buffer_m_ +
+      detour_post_obstacle_hold_m_, score_start_s, raw.length);
+    constexpr int score_samples = 9;
+    double minimum_clearance = std::numeric_limits<double>::infinity();
+    for (int sample = 0; sample < score_samples; ++sample) {
+      const double ratio = static_cast<double>(sample) /
+        static_cast<double>(score_samples - 1);
+      const double target_s = score_start_s + ratio * (score_end_s - score_start_s);
+      const std::size_t index = indexAtOrAfter(raw, target_s);
+      const Point2 normal = pathNormal(raw, index);
+      const Point2 shifted{
+        raw.points[index].x + normal.x * required_offset,
+        raw.points[index].y + normal.y * required_offset};
+      minimum_clearance = std::min(
+        minimum_clearance, mapClearanceAtUnchecked(shifted));
+    }
+    // Break sub-millimetre map-score ties in favour of the smaller shift.
+    return minimum_clearance - 1e-4 * std::abs(required_offset);
+  }
+
+  void resetStaticFastSearchDiagnostics()
+  {
+    last_lattice_evaluated_transitions_ = 0;
+    last_lattice_compute_time_ms_ = 0.0;
+    last_lattice_clearance_grid_time_ms_ = 0.0;
+    last_lattice_reason_ = "not run";
+    last_static_analytic_candidates_ = 0;
+    last_static_analytic_time_ms_ = 0.0;
+    last_static_side_score_time_ms_ = 0.0;
+    last_static_total_time_ms_ = 0.0;
+    last_static_left_map_score_m_ = -std::numeric_limits<double>::infinity();
+    last_static_right_map_score_m_ = -std::numeric_limits<double>::infinity();
+    last_static_backend_ = "not run";
+  }
+
+  template<typename ContextProvider>
+  Candidate bestStaticObstacleCandidateForSide(
+    ContextProvider && get_context,
+    const PathModel & raw, const nav_msgs::msg::Path & raw_message,
+    const ObstacleCluster & obstacle, const std::vector<ScanHit> & all_hits,
+    const Point2 & robot_position, const double robot_yaw,
+    const double car_lateral_offset, const double car_heading_error,
+    const int side)
+  {
+    const auto total_started_at = std::chrono::steady_clock::now();
+    const auto analytic_started_at = std::chrono::steady_clock::now();
+    int evaluated = 0;
+    Candidate analytic = firstValidStaticAnalyticCandidateForSide(
+      raw, raw_message, obstacle, all_hits, robot_position, robot_yaw,
+      car_lateral_offset, car_heading_error, side, evaluated);
+    last_static_analytic_candidates_ += evaluated;
+    last_static_analytic_time_ms_ += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - analytic_started_at).count();
+    if (analytic.valid) {
+      last_reference_source_ = "racingline_static_analytic";
+      last_static_backend_ = "analytic";
+      last_static_total_time_ms_ += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - total_started_at).count();
+      return analytic;
+    }
+
+    Candidate lattice;
+    lattice.side = side;
+    lattice.trajectory_mode = "AVOIDING";
+    lattice.planning_reference = "racingline_frenet_corridor";
+    if (enable_frenet_lattice_planner_) {
+      const RacelinePlanningContext & context = get_context();
+      if (context.valid && context.obstacle_valid) {
+        last_reference_source_ = "racingline_static_bounded_lattice";
+        // Exactly one bounded, full-return lattice attempt. Static fast mode
+        // never asks for the open-ended or moving-target variants.
+        lattice = bestLatticeCandidate(
+          context, robot_position, robot_yaw, side, true, false);
+      } else {
+        lattice.reason = context.reason;
+      }
+    } else {
+      lattice.reason = "bounded Frenet lattice is disabled";
+    }
+
+    if (lattice.valid) {
+      lattice.reason = "static analytic path unavailable; " + lattice.reason;
+      last_static_backend_ = "bounded_lattice";
+    } else {
+      lattice.reason = "analytic: " + analytic.reason +
+        "; bounded full-return lattice: " + lattice.reason;
+      last_reference_source_ = "racingline_static_fast_unavailable";
+      last_static_backend_ = "none";
+    }
+    last_static_total_time_ms_ += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - total_started_at).count();
+    return lattice;
+  }
+
+  template<typename ContextProvider>
+  const Candidate * selectStaticObstacleCandidate(
+    ContextProvider && get_context,
+    const PathModel & raw, const nav_msgs::msg::Path & raw_message,
+    const ObstacleCluster & obstacle, const std::vector<ScanHit> & all_hits,
+    const Point2 & robot_position, const double robot_yaw,
+    const double car_lateral_offset, const double car_heading_error,
+    Candidate & left, Candidate & right)
+  {
+    const auto score_started_at = std::chrono::steady_clock::now();
+    last_static_left_map_score_m_ = staticSideMapScore(raw, obstacle, +1);
+    last_static_right_map_score_m_ = staticSideMapScore(raw, obstacle, -1);
+    const double score_time_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - score_started_at).count();
+    last_static_side_score_time_ms_ += score_time_ms;
+    last_static_total_time_ms_ += score_time_ms;
+    const int first_side = last_static_left_map_score_m_ >=
+      last_static_right_map_score_m_ ? +1 : -1;
+    const int second_side = -first_side;
+
+    const auto evaluate = [&](const int side) -> Candidate & {
+        Candidate & candidate = side > 0 ? left : right;
+        candidate = bestStaticObstacleCandidateForSide(
+          get_context, raw, raw_message, obstacle, all_hits,
+          robot_position, robot_yaw, car_lateral_offset,
+          car_heading_error, side);
+        return candidate;
+      };
+
+    Candidate & first = evaluate(first_side);
+    if (static_first_valid_side_ && first.valid) {
+      return &first;
+    }
+    Candidate & second = evaluate(second_side);
+    if (static_first_valid_side_) {
+      return second.valid ? &second : nullptr;
+    }
+    return chooseCandidate(left, right);
   }
 
   Candidate buildRecoveryCandidate(
@@ -3089,7 +3390,7 @@ private:
           {
             continue;
           }
-          ++interfering;
+          interfering += static_cast<int>(hit.support_count);
           const double along = std::clamp(
             ((hit.point.x - segment.ax) * dx + (hit.point.y - segment.ay) * dy) /
             (segment_length * segment_length), 0.0, 1.0) * segment_length;
@@ -3290,7 +3591,8 @@ private:
         const bool connected_to_previous = previous_interfered &&
           hit.beam_index <= previous_beam + static_cast<std::size_t>(cluster_max_beam_gap_) &&
           distance(hit.point, previous_point) <= cluster_point_gap_m_;
-        connected = connected_to_previous ? connected + 1 : 1;
+        const int support = static_cast<int>(hit.support_count);
+        connected = connected_to_previous ? connected + support : support;
         maximum_connected = std::max(maximum_connected, connected);
         previous_beam = hit.beam_index;
         previous_point = hit.point;
@@ -3441,6 +3743,16 @@ private:
       std::to_string(last_lattice_clearance_grid_time_ms_));
     add("lattice_compute_time_ms", std::to_string(last_lattice_compute_time_ms_));
     add("lattice_result", last_lattice_reason_);
+    add("static_obstacle_fast_mode", static_obstacle_fast_mode_ ? "true" : "false");
+    add(
+      "static_analytic_candidates_evaluated",
+      std::to_string(last_static_analytic_candidates_));
+    add("static_analytic_time_ms", std::to_string(last_static_analytic_time_ms_));
+    add("static_side_score_time_ms", std::to_string(last_static_side_score_time_ms_));
+    add("static_planning_total_time_ms", std::to_string(last_static_total_time_ms_));
+    add("static_left_map_score_m", std::to_string(last_static_left_map_score_m_));
+    add("static_right_map_score_m", std::to_string(last_static_right_map_score_m_));
+    add("static_planning_backend", last_static_backend_);
     add(
       "effective_obstacle_detection_distance_m",
       std::to_string(last_effective_detection_distance_m_));
@@ -3993,9 +4305,11 @@ private:
     // Re-evaluate safety at the control rate, but do not rebuild a successful
     // plan every cycle.  Active-plan geometry is map anchored and only its
     // already-passed prefix is trimmed for downstream consumers.
-    std::vector<ScanHit> hits;
+    std::vector<ScanHit> full_resolution_hits;
     double valid_beam_ratio = 0.0;
-    if (!scanHitsInPathFrame(*scan, raw, hits, valid_beam_ratio)) {
+    if (!scanHitsInPathFrame(
+        *scan, raw, full_resolution_hits, valid_beam_ratio))
+    {
       failPrimary("TF_UNAVAILABLE", "scan-to-path transform or LaserScan is invalid", raw_age, scan_age);
       return;
     }
@@ -4037,16 +4351,43 @@ private:
     }
 
     last_effective_detection_distance_m_ = effectiveObstacleDetectionDistance(raw);
-    const auto clusters = clusterScanHits(hits, last_effective_detection_distance_m_);
+    const auto clusters = clusterScanHits(
+      full_resolution_hits, last_effective_detection_distance_m_);
     ObstacleCluster obstacle;
     const bool obstacle_found = selectNearestObstacle(clusters, obstacle);
     const double allowed_extent = max_obstacle_size_m_ + obstacle_size_tolerance_m_;
     const bool obstacle_size_valid = !obstacle_found ||
       ((obstacle.s_max - obstacle.s_min <= allowed_extent) &&
       (obstacle.d_max - obstacle.d_min <= allowed_extent));
-    updateObstacleTrack(
-      clusters, obstacle_found ? &obstacle : nullptr, raw,
-      current_scan_time, new_scan);
+    if (static_obstacle_fast_mode_) {
+      // The static profile deliberately has no velocity estimation or
+      // rolling/open-ended pass state. Moving returns are treated as ordinary
+      // instantaneous obstacles by the same collision validators.
+      if (obstacle_track_.valid) {
+        obstacle_track_ = ObstacleTrack();
+      }
+      rolling_pass_clear_cycles_ = 0;
+    } else {
+      updateObstacleTrack(
+        clusters, obstacle_found ? &obstacle : nullptr, raw,
+        current_scan_time, new_scan);
+    }
+    std::vector<ScanHit> pooled_planning_hits;
+    bool planning_hits_prepared = false;
+    const auto getPlanningHits = [&]() -> const std::vector<ScanHit> & {
+        if (planning_scan_pool_size_ <= 1) {
+          return full_resolution_hits;
+        }
+        if (!planning_hits_prepared) {
+          // Reuse already transformed/projected endpoints. This avoids a
+          // second TF lookup and a second trigonometric/projection pass.
+          pooled_planning_hits = minimumRangePoolPlanningHits(
+            full_resolution_hits,
+            static_cast<std::size_t>(planning_scan_pool_size_));
+          planning_hits_prepared = true;
+        }
+        return pooled_planning_hits;
+      };
     RacelinePlanningContext raceline_context;
     bool raceline_context_prepared = false;
     const auto getRacelineContext = [&]() -> const RacelinePlanningContext & {
@@ -4056,7 +4397,7 @@ private:
           last_lattice_clearance_grid_time_ms_ = 0.0;
           last_lattice_reason_ = "not run";
           raceline_context = prepareRacelinePlanningContext(
-            raw, hits, robot_position, robot_yaw,
+            raw, getPlanningHits(), robot_position, robot_yaw,
             obstacle_found ? &obstacle : nullptr);
           raceline_context_prepared = true;
         }
@@ -4106,8 +4447,10 @@ private:
           *raw_message, handoff_mode);
         LatestCandidateValidation rejected_candidate_validation;
         bool candidate_rejected_on_latest_scan = false;
-        const double tracked_obstacle_s = trackedObstacleCurrentS(raw);
-        const bool rolling_target_cleared = active_plan_.rolling_pass &&
+        const double tracked_obstacle_s = static_obstacle_fast_mode_ ?
+          std::numeric_limits<double>::infinity() : trackedObstacleCurrentS(raw);
+        const bool rolling_target_cleared = !static_obstacle_fast_mode_ &&
+          active_plan_.rolling_pass &&
           !obstacle_found &&
           (tracked_obstacle_s <= -rolling_pass_rear_clearance_m_ ||
           obstacle_track_.missing_scans >= rolling_pass_completion_scans_) &&
@@ -4116,7 +4459,7 @@ private:
           rolling_pass_clear_cycles_ = rolling_target_cleared ?
             rolling_pass_clear_cycles_ + 1 : 0;
         }
-        if (active_plan_.rolling_pass && !obstacle_found &&
+        if (!static_obstacle_fast_mode_ && active_plan_.rolling_pass && !obstacle_found &&
           rolling_pass_clear_cycles_ >= rolling_pass_completion_scans_)
         {
           const auto planning_started_at = steady_clock_.now();
@@ -4125,7 +4468,7 @@ private:
             "computing smooth recovery while retaining the current clear path",
             active_plan_.side, raw_age, scan_age, valid_beam_ratio);
           Candidate recovery = bestAvailableRecoveryCandidate(
-            getRacelineContext(), raw, *raw_message, hits,
+            getRacelineContext(), raw, *raw_message, getPlanningHits(),
             robot_position, robot_yaw, robot_on_raw.d, car_heading_error);
           if (!finishPlanningAttempt(planning_started_at, true)) {
             return;
@@ -4162,9 +4505,9 @@ private:
         }
 
         const bool margin_blocked_now = activePathBlocked(
-          hits, planningClearance(), held_active_path);
+          full_resolution_hits, planningClearance(), held_active_path);
         const bool physical_blocked_now = activePathBlocked(
-          hits, safety_half_width_m_, held_active_path);
+          full_resolution_hits, safety_half_width_m_, held_active_path);
         if (new_scan) {
           active_blocked_cycles_ = margin_blocked_now ? active_blocked_cycles_ + 1 : 0;
           active_physical_blocked_cycles_ = physical_blocked_now ?
@@ -4176,13 +4519,15 @@ private:
           active_blocked_cycles_ >= active_path_blocked_confirmation_scans_;
         const bool physical_blocked_confirmed =
           active_physical_blocked_cycles_ >= active_path_blocked_confirmation_scans_;
-        const bool rolling_upgrade_requested = obstacle_found &&
+        const bool rolling_upgrade_requested = !static_obstacle_fast_mode_ && obstacle_found &&
           trackedObstacleMatches(obstacle) && obstacle_track_.moving &&
           !active_plan_.rolling_pass;
-        const bool rolling_refresh_requested = active_plan_.rolling_pass &&
+        const bool rolling_refresh_requested = !static_obstacle_fast_mode_ &&
+          active_plan_.rolling_pass &&
           obstacle_found && trackedObstacleMatches(obstacle) &&
           remainingActivePathLength() <= rolling_pass_refresh_remaining_m_;
-        const bool rolling_continuation_requested = active_plan_.rolling_pass &&
+        const bool rolling_continuation_requested = !static_obstacle_fast_mode_ &&
+          active_plan_.rolling_pass &&
           !obstacle_found &&
           remainingActivePathLength() <= rolling_pass_refresh_remaining_m_;
         const bool update_requested = blocked_confirmed || stale_plan ||
@@ -4229,7 +4574,7 @@ private:
           pathBlockedByConnectedHits(
           held_active_path, rejected_candidate_validation.hits, safety_half_width_m_);
         const auto & planning_safety_hits = candidate_rejected_on_latest_scan ?
-          rejected_candidate_validation.hits : hits;
+          rejected_candidate_validation.hits : full_resolution_hits;
         const auto & planning_safety_robot_position = candidate_rejected_on_latest_scan ?
           rejected_candidate_validation.robot_position : robot_position;
         const double planning_safety_robot_yaw = candidate_rejected_on_latest_scan ?
@@ -4256,25 +4601,34 @@ private:
           }
         }
         if (obstacle_found && enable_detour_planning_ && obstacle_size_valid) {
+          if (static_obstacle_fast_mode_) {
+            resetStaticFastSearchDiagnostics();
+          }
           const bool preserve_legacy_backend =
             active_plan_.objective_domain == selection::ObjectiveDomain::NONE;
           const auto active_side_candidate = [&](const int side) {
+              if (static_obstacle_fast_mode_) {
+                return bestStaticObstacleCandidateForSide(
+                  getRacelineContext, raw, *raw_message, obstacle, getPlanningHits(),
+                  robot_position, robot_yaw, robot_on_raw.d,
+                  car_heading_error, side);
+              }
               if (preserve_legacy_backend) {
                 last_reference_source_ = "racingline_legacy_continuous_replan";
                 Candidate candidate = bestDetourCandidateForSide(
-                  raw, *raw_message, obstacle, hits,
+                  raw, *raw_message, obstacle, getPlanningHits(),
                   robot_position, robot_yaw, robot_on_raw.d,
                   car_heading_error, side);
                 if (!candidate.valid) {
                   candidate = bestDetourCandidateForSide(
-                    raw, *raw_message, obstacle, hits,
+                    raw, *raw_message, obstacle, getPlanningHits(),
                     robot_position, robot_yaw, robot_on_raw.d,
                     car_heading_error, side, true);
                 }
                 return candidate;
               }
               return bestAvailableDetourCandidateForSide(
-                getRacelineContext(), raw, *raw_message, obstacle, hits,
+                getRacelineContext(), raw, *raw_message, obstacle, getPlanningHits(),
                 robot_position, robot_yaw, robot_on_raw.d, car_heading_error,
                 side, false);
             };
@@ -4286,6 +4640,11 @@ private:
           } else if (side_decision_closed && active_plan_.side < 0) {
             right = active_side_candidate(-1);
             selected = right.valid ? &right : nullptr;
+          } else if (static_obstacle_fast_mode_) {
+            selected = selectStaticObstacleCandidate(
+              getRacelineContext, raw, *raw_message, obstacle, getPlanningHits(),
+              robot_position, robot_yaw, robot_on_raw.d,
+              car_heading_error, left, right);
           } else {
             left = active_side_candidate(+1);
             right = active_side_candidate(-1);
@@ -4306,9 +4665,9 @@ private:
           }
         } else if (!obstacle_found) {
           clearMarkers(raw.frame);
-          if (active_plan_.rolling_pass) {
+          if (!static_obstacle_fast_mode_ && active_plan_.rolling_pass) {
             replacement = buildRollingContinuationCandidate(
-              raw, *raw_message, hits, robot_position, robot_yaw,
+              raw, *raw_message, getPlanningHits(), robot_position, robot_yaw,
               robot_on_raw.d, active_plan_.side);
             selected = replacement.valid ? &replacement : nullptr;
             update_reason = "rolling pass horizon continued on the committed side";
@@ -4316,7 +4675,7 @@ private:
             active_plan_.phase == ManeuverPhase::RETURNING)
           {
             replacement = bestAvailableRecoveryCandidate(
-              getRacelineContext(), raw, *raw_message, hits,
+              getRacelineContext(), raw, *raw_message, getPlanningHits(),
               robot_position, robot_yaw, robot_on_raw.d, car_heading_error, false);
             selected = replacement.valid ? &replacement : nullptr;
             update_reason = "active return path update toward raceline";
@@ -4362,7 +4721,7 @@ private:
         // Yield on a safe prefix while retrying the committed side.
         SafeYieldPlan safe_yield;
         const auto & failure_safety_hits = candidate_rejected_on_latest_scan ?
-          rejected_candidate_validation.hits : hits;
+          rejected_candidate_validation.hits : full_resolution_hits;
         const auto & failure_robot_position = candidate_rejected_on_latest_scan ?
           rejected_candidate_validation.robot_position : robot_position;
         const double failure_robot_yaw = candidate_rejected_on_latest_scan ?
@@ -4449,7 +4808,7 @@ private:
       bool heartbeat_started = false;
       if (obstacle_found && enable_detour_planning_ && obstacle_size_valid) {
         const auto planning_yield = buildSafeYieldPlan(
-          *raw_message, hits, robot_position, robot_yaw);
+          *raw_message, full_resolution_hits, robot_position, robot_yaw);
         if (planning_yield.valid) {
           startPlanningHeartbeat(
             planning_yield.path,
@@ -4458,13 +4817,21 @@ private:
             0, raw_age, scan_age, valid_beam_ratio, &obstacle);
           heartbeat_started = true;
         }
-        left = bestAvailableDetourCandidateForSide(
-          getRacelineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
-          robot_on_raw.d, car_heading_error, +1);
-        right = bestAvailableDetourCandidateForSide(
-          getRacelineContext(), raw, *raw_message, obstacle, hits, robot_position, robot_yaw,
-          robot_on_raw.d, car_heading_error, -1);
-        selected = chooseCandidate(left, right);
+        if (static_obstacle_fast_mode_) {
+          resetStaticFastSearchDiagnostics();
+          selected = selectStaticObstacleCandidate(
+            getRacelineContext, raw, *raw_message, obstacle, getPlanningHits(),
+            robot_position, robot_yaw, robot_on_raw.d,
+            car_heading_error, left, right);
+        } else {
+          left = bestAvailableDetourCandidateForSide(
+            getRacelineContext(), raw, *raw_message, obstacle, getPlanningHits(),
+            robot_position, robot_yaw, robot_on_raw.d, car_heading_error, +1);
+          right = bestAvailableDetourCandidateForSide(
+            getRacelineContext(), raw, *raw_message, obstacle, getPlanningHits(),
+            robot_position, robot_yaw, robot_on_raw.d, car_heading_error, -1);
+          selected = chooseCandidate(left, right);
+        }
         recordCandidateDecision(
           left, right, selected, "new obstacle-path decision");
         publishMarkers(obstacle, left, right, selected ? selected->side : 0, raw.frame);
@@ -4482,7 +4849,8 @@ private:
           0, raw_age, scan_age, valid_beam_ratio);
         heartbeat_started = true;
         recovery = bestAvailableRecoveryCandidate(
-          getRacelineContext(), raw, *raw_message, hits, robot_position, robot_yaw,
+          getRacelineContext(), raw, *raw_message, getPlanningHits(),
+          robot_position, robot_yaw,
           robot_on_raw.d, car_heading_error);
         selected = recovery.valid ? &recovery : nullptr;
         failure_reason = "no valid raceline-recovery trajectory: " + recovery.reason;
@@ -4522,7 +4890,7 @@ private:
 
       // Stop before the obstacle when both passing sides are unavailable.
       const SafeYieldPlan safe_yield = buildSafeYieldPlan(
-        *raw_message, hits, robot_position, robot_yaw);
+        *raw_message, full_resolution_hits, robot_position, robot_yaw);
       if (obstacle_found && safe_yield.valid) {
         resetNoSafePathConfirmation();
         if (terminalSafeYieldFailureConfirmed(safe_yield, current_scan_time))
