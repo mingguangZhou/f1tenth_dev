@@ -1,0 +1,19 @@
+slow_agent_controller:
+  ros__parameters:
+    path_csv: "/sim_ws/src/centerline_tools/moving_agent_output/spielberg_slow_agent/spielberg_slow_agent_path.csv"
+    odom_topic: "/opp_racecar/odom"
+    scan_topic: "/opp_scan"
+    drive_topic: "/opp_drive"
+    path_topic: "/moving_agent/reference_path"
+    status_topic: "/moving_agent/status"
+    control_rate_hz: 20.0
+    lookahead_m: 1.20
+    wheelbase_m: 0.33
+    maximum_speed_mps: 1.40
+    minimum_speed_mps: 0.75
+    maximum_steering_rad: 0.36
+    front_slow_distance_m: 1.20
+    front_stop_distance_m: 0.55
+    front_cone_half_angle_deg: 18.0
+    input_timeout_sec: 0.30
+    maximum_cross_track_error_m: 1.00

@@ -1,0 +1,71 @@
+inputs:
+  centerline: centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+  raceline: centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+  obstacles: centerline_tools/obstacle_output/ifac_roboracer_key_turns/ifac_roboracer_obstacles_clearance.csv
+  map_image: centerline_tools/obstacle_output/ifac_roboracer_key_turns/ifac_roboracer_obstacles.png
+  map_yaml: centerline_tools/obstacle_output/ifac_roboracer_key_turns/ifac_roboracer_obstacles.yaml
+parameters:
+  passing_offset_m: 0.45
+  guide_hold_half_length_m: 0.55
+  guide_transition_length_m: 3.5
+  nudge_hold_half_length_m: 0.5
+  nudge_transition_length_m: 5.0
+  minimum_map_clearance_m: 0.35
+  minimum_nudge_clearance_m: 0.35
+  maximum_curvature_inv_m: 1.1
+  continuous_clearance_step_m: 0.00625
+  spawn_count: 1
+metrics:
+  point_count: 1569
+  lap_length_m: 45.43858837931874
+  minimum_sampled_map_clearance_m: 0.38499996066093445
+  minimum_continuous_map_clearance_m: 0.38445743918418884
+  minimum_nudge_hold_clearance_m: 0.38499996066093445
+  maximum_abs_curvature_inv_m: 0.9212276268295464
+  maximum_raceline_deviation_m: 0.7479599184636497
+  mean_raceline_deviation_m: 0.17769580280810027
+  exact_raceline_point_fraction: 0.2995538559592097
+  exact_raceline_length_m: 14.103780347279615
+  nudge_count: 3
+  validated: true
+nudges:
+- obstacle_id: '1'
+  label: northwest_hairpin_exit
+  raceline_index: 80
+  raceline_progress_m: 2.401434294072503
+  obstacle_side: right
+  guide_offset_m: 0.45
+  minimum_hold_map_clearance_m: 0.4643799364566803
+  maximum_hold_curvature_inv_m: 0.596459424025017
+  minimum_hold_obstacle_center_distance_m: 0.681328901910567
+- obstacle_id: '2'
+  label: east_hairpin_entry
+  raceline_index: 715
+  raceline_progress_m: 21.45656886065212
+  obstacle_side: right
+  guide_offset_m: 0.45
+  minimum_hold_map_clearance_m: 0.5643799304962158
+  maximum_hold_curvature_inv_m: 0.4085336599363739
+  minimum_hold_obstacle_center_distance_m: 0.7750183256291872
+- obstacle_id: '3'
+  label: center_chicane_entry
+  raceline_index: 1080
+  raceline_progress_m: 32.41163441216242
+  obstacle_side: left
+  guide_offset_m: -0.45
+  minimum_hold_map_clearance_m: 0.38499996066093445
+  maximum_hold_curvature_inv_m: 0.9212276268295464
+  minimum_hold_obstacle_center_distance_m: 0.7375144224775741
+spawn:
+  anchor_reference_index: 600
+  anchor_progress_m: 17.308700034110522
+  count: 1
+  spacing_m: 45.43858837931874
+  poses:
+  - ordinal: 1
+    progress_m: 17.308700034110522
+    x: 3.952752079845327
+    y: -0.12859275788900515
+    yaw: -0.157104104589783
+    segment_index: 599
+    segment_fraction: 0.03431110773128224

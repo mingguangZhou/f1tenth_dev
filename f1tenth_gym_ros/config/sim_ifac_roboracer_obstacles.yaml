@@ -1,0 +1,29 @@
+bridge:
+  ros__parameters:
+    ego_namespace: "ego_racecar"
+    ego_scan_topic: "scan"
+    ego_odom_topic: "odom"
+    ego_opp_odom_topic: "opp_odom"
+    ego_drive_topic: "drive"
+
+    opp_namespace: "opp_racecar"
+    opp_scan_topic: "opp_scan"
+    opp_odom_topic: "odom"
+    opp_ego_odom_topic: "opp_odom"
+    opp_drive_topic: "opp_drive"
+
+    scan_distance_to_base_link: 0.27
+    scan_fov: 4.7
+    scan_beams: 1080
+
+    map_path: "/sim_ws/src/centerline_tools/obstacle_output/ifac_roboracer_key_turns/ifac_roboracer_obstacles"
+    map_img_ext: ".png"
+
+    num_agent: 1
+
+    # Validated optimized-raceline pose with clear startup distance.
+    sx: -4.98845420262638
+    sy: 0.808652779292394
+    stheta: -0.0159157875587137
+
+    kb_teleop: true

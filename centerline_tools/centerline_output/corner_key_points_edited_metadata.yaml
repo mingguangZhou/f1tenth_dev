@@ -1,0 +1,5 @@
+selected_direction: reverse
+corner_count: 3
+source: manual_raceline_generator
+keypoint_reference: manual_centerline_index_plus_lateral_offset
+lateral_offsets_file: moved_corner_keypoints.csv

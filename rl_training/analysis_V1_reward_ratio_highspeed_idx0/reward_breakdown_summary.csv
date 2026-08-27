@@ -1,0 +1,3 @@
+name,reward_progress,reward_lap,reward_early_finish,penalty_tracking,penalty_curvature_speed_section,penalty_target_speed_smoothness,penalty_residual_smoothness,penalty_residual_excess,penalty_assist_smoothness,penalty_assist_excess,penalty_time,penalty_crash,penalty_timeout,reward_total_from_steps,mean_curvature_section_abs
+rule,1701.0336696506695,500.0,0.0,210.77204438369012,78.14063353397141,2.2330226900128736,0.0,0.0,0.0,0.0,128.03999999999996,0.0,0.0,1781.8479690429947,0.058957211304201076
+model,1700.8836666815646,500.0,0.09448818897637795,209.2657692016289,75.42714107152214,2.757247539910281,0.0,0.0,0.0,0.0,126.93999999999997,0.0,0.0,1785.276854989127,0.06285082999665997

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>oudtra_driver_bringup</name>
+  <version>0.1.0</version>
+  <description>Master launch integration for the Oudtra raceline and reactive stacks.</description>
+
+  <maintainer email="mingguang_zhou@berkeley.edu">Mingguang Zhou</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>centerline_tools</exec_depend>
+  <exec_depend>drive_arbitration_v2</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>particle_filter</exec_depend>
+  <exec_depend>path_following_v2</exec_depend>
+  <exec_depend>reactive_control_v2</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

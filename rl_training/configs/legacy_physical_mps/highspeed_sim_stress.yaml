@@ -1,0 +1,108 @@
+# High-speed simulation stress profile.
+# Purpose: simulator-only boundary / extreme-performance check for the RL pipeline.
+# This is NOT intended as the onboard reserved competition profile.
+
+profile:
+  name: highspeed_sim_stress
+  scope: simulator_only_boundary_test
+  note: Wide residual authority; useful for verifying that PPO can learn the risky speed boundary.
+
+map:
+  map_path: ../f1tenth_gym_ros/maps/Spielberg_map
+  map_ext: .png
+  centerline_csv: ../centerline_tools/centerline_output/raceline_points_smooth.csv
+  corner_csv: ../centerline_tools/centerline_output/corner_key_points_edited.csv
+model:
+  model_path: models/V0_reward_ppo_speed_spielberg_1000k_20260612.zip
+start:
+  sx: 0.0
+  sy: 0.0
+  stheta: 0.0
+  start_centerline_idx: -1
+  random_start_along_centerline: true
+  random_start_min_index: -1
+  random_start_max_index: -1
+  start_lateral_noise_std: 0.02
+  start_lateral_noise_max: 0.05
+  start_yaw_noise_std: 0.02
+  start_yaw_noise_max: 0.05
+  start_xy_noise_std: 0.0
+  start_xy_noise_max: 0.05
+observation_noise:
+  obs_cte_noise_std: 0.01
+  obs_heading_noise_std: 0.01
+  obs_speed_noise_std: 0.03
+speed:
+  steps: 9000
+  command_speed_min_mps: 1.0
+  command_speed_max_mps: 10.0
+  rule_curve_min_speed_mps: 1.0
+  rule_straight_speed_mps: 6.0
+  rule_speed_curvature_gain: 2.0
+
+  # Preserve the old 3-waypoint rule preview used by the current saved highspeed model.
+  # Change to 0.50 for a future highspeed model aligned exactly with latest path_following_v2_sim.yaml.
+  rule_speed_curvature_preview_m: 0.09
+
+  max_delta_speed_mps: 4.0
+  max_speed_delta_per_step_mps: 0.2
+curvature:
+  # Approximate metre-based equivalents of the previous 10/40/80 point previews.
+  model_curvature_short_preview_m: 0.30
+  model_curvature_mid_preview_m: 1.20
+  model_curvature_long_preview_m: 2.40
+reward:
+  target_lap_steps: 6350
+  crash_penalty_value: 1500.0
+  timeout_penalty_value: 500.0
+  target_speed_smoothness_weight: 0.04
+  reward_curvature_section_start_m: 0.10
+  reward_curvature_section_end_m: 2.00
+  curvature_speed_section_weight: 0.006
+  residual_smoothness_weight: 0.08
+  residual_free_band_mps: 0.8
+  residual_excess_weight: 0.05
+termination:
+  enable_bad_tracking_termination: true
+  bad_tracking_min_steps: 120
+  bad_tracking_cte_threshold: 0.75
+  bad_tracking_heading_threshold: 0.90
+gate:
+  # Off for nominal raceline training. Can be overridden to true for fixed-start recovery diagnostics.
+  enable_rl_gate: false
+  rl_gate_enable_cte: 0.25
+  rl_gate_enable_heading: 0.20
+  rl_gate_disable_cte: 0.45
+  rl_gate_disable_heading: 0.35
+  rl_gate_enable_count: 10
+  rl_gate_disable_count: 3
+  rl_gate_fade_in_step: 0.05
+  rl_gate_fade_out_step: 0.10
+steering:
+  # Keep current highspeed RL steering shape; compatible names with path_following_v2.
+  wheelbase_m: 0.33
+  steering_max_deg: 20.6
+  min_forward_point_x_m: 0.05
+  fixed_steering_lookahead_m: 0.60
+  use_speed_dependent_steering_lookahead: true
+  steering_min_lookahead_m: 0.6
+  steering_max_lookahead_m: 1.6
+  steering_lookahead_speed_gain: 0.25
+ppo:
+  total_timesteps: 1000000
+  learning_rate: 0.0002
+  n_steps: 2048
+  batch_size: 128
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.15
+  ent_coef: 0.001
+  model_dir: models
+  model_name: ppo_highspeed_sim_stress
+  load_model_path: null
+  reset_num_timesteps: false
+analysis:
+  out_dir: speed_policy_analysis_highspeed_sim_stress
+  print_every: 100
+misc:
+  random_seed: null

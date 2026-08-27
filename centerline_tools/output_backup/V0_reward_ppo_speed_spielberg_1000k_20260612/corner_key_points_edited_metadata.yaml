@@ -1,0 +1,5 @@
+selected_direction: normal
+corner_count: 7
+source: manual_editor
+keypoint_reference: world_xy_plus_direction_specific_indices
+resume_rule: restore_direction_then_snap_saved_world_xy_to_active_centerline

@@ -1,0 +1,193 @@
+# Master experiment config for the ratio-assist PPO speed pipeline.
+#
+# This is the single file you normally edit for reward tuning, speed-profile
+# tuning, new map/raceline paths, model name, and analysis output names.
+#
+# Core competition logic:
+#   Train the PPO assist trend in the highspeed_sim_stress profile.
+#   Apply the same trained ratio model to reserved_realistic with a smaller
+#   assist_gain for a safer/faster knob.
+
+experiment:
+  name: V1_reward_ratio_ppo_speed_spielberg_500k_20260812
+
+paths:
+  # For a new map, change these four values first.
+  map_path: ../f1tenth_gym_ros/maps/Spielberg_map
+  map_ext: .png
+  centerline_csv: ../centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv
+  corner_csv: ../centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/corner_key_points_edited.csv
+
+model:
+  # Output model stays directly under rl_training/models by default.
+  model_dir: models
+  model_name: V1_reward_ratio_ppo_speed_spielberg_500k_20260812
+  # model_path is used by eval/compare stages. If null, the runner uses:
+  #   models/<model_name>.zip
+  model_path: null
+  # Use only for continue-highspeed stage unless overridden on the command line.
+  load_model_path: null
+
+start:
+  # Fixed pose used by fixed-start eval. For fair raceline comparison, prefer
+  # --start_centerline_idx 0, which overwrites sx/sy/stheta from the raceline CSV.
+  sx: 0.0
+  sy: 0.0
+  stheta: 0.0
+  start_centerline_idx: -1
+
+shared:
+  rl_residual:
+    residual_output_mode: speed_ratio
+    # action=+1.0 gives about +66.7% of rule speed. At rule_v=6.0 this can reach
+    # +4.0 m/s -> 10.0 m/s in the highspeed profile.
+    positive_assist_ratio: 0.667
+    # action=-1.0 can reduce target speed by about 50% of rule speed.
+    negative_assist_ratio: 0.50
+    # Legacy field, unused in speed_ratio mode. Kept for logs/backward CLI compatibility.
+    max_delta_speed_mps: 4.0
+
+  curvature_observation:
+    # These are model observation previews. Keep them consistent between training
+    # and inference for a saved model.
+    model_curvature_short_preview_m: 0.30
+    model_curvature_mid_preview_m: 1.20
+    model_curvature_long_preview_m: 2.40
+
+  steering:
+    # Pure pursuit steering remains rule-based; PPO learns speed assist only.
+    wheelbase_m: 0.33
+    steering_max_deg: 20.6
+    min_forward_point_x_m: 0.05
+    fixed_steering_lookahead_m: 0.60
+    use_speed_dependent_steering_lookahead: true
+    steering_min_lookahead_m: 0.6
+    steering_max_lookahead_m: 1.6
+    steering_lookahead_speed_gain: 0.25
+
+  termination:
+    # Bad-tracking termination gives earlier failure feedback than waiting for a
+    # wall collision in highspeed training.
+    enable_bad_tracking_termination: true
+    bad_tracking_min_steps: 120
+    bad_tracking_cte_threshold: 0.75
+    bad_tracking_heading_threshold: 0.90
+
+  gate:
+    # Gate is off during highspeed random-start training so bad actions have effect.
+    # It is on for fixed-start diagnostics and can be on in onboard inference.
+    rl_gate_enable_cte: 0.25
+    rl_gate_enable_heading: 0.20
+    rl_gate_disable_cte: 0.45
+    rl_gate_disable_heading: 0.35
+    rl_gate_enable_count: 10
+    rl_gate_disable_count: 3
+    rl_gate_fade_in_step: 0.05
+    rl_gate_fade_out_step: 0.10
+
+  reward:
+    target_lap_steps: 6350
+    crash_penalty_value: 1500.0
+    timeout_penalty_value: 500.0
+
+    # Mild final command smoothness. Increase only if target speed visibly oscillates.
+    target_speed_smoothness_weight: 0.04
+
+    # Curvature-speed penalty: higher means the model is more reluctant to carry
+    # high target speed through/into curved sections.
+    reward_curvature_section_start_m: 0.10
+    reward_curvature_section_end_m: 2.00
+    curvature_speed_section_weight: 0.010
+
+    # Physical residual regularization is disabled in ratio mode.
+    residual_smoothness_weight: 0.0
+    residual_free_band_mps: 0.0
+    residual_excess_weight: 0.0
+
+    # Ratio-assist regularization. These V1 values are stronger than the first
+    # boost-only ratio model and are the values used for the newest sensible V1 run.
+    # If the policy still boosts everywhere: increase assist_excess_weight or reduce
+    # assist_free_band. If it becomes too conservative: do the reverse.
+    assist_smoothness_weight: 0.35
+    assist_free_band: 0.12
+    assist_excess_weight: 1.0
+
+profiles:
+  highspeed_sim_stress:
+    description: "Simulator-only extreme profile used to train the assist trend. Do not deploy this speed envelope onboard."
+    speed:
+      steps: 9000
+      command_speed_min_mps: 1.0
+      command_speed_max_mps: 10.0
+      rule_curve_min_speed_mps: 1.0
+      rule_straight_speed_mps: 6.0
+      rule_speed_curvature_gain: 2.0
+      rule_speed_curvature_preview_m: 0.50
+      max_speed_delta_per_step_mps: 0.20
+    rl:
+      assist_gain: 1.0
+    train:
+      total_timesteps: 500000
+      learning_rate: 0.0002
+      n_steps: 2048
+      batch_size: 128
+      gamma: 0.995
+      gae_lambda: 0.95
+      clip_range: 0.15
+      ent_coef: 0.001
+      random_start_along_centerline: true
+      random_start_min_index: -1
+      random_start_max_index: -1
+      start_lateral_noise_std: 0.02
+      start_lateral_noise_max: 0.05
+      start_yaw_noise_std: 0.02
+      start_yaw_noise_max: 0.05
+      obs_cte_noise_std: 0.01
+      obs_heading_noise_std: 0.01
+      obs_speed_noise_std: 0.03
+      enable_rl_gate: false
+    eval:
+      random_start_along_centerline: false
+      obs_cte_noise_std: 0.0
+      obs_heading_noise_std: 0.0
+      obs_speed_noise_std: 0.0
+      enable_rl_gate: true
+    analysis:
+      out_dir: analysis_V1_reward_ratio_highspeed_idx0
+      print_every: 100
+      enable_rl_gate: false
+
+  reserved_realistic:
+    description: "Reserved/competition-style profile. Apply a highspeed-trained ratio model with assist_gain as the safety/faster knob."
+    speed:
+      steps: 15000
+      command_speed_min_mps: 0.5
+      command_speed_max_mps: 6.0
+      rule_curve_min_speed_mps: 0.5
+      rule_straight_speed_mps: 4.0
+      rule_speed_curvature_gain: 2.0
+      rule_speed_curvature_preview_m: 0.50
+      max_speed_delta_per_step_mps: 0.10
+    rl:
+      # Start with 0.25 in simulator reserved tests. For onboard, start even lower,
+      # e.g. 0.10 in rl_speed_inference.yaml.
+      assist_gain: 0.25
+    eval:
+      random_start_along_centerline: false
+      obs_cte_noise_std: 0.0
+      obs_heading_noise_std: 0.0
+      obs_speed_noise_std: 0.0
+      enable_rl_gate: false
+    analysis:
+      out_dir: analysis_V1_reward_ratio_reserved_idx0_gain025
+      print_every: 200
+      enable_rl_gate: false
+
+analysis:
+  # Used by sweep stages unless command line overrides are supplied.
+  start_indices: [0, 2000, 4000, 6000, 8000, 10000]
+  highspeed_assist_gains: [0.25, 0.50, 0.75, 1.00]
+  reserved_assist_gains: [0.10, 0.25, 0.50]
+
+misc:
+  random_seed: null

@@ -1,0 +1,22 @@
+# Simulator runtime adapter.
+#
+# All planning, speed, geometry, smoothing, and recovery tuning comes from
+# path_following_v2.yaml. Keep this file limited to simulator interfaces.
+
+path_generator:
+  ros__parameters:
+    use_sim_time: true
+    robot_frame: "ego_racecar/base_link"
+    tf_timeout_sec: 0.05
+
+local_trajectory_planner:
+  ros__parameters:
+    use_sim_time: true
+    robot_frame: "ego_racecar/base_link"
+    transform_timeout_sec: 0.05
+
+path_following_v2:
+  ros__parameters:
+    use_sim_time: true
+    robot_frame: "ego_racecar/base_link"
+    marker_frame: "ego_racecar/base_link"

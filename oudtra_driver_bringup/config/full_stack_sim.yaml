@@ -1,0 +1,5 @@
+lower_safety_controller:
+  ros__parameters:
+    use_sim_time: true
+    enable_wrong_way_recovery: true
+    enable_sim_reverse_swept_gate: true

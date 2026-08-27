@@ -19,6 +19,13 @@ DRIVE_ARBITRATION_PATH="${SCRIPT_DIR}/../drive_arbitration"
 SLAM_TOOLBOX_PATH="${SCRIPT_DIR}/../slam_toolbox"
 RANGE_LIBC_PATH="${SCRIPT_DIR}/../range_libc"
 PARTICLE_FILTER_PATH="${SCRIPT_DIR}/../particle_filter"
+CENTERLINE_TOOLS_PATH="${SCRIPT_DIR}/../centerline_tools"
+PATH_FOLLOWING_V2_PATH="${SCRIPT_DIR}/../path_following_v2"
+REACTIVE_CONTROL_V2_PATH="${SCRIPT_DIR}/../reactive_control_v2"
+DRIVE_ARBITRATION_V2_PATH="${SCRIPT_DIR}/../drive_arbitration_v2"
+OUDTRA_DRIVER_BRINGUP_PATH="${SCRIPT_DIR}/../oudtra_driver_bringup"
+RL_TRAINING_PATH="${SCRIPT_DIR}/../rl_training"
+RL_SPEED_INFERENCE_PATH="${SCRIPT_DIR}/../rl_speed_inference"
 
 # --------------------------------------------
 # Notify paths
@@ -33,6 +40,13 @@ echo "  ${DRIVE_ARBITRATION_PATH} → /sim_ws/src/drive_arbitration"
 echo "  ${SLAM_TOOLBOX_PATH} → /sim_ws/src/slam_toolbox"
 echo "  ${RANGE_LIBC_PATH} → /sim_ws/src/range_libc"
 echo "  ${PARTICLE_FILTER_PATH} → /sim_ws/src/particle_filter"
+echo "  ${CENTERLINE_TOOLS_PATH} → /sim_ws/src/centerline_tools"
+echo "  ${PATH_FOLLOWING_V2_PATH} → /sim_ws/src/path_following_v2"
+echo "  ${REACTIVE_CONTROL_V2_PATH} → /sim_ws/src/reactive_control_v2"
+echo "  ${DRIVE_ARBITRATION_V2_PATH} → /sim_ws/src/drive_arbitration_v2"
+echo "  ${OUDTRA_DRIVER_BRINGUP_PATH} → /sim_ws/src/oudtra_driver_bringup"
+echo "  ${RL_TRAINING_PATH} → /sim_ws/src/rl_training"
+echo "  ${RL_SPEED_INFERENCE_PATH} → /sim_ws/src/rl_speed_inference"
 echo ""
 
 # --------------------------------------------
@@ -48,5 +62,12 @@ rocker --nvidia --x11 \
     --volume "${SLAM_TOOLBOX_PATH}:/sim_ws/src/slam_toolbox" \
     --volume "${RANGE_LIBC_PATH}:/sim_ws/src/range_libc" \
     --volume "${PARTICLE_FILTER_PATH}:/sim_ws/src/particle_filter" \
+    --volume "${CENTERLINE_TOOLS_PATH}:/sim_ws/src/centerline_tools" \
+    --volume "${PATH_FOLLOWING_V2_PATH}:/sim_ws/src/path_following_v2" \
+    --volume "${REACTIVE_CONTROL_V2_PATH}:/sim_ws/src/reactive_control_v2" \
+    --volume "${DRIVE_ARBITRATION_V2_PATH}:/sim_ws/src/drive_arbitration_v2" \
+    --volume "${OUDTRA_DRIVER_BRINGUP_PATH}:/sim_ws/src/oudtra_driver_bringup" \
+    --volume "${RL_TRAINING_PATH}:/sim_ws/src/rl_training" \
+    --volume "${RL_SPEED_INFERENCE_PATH}:/sim_ws/src/rl_speed_inference" \
     --volume "${GYM_PATH}/install_localization_env.sh:/sim_ws/install_localization_env.sh" \
     -- "${IMAGE_NAME}"

@@ -1,0 +1,121 @@
+format_version: 1
+environment:
+  python: 3.13.5
+  python_implementation: CPython
+  numpy: 2.1.3
+  scipy: 1.15.3
+inputs:
+  centerline: centerline_tools/output_backup/ifac_roboracer/centerline_points_smooth.csv
+  centerline_sha256: 47d4d8aa51e9cab917e5fab7762fc109deb3b2e7e94d2c0d69c00e47e4eef8db
+  drivable_mask: centerline_tools/output_backup/ifac_roboracer/drivable_region.npy
+  drivable_mask_sha256: 958b7a0db4293b78ed6c212c7b7058437c14ade35ac9b357287652247d73c727
+  map_yaml: f1tenth_gym_ros/maps/ifac_roboracer.yaml
+  map_yaml_sha256: 723e006ae2aca310f63ae4a559e83e4fd05668d9cc5ccc26025b5dec8811ca15
+  baseline_raceline: null
+  baseline_raceline_sha256: null
+outputs:
+  raceline: centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+  validation_report: centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized_validation.yaml
+  debug_plot: centerline_tools/output_backup/ifac_roboracer/debug_global_raceline_optimization.png
+  raceline_sha256: d1da4fed8bd819d06de3800493b2ac3f7246212da27e570d3293b6334636eb3c
+parameters:
+  optimization_spacing_m: 0.15
+  output_spacing_m: 0.03
+  safety_margin_m: 0.3
+  maximum_lateral_offset_m: 1.5
+  ray_step_fraction: 0.4
+  validation_step_m: 0.005
+  curvature_weight: 1.22
+  curvature_rate_weight: 0.025
+  curvature_limit_weight: 0.1
+  comfortable_curvature_inv_m: 0.9
+  segment_uniformity_weight: 1.0
+  path_length_weight: 0.125
+  offset_weight: 0.001
+  offset_slope_weight: 0.005
+  maximum_curvature_inv_m: 1.082
+  maximum_iterations_per_stage: 2500
+  function_tolerance: 1.0e-07
+  gradient_tolerance: 0.001
+derived:
+  optimization_point_count: 317
+  optimization_spacing_m: 0.14992881085152307
+  effective_eroded_margin_m: 0.3176776695296637
+  minimum_left_bound_m: 0.4800000000000001
+  minimum_right_bound_m: 0.45000000000000007
+  maximum_abs_offset_used_m: 0.6073951424459308
+  comparison_spacing_m: 0.05
+solver:
+  stages:
+  - name: length_initialization
+    success: true
+    status: 0
+    iterations: 2
+    objective: 0.12441819633732949
+    message: 'CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL'
+  - name: minimum_curvature
+    success: true
+    status: 0
+    iterations: 1732
+    objective: 0.2741475416455473
+    message: 'CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH'
+  - name: curvature_rate_smoothing
+    success: true
+    status: 0
+    iterations: 137
+    objective: 0.2760289301445453
+    message: 'CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH'
+metrics:
+  centerline_before_common_sampling:
+    point_count: 951
+    length_m: 47.52705273974651
+    spacing_min_m: 0.04993389743926928
+    spacing_max_m: 0.04997713463305129
+    spacing_cv: 4.8370515817315726e-05
+    curvature_rms_inv_m: 0.6391423197843138
+    curvature_abs_p95_inv_m: 1.524734538863246
+    curvature_abs_p99_inv_m: 2.465294512359174
+    curvature_abs_max_inv_m: 3.9759586400868625
+    curvature_squared_integral_inv_m: 19.412230793262978
+    curvature_rate_rms_inv_m2: 2.162854684608562
+    curvature_rate_squared_integral_inv_m3: 222.30304225210335
+    signed_area_m2: 61.985472864656074
+  optimized_after_common_sampling:
+    point_count: 942
+    length_m: 47.08654772579321
+    spacing_min_m: 0.049984339398586534
+    spacing_max_m: 0.0499860790328058
+    spacing_cv: 8.713399443629746e-06
+    curvature_rms_inv_m: 0.3286763232686833
+    curvature_abs_p95_inv_m: 0.6344899828446497
+    curvature_abs_p99_inv_m: 0.695682754994308
+    curvature_abs_max_inv_m: 0.7200215764755528
+    curvature_squared_integral_inv_m: 5.086617839199107
+    curvature_rate_rms_inv_m2: 0.2901086372749668
+    curvature_rate_squared_integral_inv_m3: 3.962944575876876
+    signed_area_m2: 65.71332222035119
+  optimized_output:
+    point_count: 1569
+    length_m: 47.086886434277304
+    spacing_min_m: 0.03000672981310294
+    spacing_max_m: 0.03003280891477795
+    spacing_cv: 0.00014728447489309798
+    curvature_rms_inv_m: 0.3286838292816722
+    curvature_abs_p95_inv_m: 0.6342197857528334
+    curvature_abs_p99_inv_m: 0.6957918166592081
+    curvature_abs_max_inv_m: 0.7222240329730553
+    curvature_squared_integral_inv_m: 5.087820355962125
+    curvature_rate_rms_inv_m2: 0.3004591920847495
+    curvature_rate_squared_integral_inv_m3: 4.250732147670327
+    signed_area_m2: 65.7141587762176
+    minimum_dense_nearest_cell_clearance_m: 0.37165171868296265
+    dense_validation_point_count: 10983
+  baseline_raceline_common_sampling: null
+validation:
+  solver_converged: true
+  dense_corridor_clear: true
+  self_intersection_free: true
+  direction_preserved: true
+  maximum_curvature_satisfied: true
+  curvature_rms_improved: true
+  curvature_rate_rms_improved: true

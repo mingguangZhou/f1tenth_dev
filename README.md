@@ -1,6 +1,121 @@
 # F1TENTH gym environment ROS2 communication bridge
 This is a containerized ROS communication bridge for the F1TENTH gym environment that turns it into a simulation in ROS2.
 
+## Atomic Docker, simulator, and autonomy workflow
+
+The development commands deliberately separate container lifecycle from ROS
+builds and launches. GPU rendering through NVIDIA and host X11 is the default.
+Build the image when Docker dependencies change, then start and enter the
+development container:
+
+```bash
+./dk.sh image
+./dk.sh start
+```
+
+`dk.sh start` and `dk.sh up` do not install packages and therefore do not need
+network access. The Docker image supplies the normal simulator and autonomy
+dependencies. Run `./dk.sh deps` explicitly only after adding a new system
+dependency to a package manifest; use `--force` to repeat that manual check.
+
+Inside the container, build each ROS group independently:
+
+```bash
+f1 build sim
+f1 build auto
+```
+
+Use one container terminal for the simulator and RViz:
+
+```bash
+f1 sim
+```
+
+This starts the IFAC Roboracer fixture with three fixed corner obstacles and
+one moving traffic car. To remove only the moving car, use:
+
+```bash
+f1 sim --no-agents
+```
+
+To run the clean IFAC map with neither the moving car nor the three added static
+obstacles, use:
+
+```bash
+f1 sim --no-obstacle
+```
+
+Use a second host terminal to enter the same container and launch autonomy:
+
+```bash
+./dk.sh enter
+f1 auto
+```
+
+In default GPU mode, RViz opens as a normal host X11 window. To use CPU
+software rendering in a browser instead, add `--cpu` before or after the
+Docker command:
+
+```bash
+./dk.sh start --cpu
+```
+
+Then open [http://localhost:8080/vnc.html](http://localhost:8080/vnc.html).
+`--gpu` is also accepted explicitly, but is not required. Press `Ctrl+C` to
+stop either ROS launch and return to that container shell. Exiting a shell
+leaves Docker running. Stop the containers explicitly from the host with:
+
+```bash
+./dk.sh stop
+```
+
+### Spielberg two-agent regression
+
+The bundled moving-agent scenario exercises overtaking on the current
+Spielberg test map. After building `sim` and `auto`, run these in separate
+container shells:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_moving_agent_launch.py
+f1 auto
+```
+
+Optionally record a 90-second acceptance run:
+
+```bash
+python3 /sim_ws/src/f1tenth_gym_ros/tools/validate_moving_agent.py
+```
+
+### Eleven-vehicle Spielberg fixture
+
+The multi-agent fixture launches ego plus ten independently simulated traffic
+cars. The traffic cars use one fixed, map-validated route derived from the ego
+raceline, with smooth local nudges around the nine fixed obstacles. Their
+starts are separated by exactly one tenth of the route's closed arc length.
+
+After building the simulator package, launch this regression fixture with:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py
+```
+
+For a headless smoke test, disable only RViz; all eleven simulated identities
+and all ten traffic controllers still run:
+
+```bash
+ros2 launch f1tenth_gym_ros spielberg_multi_agent_launch.py use_rviz:=false
+```
+
+The generic `gym_bridge_launch.py` command remains available for custom
+simulator configurations.
+
+With that launch running, verify that every simulator identity is present, all
+ten traffic cars move, and no collision is reported:
+
+```bash
+python3 /sim_ws/src/f1tenth_gym_ros/tools/validate_multi_agent_fixture.py
+```
+
 ## Without an NVIDIA gpu:
 
 **Install the following dependencies:**
@@ -81,7 +196,9 @@ You can then run another node by creating another bash session in `tmux`.
 - The configuration file for the simulation is at `f1tenth_gym_ros/config/sim.yaml`.
 - Topic names and namespaces can be configured but is recommended to leave uncahnged.
 - The map can be changed via the `map_path` parameter. You'll have to use the full path to the map file in the container. The map follows the ROS convention. It is assumed that the image file and the `yaml` file for the map are in the same directory with the same name. See the note below about mounting a volume to see where to put your map file.
-- The `num_agent` parameter can be changed to either 1 or 2 for single or two agent racing.
+- The `num_agent` parameter accepts any positive vehicle count. Counts above
+  two use the aligned `traffic_*` namespace, topic, and start-pose arrays; the
+  bundled Spielberg fixture provides a validated eleven-vehicle example.
 - The ego and opponent starting pose can also be changed via parameters, these are in the global map coordinate frame.
 
 The entire directory of the repo is mounted to a workspace `/sim_ws/src` as a package. All changes made in the repo on the host system will also reflect in the container. After changing the configuration, run `colcon build` again in the container workspace to make sure the changes are reflected. And run `colcon build --packages-select f1tenth_gym_ros` to only rebuild the simulator.

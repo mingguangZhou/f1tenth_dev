@@ -1,0 +1,48 @@
+ppo_speed_node:
+  ros__parameters:
+    use_sim_time: true
+
+    # ======================================================================
+    # Simulator ratio-assist inference config
+    # ======================================================================
+    model_path: "/sim_ws/src/rl_training/models/V1_reward_ratio_ppo_speed_spielberg_500k_20260812.zip"
+    centerline_csv: "/sim_ws/src/centerline_tools/output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/raceline_points_smooth.csv"
+
+    odom_topic: "/ego_racecar/odom"
+    speed_residual_topic: "/rl_speed_inference/speed_residual_mps"
+
+    residual_output_mode: "speed_ratio"
+    positive_assist_ratio: 0.667
+    negative_assist_ratio: 0.50
+
+    # For sim highspeed validation, 1.0 means full trained trend.
+    # For reserved-profile sim tests, override this to 0.25/0.50 as needed.
+    assist_gain: 0.5
+    max_delta_speed_mps: 4.0
+
+    # Highspeed sim-stress profile used for training the V1 ratio model.
+    command_speed_min_mps: 1.0
+    command_speed_max_mps: 10.0
+    rule_curve_min_speed_mps: 1.0
+    rule_straight_speed_mps: 5.0
+    rule_speed_curvature_gain: 2.0
+    rule_speed_curvature_preview_m: 0.50
+
+    model_curvature_short_preview_m: 0.30
+    model_curvature_mid_preview_m: 1.20
+    model_curvature_long_preview_m: 2.40
+
+    rule_curvature_lookahead_points: 3
+    model_curvature_short_points: 10
+    model_curvature_mid_points: 40
+    model_curvature_long_points: 80
+
+    enable_rl_gate: true
+    rl_gate_enable_cte: 0.25
+    rl_gate_enable_heading: 0.20
+    rl_gate_disable_cte: 0.45
+    rl_gate_disable_heading: 0.35
+    rl_gate_enable_count: 10
+    rl_gate_disable_count: 3
+    rl_gate_fade_in_step: 0.05
+    rl_gate_fade_out_step: 0.10

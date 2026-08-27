@@ -1,0 +1,49 @@
+source_files:
+  map_image: cw_scanned_livingroom_20260813_01.pgm
+  map_yaml: cw_scanned_livingroom_20260813_01.yaml
+map_metadata:
+  resolution: 0.05
+  origin:
+  - -2.06
+  - -2.91
+  - 0.0
+pipeline_parameters:
+  inflation_radius_m: 0.1
+  spur_dilation_radius: 1
+  spur_fallback_dilation_radius: 0
+  spur_dilation_radius_used: 1
+  resample_spacing_m: 0.05
+  smoothing_window: 9
+  smoothing_passes: 2
+  use_bspline_centerline_smoothing: true
+  bspline_degree: 3
+  bspline_smoothing_factor_per_point: 0.0005
+  centerline_direction: normal
+  geometry_columns:
+  - index
+  - x
+  - y
+  - yaw
+  - curvature
+  - curvature_abs
+  min_component_area_abs: 50
+  min_component_area_ratio: 0.01
+drivable_region_selection:
+  mode: filtered_enclosed_component
+  label_id: 1
+  area: 4226
+  skeleton_pixels: 190
+  endpoint_count: 2
+  junction_count: 6
+  num_enclosed_candidates: 4
+  num_filtered_candidates: 1
+  largest_enclosed_area: 4226
+  min_area_threshold: 50
+outputs:
+  raw_csv: centerline_points_raw.csv
+  smooth_csv: centerline_points_smooth.csv
+  smooth_npy: centerline_points_smooth.npy
+  raw_point_count: 173
+  smooth_point_count: 177
+  raw_loop_length_m: 9.30416305603426
+  smooth_loop_length_m: 8.868797812166557

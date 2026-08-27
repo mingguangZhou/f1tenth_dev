@@ -1,0 +1,15 @@
+# Simulator runtime adapter.
+#
+# Motion and safety tuning comes from reactive_control_v2.yaml. Simulator-only
+# recovery authorization is applied by the integrated full-stack overlay.
+
+upper_corridor_follower:
+  ros__parameters:
+    use_sim_time: true
+    odom_topic: "/ego_racecar/odom"
+    base_frame: "ego_racecar/base_link"
+
+lower_safety_controller:
+  ros__parameters:
+    use_sim_time: true
+    odom_topic: "/ego_racecar/odom"

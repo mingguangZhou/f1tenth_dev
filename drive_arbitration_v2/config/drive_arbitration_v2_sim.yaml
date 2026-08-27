@@ -1,0 +1,14 @@
+# Simulator runtime adapter.
+#
+# Arbitration behavior comes from drive_arbitration_v2.yaml. The simulator
+# supplies ground-truth localization and therefore has no particle-filter
+# health topic.
+
+raceline_guard:
+  ros__parameters:
+    use_sim_time: true
+
+drive_arbitrator:
+  ros__parameters:
+    use_sim_time: true
+    require_pf_health: false

@@ -1,0 +1,31 @@
+bridge:
+  ros__parameters:
+    ego_namespace: "ego_racecar"
+    ego_scan_topic: "scan"
+    ego_odom_topic: "odom"
+    ego_opp_odom_topic: "opp_odom"
+    ego_drive_topic: "drive"
+    opp_namespace: "opp_racecar"
+    opp_scan_topic: "opp_scan"
+    opp_odom_topic: "odom"
+    opp_ego_odom_topic: "opp_odom"
+    opp_drive_topic: "opp_drive"
+
+    scan_distance_to_base_link: 0.27
+    scan_fov: 4.7
+    scan_beams: 1080
+
+    map_path: "/sim_ws/src/centerline_tools/obstacle_output/spielberg_key_turns/Spielberg_map_obstacles"
+    map_img_ext: ".png"
+
+    num_agent: 2
+
+    # The slower car starts about 20 m ahead on its closed path.
+    sx: 17.0
+    sy: 4.5
+    stheta: 0.7
+    sx1: 20.810496
+    sy1: 20.672351
+    stheta1: 1.850140
+
+    kb_teleop: true
