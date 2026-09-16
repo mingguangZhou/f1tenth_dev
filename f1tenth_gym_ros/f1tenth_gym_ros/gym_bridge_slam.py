@@ -33,12 +33,15 @@ from geometry_msgs.msg import TransformStamped
 from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from ackermann_msgs.msg import AckermannDriveStamped
+from diagnostic_msgs.msg import DiagnosticArray
 from tf2_ros import TransformBroadcaster
 from rclpy.time import Time
 
 import gym
 import numpy as np
 from transforms3d import euler
+
+from f1tenth_gym_ros.agent_status import make_agent_status
 
 class GymBridge(Node):
     def __init__(self):
@@ -151,6 +154,10 @@ class GymBridge(Node):
 
         # transform broadcaster
         self.br = TransformBroadcaster(self)
+
+        # Validation-only simulator truth; not an input to localization.
+        self.agent_status_pub = self.create_publisher(
+            DiagnosticArray, '/simulator/agent_status', 10)
 
         # publishers
         self.ego_scan_pub = self.create_publisher(LaserScan, ego_scan_topic, 10)
@@ -286,6 +293,27 @@ class GymBridge(Node):
             self._publish_transforms(ts)
         self._publish_laser_transforms(ts)
         self._publish_wheel_transforms(ts)
+        self._publish_agent_status(ts)
+
+    def _publish_agent_status(self, stamp):
+        # Read the latest Gym observation directly, independently of raw odom/TF.
+        namespaces = [self.ego_namespace]
+        if self.has_opp:
+            namespaces.append(self.opp_namespace)
+        poses = [
+            [self.obs[key][index] for key in ('poses_x', 'poses_y', 'poses_theta')]
+            for index in range(len(namespaces))]
+        speeds = [
+            [self.obs[key][index] for key in
+             ('linear_vels_x', 'linear_vels_y', 'ang_vels_z')]
+            for index in range(len(namespaces))]
+        observed_collisions = self.obs.get('collisions', [])
+        collisions = [
+            bool(observed_collisions[index])
+            if index < len(observed_collisions) else False
+            for index in range(len(namespaces))]
+        self.agent_status_pub.publish(make_agent_status(
+            stamp, namespaces, poses, speeds, collisions))
 
     def _update_sim_state(self):
         self.ego_scan = list(self.obs['scans'][0])

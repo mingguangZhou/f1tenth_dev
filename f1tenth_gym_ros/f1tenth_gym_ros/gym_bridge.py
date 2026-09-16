@@ -20,8 +20,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import math
-
 import rclpy
 from rclpy.node import Node
 
@@ -35,13 +33,13 @@ from geometry_msgs.msg import Transform
 from geometry_msgs.msg import Quaternion
 from ackermann_msgs.msg import AckermannDriveStamped
 from diagnostic_msgs.msg import DiagnosticArray
-from diagnostic_msgs.msg import DiagnosticStatus
-from diagnostic_msgs.msg import KeyValue
 from tf2_ros import TransformBroadcaster
 
 import gym
 import numpy as np
 from transforms3d import euler
+
+from f1tenth_gym_ros.agent_status import make_agent_status
 
 class GymBridge(Node):
     def __init__(self):
@@ -398,46 +396,9 @@ class GymBridge(Node):
                 bool(collisions[index]) if len(collisions) > index else False)
 
     def _publish_agent_status(self, stamp):
-        message = DiagnosticArray()
-        message.header.stamp = stamp
-        statuses = []
-        for index, (namespace, pose, speed, collision) in enumerate(zip(
-                self.agent_namespaces, self.poses,
-                self.speeds, self.collisions)):
-            name = 'ego' if index == 0 else namespace
-            if self.num_agents == 2 and index == 1:
-                name = 'slow_agent'
-            separation = min(
-                (math.hypot(
-                    pose[0] - other_pose[0],
-                    pose[1] - other_pose[1])
-                 for other_index, other_pose in enumerate(self.poses)
-                 if other_index != index),
-                default=math.inf)
-            status = DiagnosticStatus()
-            status.name = f'simulator/{name}'
-            status.hardware_id = 'f1tenth_gym'
-            status.level = (
-                DiagnosticStatus.ERROR if collision else DiagnosticStatus.OK)
-            status.message = 'COLLISION' if collision else 'DRIVING'
-            values = {
-                'collision': collision,
-                'x_m': pose[0],
-                'y_m': pose[1],
-                'yaw_rad': pose[2],
-                'speed_mps': math.hypot(speed[0], speed[1]),
-                'body_speed_mps': speed[0],
-                'yaw_rate_radps': speed[2],
-                'agent_separation_m': separation,
-            }
-            status.values = [
-                KeyValue(key=str(key), value=str(value))
-                for key, value in values.items()]
-            statuses.append(status)
-        message.status = statuses
-        self.agent_status_pub.publish(message)
-
-        
+        self.agent_status_pub.publish(make_agent_status(
+            stamp, self.agent_namespaces, self.poses,
+            self.speeds, self.collisions))
 
     def _publish_odom(self, ts):
         odometry = []
