@@ -280,6 +280,24 @@ ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py
 ros2 launch particle_filter localize_launch.py
 ```
 
+For the localization-ready Rocker environment, use the existing
+`f1tenth_gym_ros_rocker` container (see
+[Development environment](docs/DEVELOPMENT_ENVIRONMENT.md)). The localization
+simulator accepts the same `config_file` path argument as `gym_bridge_launch.py`:
+
+```bash
+ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py \
+  config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
+# In a second sourced terminal:
+ros2 launch particle_filter localize_sim_launch.py
+```
+
+Omitting `config_file` keeps the installed `config/sim.yaml` default.
+Supply a YAML file path visible inside the container, not a preset name.
+`slam_mapping_on` still defaults to `false`; simulator config selection does
+not change the PF configuration or select its map. Keep the perfect-localization
+workflow (`gym_bridge_launch.py` plus `full_stack_sim_launch.py`) separate.
+
 # Developing and creating your own agent in ROS 2
 
 There are multiple ways to launch your own agent to control the vehicles.

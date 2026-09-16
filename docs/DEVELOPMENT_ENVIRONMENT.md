@@ -202,6 +202,64 @@ ROS commands and launches can then use the workspace installation.
 
 ---
 
+## Canonical simulation workflows
+
+All current post-IFAC simulation development uses the canonical
+`f1tenth_gym_ros_localization_ready` image in `f1tenth_gym_ros_rocker`.
+The older `f1tenth_gym_ros` image is legacy/reference infrastructure;
+`f1tenth_gym_ros_localization_ready` is the canonical environment for current
+localization work.
+
+Run these two verified workflows separately. Each terminal below is a shell
+inside the existing container (open with `./scripts/rr_container.sh shell`).
+
+### Perfect-localization reference
+
+Terminal 1:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select f1tenth_gym_ros
+source install/local_setup.bash
+ros2 launch f1tenth_gym_ros gym_bridge_launch.py
+```
+
+Terminal 2:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
+source install/local_setup.bash
+ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
+```
+
+### PF-localization simulator
+
+Terminal 1:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select f1tenth_gym_ros
+source install/local_setup.bash
+ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py \
+  config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
+```
+
+Terminal 2:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select particle_filter
+source install/local_setup.bash
+ros2 launch particle_filter localize_sim_launch.py
+```
+
+---
+
 ## 7. Codex CLI
 
 Codex is installed on the host through the nvm-managed Node.js environment.

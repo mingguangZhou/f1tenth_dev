@@ -23,26 +23,17 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import Command
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 
-def generate_launch_description():
-    ld = LaunchDescription()
-    slam_mapping_on_arg = DeclareLaunchArgument(
-        'slam_mapping_on',
-        default_value='false',
-        description='Enable odom→base_link TF for SLAM mapping'
-    )
+def launch_nodes(context):
     slam_mapping_on = LaunchConfiguration('slam_mapping_on')
-    config = os.path.join(
-        get_package_share_directory('f1tenth_gym_ros'),
-        'config',
-        'sim.yaml'
-        )
-    config_dict = yaml.safe_load(open(config, 'r'))
+    config = LaunchConfiguration('config_file').perform(context)
+    with open(config, 'r', encoding='utf-8') as stream:
+        config_dict = yaml.safe_load(stream)
     has_opp = config_dict['bridge']['ros__parameters']['num_agent'] > 1
     teleop = config_dict['bridge']['ros__parameters']['kb_teleop']
 
@@ -95,13 +86,28 @@ def generate_launch_description():
     )
 
     # finalize
-    ld.add_action(slam_mapping_on_arg)
-    ld.add_action(rviz_node)
-    ld.add_action(bridge_node)
-    # ld.add_action(nav_lifecycle_node)
-    # ld.add_action(map_server_node)
-    ld.add_action(ego_robot_publisher)
+    nodes = [rviz_node, bridge_node, ego_robot_publisher]
+    # Map server and lifecycle manager are started by the localization launch.
     if has_opp:
-        ld.add_action(opp_robot_publisher)
+        nodes.append(opp_robot_publisher)
 
-    return ld
+    return nodes
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'config_file',
+            default_value=os.path.join(
+                get_package_share_directory('f1tenth_gym_ros'),
+                'config', 'sim.yaml'
+            ),
+            description='Simulator bridge parameter file.',
+        ),
+        DeclareLaunchArgument(
+            'slam_mapping_on',
+            default_value='false',
+            description='Enable odom→base_link TF for SLAM mapping',
+        ),
+        OpaqueFunction(function=launch_nodes),
+    ])
