@@ -80,6 +80,13 @@ reflect the implementation, and distinguish proposed designs from current behavi
 Update an existing diagram when its contract changes; skip diagrams for simple edits
 already clear in prose. A diagram is an explanation, not validation evidence.
 
+For Markdown preview compatibility, use basic Mermaid flowchart syntax, simple
+alphanumeric node IDs, and double-quoted node and edge labels. Keep ROS topic names
+inside quoted labels: write `DRIVE["/drive"]`, not `DRIVE[/drive]`, which starts
+Mermaid shape syntax. Avoid renderer-specific features and HTML labels unless
+needed and verified. Check parsing/rendering with an available Mermaid renderer
+before handoff; state explicitly when the target preview was not verified.
+
 ## Completion
 
 The objective is met within its non-goals; the diff is focused and reviewed; relevant
