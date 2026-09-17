@@ -4,6 +4,8 @@ This document describes the canonical local development environment and common d
 
 It is intended as a reference for both human developers and AI-assisted development tools.
 
+For the development process and completion criteria, see [Engineering workflow](ENGINEERING_WORKFLOW.md).
+
 ## 1. Host repository
 
 Primary repository:

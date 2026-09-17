@@ -36,6 +36,14 @@ ROS distribution:
 
 ## Development workflow
 
+Follow [Engineering workflow](docs/ENGINEERING_WORKFLOW.md), scaled to the task.
+
+* Start from a concrete purpose, expected behavior, and explicit non-goals.
+* Choose the simplest sufficient design; reuse existing contracts and tools before duplicating them.
+* Favor readable code, explicit data flow, and clear ownership of state and side effects.
+* Handle realistic failure modes without speculative abstractions or unnecessary complexity.
+* Keep changes focused; do not introduce unrelated refactoring.
+
 Before modifying code:
 
 * inspect the relevant implementation and configuration;
@@ -119,6 +127,12 @@ Do not invent performance improvements or claim success without supporting evide
 
 Keep this file focused on persistent repository-wide rules.
 
+Engineering reports are temporary and uncommitted by default unless explicitly requested otherwise. Use the [report template](docs/templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md) when a report is needed.
+
 Put detailed architecture, operating procedures, simulator instructions, scenario definitions, evaluation methodology, and subsystem-specific information in dedicated documentation or scripts rather than continuously expanding this file.
 
 More specific `AGENTS.md` files may later be added inside individual packages when package-specific instructions are needed.
+
+## Definition of done
+
+Work is complete when the objective is met within scope, the diff is reviewed, relevant checks support the claimed behavior, permanent documentation reflects changed contracts or usage, and limitations plus Git state are reported. Disclose failed or omitted validation and its impact; do not claim unverified behavior. Completion does not imply permission to commit or push.
