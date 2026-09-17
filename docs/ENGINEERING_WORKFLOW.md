@@ -33,7 +33,8 @@ and relevant checks, not a separate design document or approval ceremony.
    contracts, including defaults and important limits. Avoid duplicating content.
 9. **Report limitations.** Summarize outcome, files changed, exact validation and
    results, remaining issues, and Git state. Separate verified behavior from
-   assumptions. Do not mark an unmet objective complete or commit/push without
+   assumptions. Triage temporary validation artifacts using the rule below.
+   Do not mark an unmet objective complete or commit/push without
    explicit authorization.
 
 ## Readability and explicit data flow
@@ -58,6 +59,51 @@ warnings, sampling limits, and checks not run with their reasons. Broaden valida
 when the change or evidence warrants it; avoid repeatedly running unrelated suites.
 Documentation-only changes normally need diff, link, and content review, not ROS
 builds or new tests.
+
+## Validation artifact triage
+
+At task completion, ask: **"Will we care about this result again after today?"**
+Apply this to tests, probes, analysis scripts, logs, and engineering reports;
+classify by purpose rather than filename or where the artifact currently lives.
+
+| Class | Practical action |
+| --- | --- |
+| Disposable diagnostic | A one-time investigation may stay temporary, for example under `/tmp`. When useful, preserve its objective, exact command/method, result, and limitations in the engineering report. |
+| Reusable engineering diagnostic | If the same check is likely to be useful again, recommend promotion to a version-controlled script/tool. Give it a stable interface, documented inputs/outputs and invocation, and an appropriate home such as `scripts/`, `evaluation/`, or the owning package. Reuse an existing tool when possible. |
+| Regression/acceptance test | If the behavior is a contract that must remain true, recommend an automated test in the owning test suite. It must assert the contract and fail when that behavior regresses, rather than merely print observations. |
+
+A useful result does not require retaining every artifact that produced it.
+Logs and reports usually supply evidence to summarize; promote the reusable check,
+test, or lasting conclusion instead. Retain raw data or a report permanently only
+when there is an explicit need and an agreed home. Keep permanent documentation
+organized around outcomes, contracts, and operating procedures rather than an
+ever-growing chronology of `PHASE*_CODEX_REPORT` files.
+
+Recommend promotions and their scope before making them; follow existing task
+authorization and do not silently expand the work. Reports remain uncommitted by
+default. Triage does not authorize deletion, staging, committing, or pushing.
+
+### Reusable end-of-task Codex prompt
+
+```text
+Before closing this task, triage every temporary test, probe, analysis script,
+log, engineering report, and other validation artifact created or used for it,
+including artifacts under /tmp. Ask: "Will we care about this result again after
+today?" Classify each as a disposable diagnostic, reusable engineering diagnostic,
+or regression/acceptance test using docs/ENGINEERING_WORKFLOW.md.
+
+List each artifact's path, purpose, classification, and recommended disposition.
+For proposed promotions, explain future value, the existing tool/test/doc to reuse
+or proposed home, and the stable interface or regression assertion needed. For
+logs and reports, distinguish evidence worth preserving from the reusable method
+or lasting conclusion. Record useful objectives, commands/methods, results, and
+limitations without copying large logs into permanent documentation.
+
+Present recommendations before making promotions. This triage request is analysis
+only: do not promote, delete, stage, commit, or push artifacts. Identify any next
+action needing separate authorization. Keep reports temporary/uncommitted unless
+explicitly requested otherwise; prefer outcome-oriented permanent documentation.
+```
 
 ## Documentation and diagrams
 

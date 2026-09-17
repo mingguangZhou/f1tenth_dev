@@ -52,6 +52,17 @@ sampling conditions, and cleanup. Distinguish evidence from inference.>
 <Unresolved issues, unverified behavior, and observations outside scope.
 State whether any acceptance criterion remains unmet.>
 
+## Validation artifact triage
+
+<Apply [the promotion rule](../ENGINEERING_WORKFLOW.md#validation-artifact-triage):
+"Will we care about this result again after today?" List temporary artifacts,
+including /tmp probes/logs and this report, or state that none were created.
+Recommend promotions before implementing them.>
+
+| Artifact / path | Purpose and classification | Recommended disposition / home | Rationale |
+| --- | --- | --- | --- |
+| <path> | <disposable diagnostic / reusable diagnostic / regression or acceptance test> | <keep temporary / proposed tool, test, or documentation> | <future value or contract> |
+
 ## Git state
 
 <Identify pre-existing changes separately from this task. Include final output below;
