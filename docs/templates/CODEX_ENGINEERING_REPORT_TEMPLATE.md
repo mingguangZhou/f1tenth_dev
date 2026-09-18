@@ -4,6 +4,11 @@
      Scale detail to the task; remove these instructions and optional sections
      that add no value. Do not paste large logs or unrelated diffs. -->
 
+## Summary
+
+<Concise overview: objective, outcome, key decisions, and material limits. For fixes,
+state the symptom, evidenced root cause, correction, and verified completion status.>
+
 ## Objective
 
 <Problem, intended observable outcome, and acceptance criteria.>
@@ -19,6 +24,19 @@
 ## Engineering decision
 
 <Minimal chosen change, existing mechanisms reused, and material tradeoffs.>
+
+## Debugging and fix closure (when applicable)
+
+<Explain symptom → evidence and isolation steps → cause → correction → validation.
+Distinguish direct causes, contributing defects, and unrelated improvements.
+Disclose hypotheses rejected and whether fixes were validated together or separately.>
+
+| Status | Investigation / fix | Evidence and result / remaining work |
+| --- | --- | --- |
+| <Done / Attempted or rejected / Unresolved or deferred> | <action and reason> | <observable evidence; limits> |
+
+<Mark completed work explicitly and reconcile earlier plans with the final outcome.
+Do not mark a fix done merely because code was edited.>
 
 ## Files changed
 

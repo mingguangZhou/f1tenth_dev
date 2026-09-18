@@ -13,6 +13,7 @@ def generate_launch_description():
     arbitration_share = get_package_share_directory("drive_arbitration_v2")
     bringup_share = get_package_share_directory("oudtra_driver_bringup")
     defaults = {
+        "use_sim_time": "",
         "raceline_csv_path": (
             "/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/"
             "raceline_points_optimized.csv"

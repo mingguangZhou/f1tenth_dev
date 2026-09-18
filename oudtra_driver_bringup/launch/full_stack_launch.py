@@ -41,7 +41,9 @@ def _launch_stack(context):
     platform = _value(context, "platform")
     if platform not in ("sim", "onboard"):
         raise RuntimeError("platform must be 'sim' or 'onboard'")
-    use_sim_time = "true" if platform == "sim" else "false"
+    use_sim_time = _configured_or_default(
+        context, "use_sim_time", "true" if platform == "sim" else "false"
+    )
 
     centerline_share = get_package_share_directory("centerline_tools")
     path_share = get_package_share_directory("path_following_v2")
@@ -190,6 +192,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("platform", default_value="onboard"),
+            DeclareLaunchArgument("use_sim_time", default_value=""),
             DeclareLaunchArgument("raceline_csv_path", default_value=""),
             DeclareLaunchArgument("raceline_direction", default_value="csv"),
             DeclareLaunchArgument(

@@ -1,0 +1,49 @@
+# Explicit localization-in-the-loop adapter. Base control/PF tuning is retained.
+# The Gym bridge stamps wall time and does not publish /clock.
+particle_filter:
+  ros__parameters:
+    use_sim_time: false
+    map_frame: map
+    base_frame: ego_racecar/base_link
+    laser_frame: ego_racecar/laser
+map_server:
+  ros__parameters:
+    use_sim_time: false
+lifecycle_manager_localization:
+  ros__parameters:
+    use_sim_time: false
+path_generator:
+  ros__parameters:
+    use_sim_time: false
+    robot_frame: ego_racecar/base_link
+local_trajectory_planner:
+  ros__parameters:
+    use_sim_time: false
+    robot_frame: ego_racecar/base_link
+    # Keep the base profile's bounded wait for asynchronous localization TF.
+    transform_timeout_sec: 0.40
+path_following_v2:
+  ros__parameters:
+    use_sim_time: false
+    robot_frame: ego_racecar/base_link
+    marker_frame: ego_racecar/base_link
+upper_corridor_follower:
+  ros__parameters:
+    use_sim_time: false
+    odom_topic: /ego_racecar/odom
+    base_frame: ego_racecar/base_link
+lower_safety_controller:
+  ros__parameters:
+    use_sim_time: false
+    # Track-direction association requires pose in the raceline's map frame.
+    odom_topic: /pf/pose/odom
+    enable_wrong_way_recovery: true
+    enable_sim_reverse_swept_gate: false
+    reverse_swept_agent_status_topic: /localization_eval/unused_agent_status
+raceline_guard:
+  ros__parameters:
+    use_sim_time: false
+drive_arbitrator:
+  ros__parameters:
+    use_sim_time: false
+    require_pf_health: true

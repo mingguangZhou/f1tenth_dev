@@ -107,6 +107,16 @@ explicitly requested otherwise; prefer outcome-oriented permanent documentation.
 
 ## Documentation and diagrams
 
+Start engineering documents and reports with a concise summary of the objective,
+outcome, key decisions, and material limits so readers can understand the whole
+change at a high level before reading the details.
+For debugging or fixes, include the symptom, evidenced root cause(s), the steps
+used to isolate them, what changed, and why validation supports resolution. Separate
+direct causes from contributing defects and unrelated improvements; state when
+changes were only tested together. Mark actions **Done**, **Attempted / rejected**,
+or **Unresolved / deferred**, with evidence for completed fixes. Update earlier
+proposed plans to reflect final status; do not leave implemented work ambiguous.
+
 Permanent documentation describes supported behavior, interfaces, operating commands,
 and decisions needed for maintenance. Keep it concise, operational, and close to its
 subject. Link to the source of truth rather than copying instructions between files.

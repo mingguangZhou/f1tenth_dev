@@ -237,6 +237,9 @@ source install/local_setup.bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
+For the separate, automated PF + PnC closed-loop check, see
+[Localization simulation](LOCALIZATION_SIMULATION.md).
+
 ### PF-localization simulator
 
 Terminal 1:
