@@ -237,8 +237,9 @@ source install/local_setup.bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
-For the separate, automated PF + PnC closed-loop check, see
-[Localization simulation](LOCALIZATION_SIMULATION.md).
+For dev-laptop commands to build, run and stop the complete PF + PnC loop,
+inspect results, and repeat essential tests, see
+[Localization simulation: manual commands](LOCALIZATION_SIMULATION.md#manual-commands-from-the-dev-laptop).
 
 ### PF-localization simulator
 
@@ -342,3 +343,17 @@ When a development procedure becomes stable and repeatable:
 Do not rely on chat history as the only record of a required development procedure.
 
 This document should describe the supported workflow rather than every experimental command ever attempted.
+
+### Maintain human-operable commands
+
+Keep copyable manual commands for key workflows and essential repeatable tests
+in the relevant operational document. Label host versus container commands,
+prerequisites/source steps, startup and clean stop, and expected success/failure
+results. Link to that single home from this environment guide rather than
+maintaining duplicate command lists.
+
+When code, launch arguments, configuration, paths, or tests change, update their
+operating commands in the same change. Check commands against the current
+implementation and validate affected commands when practical; state any unverified
+steps. Keep guidance concise and organized by user action, not by development
+phase or temporary report. Temporary reports are not the operating manual.

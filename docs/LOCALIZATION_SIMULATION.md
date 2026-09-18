@@ -9,28 +9,97 @@ existing controller behavior, with simulator-GT-dependent recovery disabled.
 PASS proves short-run startup and motion, not localization accuracy or racing robustness.
 The perfect-localization and onboard defaults are unchanged.
 
-## Run
+## Manual commands from the dev laptop
 
-Inside the existing `f1tenth_gym_ros_rocker` localization-ready container:
+Run the following in order. Keep the selected ROS domain exclusive to this run;
+do not launch the separate reference workflows alongside it in that domain.
+
+### 1. Open the canonical environment
+
+In a **host terminal** on the dev laptop:
+
+```bash
+cd /home/mzhou/f1tenth_dev
+./scripts/rr_container.sh status
+./scripts/rr_container.sh shell
+```
+
+The remaining commands run **inside that container shell**. If status reports the
+container is unavailable, follow [environment setup](DEVELOPMENT_ENVIRONMENT.md#2-localization-ready-simulation-environment).
+The commands here use the existing container; they do not recreate it.
+
+### 2. Build and source
 
 ```bash
 source /opt/ros/foxy/setup.bash
 cd /sim_ws
 colcon build --packages-select f1tenth_gym_ros particle_filter centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
 source install/local_setup.bash
+```
+
+Continue only after a successful build. For subsequent edits, build only affected
+packages, then source again. In every new container shell, source both Foxy and
+`/sim_ws/install/local_setup.bash` before using ROS commands.
+
+### 3. Run or repeat the complete PF + PnC loop
+
+```bash
 ros2 run oudtra_driver_bringup run_localization_smoke.py \
   --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
   --run-duration-sec 15 \
   --result-json /tmp/localization_smoke.json
+echo "Smoke exit code: $?"
+cat /tmp/localization_smoke.json
 ```
 
-Use an unused ROS domain (`--ros-domain-id`, default 94). Do not start additional
-nodes in that domain during the check. The runner owns its three launch groups;
-it stops PnC, publishes zero drive until stationary, then stops PF and simulator.
-Ctrl-C follows the same cleanup. RViz retains its existing launch behavior and
-is not a pass/fail criterion. Logs live in the `/tmp/localization_smoke_*` directory
-identified in JSON. Exit 0 and `"result": "PASS"` indicate success; failures include
-a reason and exit 1. Keep JSON and logs temporary unless explicitly needed.
+This single command starts simulator, initializes PF once, releases the existing
+PnC stack, checks motion, and stops its launches. Repeat the same command after
+it exits to run a fresh check; the JSON file is overwritten, while each run has
+its own log directory. Use a different `--result-json` filename to retain a result.
+
+**Pass:** exit 0 and JSON `"result": "PASS"`. **Fail:** nonzero exit and a reason in
+JSON (or terminal output for invalid arguments/configuration). Inspect the
+`log_directory` recorded in JSON for simulator, PF, and PnC logs. These files are
+inside the container and are temporary validation artifacts.
+
+Use an unused ROS domain (`--ros-domain-id`, default 94). The runner owns its three
+launch groups; it stops PnC, publishes zero drive until stationary, then stops PF
+and simulator. To stop early, press **Ctrl-C in this container shell**; interrupted
+runs are reported as FAIL and follow the same cleanup. Do not stop the container.
+RViz retains its existing launch behavior and is not a pass/fail criterion.
+
+### 4. Repeat the essential regression checks
+
+In the same sourced container shell, from `/sim_ws`:
+
+```bash
+python3 -m pytest -q \
+  src/particle_filter/test/test_launch_time_contracts.py \
+  src/oudtra_driver_bringup/test
+```
+
+All tests must pass. These checks cover profile isolation, initialization inputs,
+and existing launch/default contracts. They complement the motion check above;
+unit-test success alone does not establish that the vehicle can drive.
+
+To exercise bounded startup failure and cleanup after changing the runner:
+
+```bash
+ros2 run oudtra_driver_bringup run_localization_smoke.py \
+  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
+  --startup-timeout-sec 0.001 \
+  --result-json /tmp/localization_smoke_timeout.json
+echo "Expected failure exit code: $?"
+cat /tmp/localization_smoke_timeout.json
+```
+
+Expected: exit 1, JSON FAIL with `Timeout in WAIT_SCAN`, no cleanup error, and
+simulator shutdown return code 0. This intentionally failing scenario checks
+failure handling; it is not an ordinary successful-drive run.
+
+For the separate perfect-localization full-stack loop or manual PF-only workflow,
+use the [canonical reference commands](DEVELOPMENT_ENVIRONMENT.md#canonical-simulation-workflows).
+Do not combine those terminals with this runner: it already starts all three stacks.
 
 ## Readiness and acceptance
 
