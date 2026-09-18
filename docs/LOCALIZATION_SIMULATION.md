@@ -163,3 +163,189 @@ flowchart TD
 GT-dependent reverse swept checks are disabled only in this profile. This short
 check does not establish recovery performance, collision freedom, localization
 accuracy, or suitability for competition deployment.
+
+## Record one simulation measurement baseline
+
+### Summary
+
+Optional recording preserves the same smoke run as a nine-topic rosbag plus phase
+and configuration metadata. A separate offline command produces a scorecard,
+`metrics.json`, and three plots after shutdown. Smoke completion, recording validity,
+and analysis validity are distinct; no localization performance thresholds are imposed.
+
+From a **host terminal**, open the existing container with revision information
+(the Git root is not mounted inside the container):
+
+```bash
+cd /home/mzhou/f1tenth_dev
+git status --short
+docker exec -it \
+  -e ROBORACER_MAIN_REV="$(git rev-parse HEAD)" \
+  -e ROBORACER_PF_REV="$(git -C particle_filter rev-parse HEAD)" \
+  f1tenth_gym_ros_rocker bash
+```
+
+In that **container shell**, build/source as above, then run. Set `--source-state`
+to `clean` or `dirty` when known from the host check; `unknown` is explicitly allowed.
+The commits identify source history, not proof that installed binaries are current.
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select oudtra_driver_bringup
+source install/local_setup.bash
+RUN_DIR="/sim_ws/src/oudtra_driver_bringup/runs/$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 run oudtra_driver_bringup run_localization_smoke.py \
+  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
+  --run-duration-sec 15 \
+  --record-dir "$RUN_DIR" \
+  --source-revision "$ROBORACER_MAIN_REV" \
+  --pf-revision "$ROBORACER_PF_REV" \
+  --source-state unknown \
+  --result-json /tmp/localization_smoke.json
+echo "Recording run exit code: $?"
+cat "$RUN_DIR/smoke_result.json"
+```
+
+Use a new directory each time; existing directories are rejected. Exit 0 requires
+both smoke PASS and successful recording. On failure, inspect the reason and logs;
+partial data is retained. No evaluation interval exists if startup never reaches
+RUNNING. The recorder is the only additional permitted passive GT subscriber.
+Without `--record-dir`, the original smoke-only invocation remains supported.
+
+After the runner exits, analyze **without restarting ROS nodes or replaying a bag**:
+
+```bash
+ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
+cat "$RUN_DIR/report.md"
+sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
+# Repeat the exact analysis; the two hashes should remain identical.
+ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
+sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
+```
+
+`ANALYSIS PASS`/exit 0 means usable data was analyzed, not that accuracy is acceptable.
+Missing essential data returns `ANALYSIS FAIL`/exit 1. Optional reference absence
+produces unavailable reference metrics and no third plot. Analysis requires the
+sourced Foxy Python/message libraries, NumPy and Matplotlib already installed in
+the canonical image; it does not require a live ROS graph. This Foxy image has no
+`rosbag2_py`, so the analyzer reads uncompressed SQLite/CDR bags directly.
+
+Open `oudtra_driver_bringup/runs/<run-id>/report.md` on the **host** to view the
+scorecard and PNGs. The package is bind-mounted, so these are the same files.
+Artifacts are ignored by Git:
+
+```text
+<run-id>/
+  metadata.yaml       # revisions/state, phase timestamps, roles, settings, config hashes
+  smoke_result.json
+  rosbag/             # immutable raw SQLite/CDR record plus bag metadata
+  config/             # copies of launched inputs, map and reference files
+  logs/
+  metrics.json
+  report.md
+  plots/              # GT/PF XY, position error, static reference vs GT
+```
+
+Reanalysis overwrites only generated analysis outputs. Preserve metadata/config and
+bag together. Run the essential pytest command above after changes; its synthetic
+CDR tests include known errors, angle wrap, gaps, reference segments, emergency
+transitions, missing GT, and repeatable outputs.
+
+## Finding the engineering deliverables
+
+Run data is written under the host checkout because `oudtra_driver_bringup` is
+bind-mounted into the container. The container path and equivalent host path are:
+
+```text
+Container: /sim_ws/src/oudtra_driver_bringup/runs/<run-id>/
+Host:      /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<run-id>/
+```
+
+Use a descriptive run ID such as `ifac_pf_closed_loop_localization_baseline_20260918T120000Z`; do not use a numeric-only directory name. For the validated baseline, open these files on the dev laptop:
+
+```text
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/report.md
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/metrics.json
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/trajectory_xy.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/position_error.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/reference_trajectory.png
+```
+
+`report.md` is the human summary, `metrics.json` is the machine-readable result,
+and `plots/` contains the generated figures. `metadata.yaml`, `config/`, `logs/`,
+and `rosbag/` preserve provenance and raw evidence. The `runs/` directory is
+intentionally ignored by Git; copy or archive a run explicitly if it must be
+shared. From the host, list the latest deliverables with:
+
+```bash
+find /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs -maxdepth 3 \
+  \( -name report.md -o -name metrics.json -o -name '*.png' \) -print
+```
+
+The temporary engineering handoff reports are separate files at the repository
+root. Their descriptive filenames preserve the phase order, for example
+`PHASE1_STEP3_2A_RECORDED_LOCALIZATION_BASELINE_REPORT.md`; they are not generated
+run deliverables and remain uncommitted by default.
+
+### Recorded signal contract
+
+`config/localization_recording.yaml` defines the semantic roles and topic/type
+mapping, independent of control tuning. Record only this explicit list:
+
+| Role | Topic | Interpretation |
+| --- | --- | --- |
+| Public estimated pose | `/pf/pose/odom` | PF map-frame base pose; timestamp is publication time. |
+| Source-timed estimated pose | `/tf` | Analyze only `map -> ego_racecar/base_link`; identical PF pose stamped with input odometry time. |
+| Localization health | `/pf/health` | Element 0: 1 GOOD, 2 DEGRADED, 3 INVALID; unstamped, bag receive time only. |
+| Simulator truth/collision | `/simulator/agent_status` | `simulator/ego` true map/base XY/yaw and collision flag from Gym state. |
+| Raw odometry | `/ego_racecar/odom` | PF input in its local odometry frame, not map GT. |
+| Static reference | `/raceline_path` | Recorded map-frame raceline; reliable/transient-local QoS. |
+| Final command | `/drive` | Final speed/steering commanded into simulator. |
+| Safety state | `/reactive_control_v2/lower_safety_status` | Exact `mode` value, including `EMERGENCY_STOP`. |
+| Arbitration state | `/drive_arbitration_v2/status` | Selected mode, reasons, readiness context. |
+
+No `/tf_static` is needed for direct map/base pose comparison. No scan, map topic,
+particle cloud or visualization topics are recorded. Raw odometry, health, command
+and arbitration remain useful preserved context; they are not PF-internal headline
+metrics. The public PF poses are cross-checked against source-timed TF values.
+
+### Metric definitions and limits
+
+The evaluation window is `[RUNNING, EVALUATION_END)`, after the smoke's observed
+motion/displacement condition and before shutdown. Initialization, readiness,
+first observed motion and cleanup also have timestamps. It is not a whole-run
+metric including startup. Wall and monotonic durations must agree within 0.05 s.
+
+- **Position and absolute wrapped yaw p50/p95/max:** sample-weighted PF errors
+  against GT at PF TF source timestamps. Interpolate GT XY/shortest-arc yaw only
+  across gaps <=0.10 s; no extrapolation. Report accepted/rejected coverage.
+- **Temporal localization availability:** fraction of evaluation time covered by
+  finite received PF TF poses with source age <=0.50 s. It is temporal availability,
+  not an accuracy or health-quality score. Bag receive time represents delivery.
+- **Distance and mean speed:** sum true XY segment lengths within the window,
+  then divide by elapsed wall seconds. Totals become unavailable if GT coverage
+  has gaps/invalid samples; partial observed distance remains in data quality.
+  Gym's internal speed uses physics time, which can differ under system load.
+- **Collision:** observed ego collision boolean, not impact count. Gaps make a
+  negative observation uncertain. **Emergency stops:** exact safety-mode entries;
+  repeated samples are not repeated events. Active-at-start and transitions with
+  unknown predecessors are reported separately; status gaps >0.50 s limit counts.
+- **Cross-track:** GT distance to segments of the unchanged recorded static
+  raceline. This is reference deviation, not active reactive/detour tracking error.
+  Missing/changing/invalid reference gives N/A. **Pose jumps:** deferred/N/A;
+  no threshold is invented that could confuse real motion with jumps.
+
+Timing bounds can be overridden with analyzer options `--max-gt-gap-sec`,
+`--max-pose-age-sec`, and `--max-status-gap-sec`; effective settings are in outputs.
+PF uses latest scan and odometry asynchronously, and GT is publication-stamped
+latest Gym state. Source-timed comparison improves alignment but does not establish
+ideal sensor synchronization. Sampling rates and coverage belong to each dataset;
+short-run values are not general performance claims.
+
+```mermaid
+flowchart LR
+  RUN["Step 3.1 runner with optional recording"] --> DATA["Preserved metadata and rosbag"]
+  DATA --> ANALYZE["Offline analyzer"]
+  ANALYZE --> OUTPUT["Metrics, scorecard and plots"]
+```

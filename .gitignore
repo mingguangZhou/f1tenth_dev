@@ -12,3 +12,9 @@
 *.py[cod]
 /path_following_v2/trial_logs/
 /centerline_tools/moving_agent_output/**/*_debug.png
+
+# Preserved local simulation measurements (never source artifacts)
+/oudtra_driver_bringup/runs/
+*.db3
+*.db3-shm
+*.db3-wal

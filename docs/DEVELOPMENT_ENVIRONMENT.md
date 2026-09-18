@@ -240,6 +240,11 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 For dev-laptop commands to build, run and stop the complete PF + PnC loop,
 inspect results, and repeat essential tests, see
 [Localization simulation: manual commands](LOCALIZATION_SIMULATION.md#manual-commands-from-the-dev-laptop).
+For preserved bags, offline metrics and plots, use the same document's
+[measurement baseline commands](LOCALIZATION_SIMULATION.md#record-one-simulation-measurement-baseline).
+The same document's [deliverables guide](LOCALIZATION_SIMULATION.md#finding-the-engineering-deliverables)
+shows the exact host paths for the report, metrics JSON, plots, metadata, logs,
+and rosbag produced by a run.
 
 ### PF-localization simulator
 
@@ -357,3 +362,11 @@ operating commands in the same change. Check commands against the current
 implementation and validate affected commands when practical; state any unverified
 steps. Keep guidance concise and organized by user action, not by development
 phase or temporary report. Temporary reports are not the operating manual.
+
+### Make deliverables easy to find
+
+Every workflow that creates an engineering artifact must state the exact output
+directory and distinguish host paths from container paths. Identify the human
+summary, machine-readable result, plots, raw data, logs, and provenance files
+individually. Keep a stable example path or discovery command in the owning
+operational document, and update it when output names or locations change.

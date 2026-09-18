@@ -30,6 +30,10 @@ def main():
     parser.add_argument('--yaw-offset-rad', type=float, default=0)
     parser.add_argument('--ros-domain-id', type=int, default=94)
     parser.add_argument('--result-json', required=True)
+    parser.add_argument('--record-dir', help='New directory for an optional preserved rosbag run')
+    parser.add_argument('--source-revision', default='')
+    parser.add_argument('--pf-revision', default='')
+    parser.add_argument('--source-state', choices=('clean', 'dirty', 'unknown'), default='unknown')
     args = parser.parse_args()
     for value in (args.run_duration_sec, args.startup_timeout_sec, args.motion_timeout_sec):
         if not math.isfinite(value) or value <= 0:
@@ -53,7 +57,31 @@ def main():
     pose = initial_pose(config, (args.x_offset_m, args.y_offset_m, args.yaw_offset_rad))
     overlay = str(Path(get_package_share_directory('oudtra_driver_bringup')) /
                   'config/localization_eval.yaml')
-    logdir = Path(tempfile.mkdtemp(prefix='localization_smoke_'))
+    recording = None
+    if args.record_dir:
+        from localization_recording import RunRecording
+        share = Path(get_package_share_directory('oudtra_driver_bringup'))
+        configs = {'simulator': args.sim_config, 'evaluation': overlay,
+                   'recording': share / 'config/localization_recording.yaml',
+                   'integration': share / 'config/full_stack.yaml'}
+        for package, filename in [('particle_filter', 'localize_sim.yaml'),
+                                  ('path_following_v2', 'path_following_v2.yaml'),
+                                  ('reactive_control_v2', 'reactive_control_v2.yaml'),
+                                  ('drive_arbitration_v2', 'drive_arbitration_v2.yaml'),
+                                  ('centerline_tools', 'raceline_publisher.yaml')]:
+            configs[package] = Path(get_package_share_directory(package)) / 'config' / filename
+        configs['reference_csv'] = Path('/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv')
+        pf_map = yaml.safe_load(Path(configs['particle_filter']).read_text())['map_server']['ros__parameters']['map']
+        pf_map_path = Path(get_package_share_directory('particle_filter')) / 'maps' / (pf_map + '.yaml')
+        configs['pf_map_yaml'] = pf_map_path
+        pf_image = Path(yaml.safe_load(pf_map_path.read_text())['image'])
+        configs['pf_map_image'] = pf_image if pf_image.is_absolute() else pf_map_path.parent / pf_image
+        configs['map_yaml'] = Path(config['map_path'] + '.yaml')
+        configs['map_image'] = Path(config['map_path'] + config['map_img_ext'])
+        recording = RunRecording(args.record_dir, configs['recording'], args, configs)
+        recording.metadata['initial_pose'] = pose
+        recording.metadata['scenario'] = config['map_path']
+    logdir = recording.root / 'logs' if recording else Path(tempfile.mkdtemp(prefix='localization_smoke_'))
     result = {'result': 'FAIL', 'log_directory': str(logdir), 'states': [], 'commands': []}
     processes = {}
     last, received, counts = {}, {}, {}
@@ -62,10 +90,14 @@ def main():
     buffer = Buffer()
     listener = TransformListener(buffer, node)
     subscriptions = []
+    parameter_clients = []  # Keep service endpoints alive through Foxy response handling.
     def receive(topic, message):
         last[topic] = message
         received[topic] = time.monotonic()
         counts[topic] = counts.get(topic, 0) + 1
+        if (recording and topic == '/ego_racecar/odom' and moving() and
+                not any(p['state'] == 'MOTION_OBSERVED' for p in recording.metadata['phases'])):
+            recording.mark('MOTION_OBSERVED', node)
     for topic, kind in [('/scan', LaserScan), ('/ego_racecar/odom', Odometry),
                         ('/pf/pose/odom', Odometry), ('/pf/health', Float32MultiArray),
                         ('/drive', AckermannDriveStamped),
@@ -79,7 +111,14 @@ def main():
     def fresh(topic, age=1.0):
         return topic in received and time.monotonic() - received[topic] < age
 
+    def mark(state):
+        result['states'].append(state)
+        if recording:
+            recording.mark(state, node)
+
     def check_processes():
+        if recording:
+            recording.check()
         for name, (process, log, path) in processes.items():
             if process.poll() is not None:
                 raise RuntimeError(name + ' launch exited before STOP')
@@ -90,7 +129,7 @@ def main():
 
     def wait(state, predicate, timeout=None):
         print(state, flush=True)
-        result['states'].append(state)
+        mark(state)
         deadline = time.monotonic() + (timeout or args.startup_timeout_sec)
         while not predicate():
             check_processes()
@@ -109,13 +148,13 @@ def main():
 
     def parameters(name, names):
         client = node.create_client(GetParameters, '/' + name + '/get_parameters')
+        parameter_clients.append(client)
         wait('PARAMETERS ' + name, client.service_is_ready)
         request = GetParameters.Request()
         request.names = names
         future = client.call_async(request)
         wait('PARAMETER_RESPONSE ' + name, future.done)
         values = future.result().values
-        node.destroy_client(client)
         return values
 
     def localized():
@@ -160,6 +199,8 @@ def main():
                 raise RuntimeError(name + ' required SIGTERM')
 
     try:
+        if recording:
+            recording.start()
         launch('sim', 'f1tenth_gym_ros', 'gym_bridge_slam_launch.py',
                ['config_file:=' + str(Path(args.sim_config).resolve())])
         wait('WAIT_SCAN', lambda: fresh('/scan') and fresh('/ego_racecar/odom') and
@@ -170,6 +211,9 @@ def main():
         launch('pf', 'particle_filter', 'localize_sim_launch.py',
                ['parameter_overlay:=' + overlay])
         wait('WAIT_PF', lambda: fresh('/pf/pose/odom') and initpub.get_subscription_count() > 0)
+        if recording:
+            wait('WAIT_RECORDING_INPUTS', lambda: recording.ready(
+                ['estimated_pose', 'source_pose', 'health', 'truth', 'raw_odometry']))
         grace = parameters('particle_filter', ['manual_reset_grace_updates'])[0].integer_value
         before = counts.get('/pf/health', 0)
         msg = PoseWithCovarianceStamped()
@@ -178,11 +222,13 @@ def main():
         msg.pose.pose.position.x, msg.pose.pose.position.y = pose[:2]
         msg.pose.pose.orientation.z = math.sin(pose[2]/2)
         msg.pose.pose.orientation.w = math.cos(pose[2]/2)
-        result['states'].append('SEND_INITIAL_POSE')
+        mark('SEND_INITIAL_POSE')
         initpub.publish(msg)
         result['initial_pose'] = pose
         wait('WAIT_LOCALIZATION', lambda: counts.get('/pf/health', 0) > before + grace + 5 and localized())
+        mark('LOCALIZATION_READY')
         start_xy = truth_xy()
+        mark('START_PNC')
         launch('pnc', 'oudtra_driver_bringup', 'full_stack_sim_launch.py',
                ['use_sim_time:=false'] + [key + ':=' + overlay for key in (
                    'path_platform_config', 'reactive_platform_config',
@@ -193,16 +239,22 @@ def main():
             raise RuntimeError('Lower safety evaluation profile not applied')
         if not parameters('drive_arbitrator', ['require_pf_health'])[0].bool_value:
             raise RuntimeError('PF health gate not enabled')
+        if recording:
+            wait('WAIT_RECORDING_TOPICS', lambda: recording.ready(recording.contract['roles']))
         consumers = [e.node_name for e in node.get_subscriptions_info_by_topic('/simulator/agent_status')]
         result['gt_subscribers'] = consumers
         result['effective_parameters'] = {
             'enable_sim_reverse_swept_gate': values[0].bool_value,
             'lower_odom_topic': values[1].string_value, 'require_pf_health': True}
-        if any(name != node.get_name() for name in consumers):
+        allowed_gt_readers = {node.get_name()}
+        if recording:
+            recording.check()
+            allowed_gt_readers.add('_ros2cli_rosbag2')  # Verified Foxy recorder node name.
+        if any(name not in allowed_gt_readers for name in consumers):
             raise RuntimeError('Unexpected GT consumer: ' + str(consumers))
         wait('WAIT_MOTION', lambda: moving() and math.dist(start_xy, truth_xy()) > .2,
              args.motion_timeout_sec)
-        result['states'].append('RUNNING')
+        mark('RUNNING')
         start = time.monotonic()
         running_counts = counts.copy()
         last_motion = start
@@ -230,7 +282,13 @@ def main():
     except (Exception, KeyboardInterrupt) as error:
         result['reason'] = str(error) or 'Interrupted'
     finally:
-        result['states'].append('STOP')
+        # A recording I/O failure must never bypass vehicle/process shutdown.
+        try:
+            if recording and any(p['state'] == 'RUNNING' for p in recording.metadata['phases']):
+                recording.mark('EVALUATION_END', node)
+            mark('STOP')
+        except Exception as error:
+            result['recording_error'] = str(error)
         try:
             stop_process('pnc')
             if 'sim' in processes and processes['sim'][0].poll() is None:
@@ -271,11 +329,23 @@ def main():
                 result['result'] = 'FAIL'
                 result['cleanup_error'] = 'Process group still exists: ' + name
             log.close()
+        if recording:
+            try:
+                recording.mark('CLEANUP_COMPLETE', node)
+            except Exception as error:
+                result['recording_error'] = str(error)
+            try:
+                finalized = recording.stop(dict(result))
+                result['recording_passed'] = finalized and 'recording_error' not in result
+                (recording.root / 'smoke_result.json').write_text(json.dumps(result, indent=2) + '\n')
+            except Exception as error:
+                result['recording_passed'] = False
+                result['recording_error'] = str(error)
         node.destroy_node()
         rclpy.shutdown()
         Path(args.result_json).write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result, indent=2), flush=True)
-    return 0 if result['result'] == 'PASS' else 1
+    return 0 if result['result'] == 'PASS' and result.get('recording_passed', True) else 1
 
 
 if __name__ == '__main__':
