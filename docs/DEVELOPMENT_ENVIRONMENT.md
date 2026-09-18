@@ -240,6 +240,7 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 For dev-laptop commands to build, run and stop the complete PF + PnC loop,
 inspect results, and repeat essential tests, see
 [Localization simulation: manual commands](LOCALIZATION_SIMULATION.md#manual-commands-from-the-dev-laptop).
+The maintained complete command reference is [RoboRacer operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md), including the corrected PF simulation sequence and onboard command section.
 For preserved bags, offline metrics and plots, use the same document's
 [measurement baseline commands](LOCALIZATION_SIMULATION.md#record-one-simulation-measurement-baseline).
 The same document's [deliverables guide](LOCALIZATION_SIMULATION.md#finding-the-engineering-deliverables)
