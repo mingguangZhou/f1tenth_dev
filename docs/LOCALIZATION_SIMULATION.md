@@ -1,107 +1,35 @@
-# Localization-enabled closed-loop smoke check
+# Localization simulation and shared offline evaluation
 
-## Summary
+## 1. How to use this document
+
+This document explains the localization-enabled simulation architecture, readiness
+contract, recorded evidence, metric definitions, and interpretation limits. Use the
+[operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) for
+copyable commands and [development environment](DEVELOPMENT_ENVIRONMENT.md) for
+container/workspace setup. Start with the workflow below, then use sections 3–5
+for recording, artifacts, and evaluation semantics.
+
+## 2. Closed-loop localization workflow
 
 The opt-in localization evaluation profile starts the existing Gym simulator, PF,
 and full PnC stack, initializes PF once from the configured simulator start, and
 checks 15 seconds of autonomous motion. It fixes clock/frame integration and uses
 existing controller behavior, with simulator-GT-dependent recovery disabled.
 PASS proves short-run startup and motion, not localization accuracy or racing robustness.
-The perfect-localization and onboard defaults are unchanged.
+The perfect-localization and onboard defaults are unchanged. The shared offline
+scorecard also analyzes future onboard-style data without GT; see
+[shared evaluation](#5-shared-simulationonboard-evaluation) for metrics, limitations
+and comparison commands.
 
-## Manual commands from the dev laptop
+### 2.1 Reproduction
 
-Run the following in order. Keep the selected ROS domain exclusive to this run;
-do not launch the separate reference workflows alongside it in that domain.
+Use the [closed-loop smoke command](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#7-closed-loop-localization-smoke-check)
+and [essential regression checks](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#6-essential-regression-checks).
+The runner owns simulator, PF, and PnC launches in its ROS domain; do not combine
+it with separately launched reference workflows. Exit 0 plus JSON `PASS` establishes
+startup and bounded motion only. RViz is not a pass/fail source.
 
-### 1. Open the canonical environment
-
-In a **host terminal** on the dev laptop:
-
-```bash
-cd /home/mzhou/f1tenth_dev
-./scripts/rr_container.sh status
-./scripts/rr_container.sh shell
-```
-
-The remaining commands run **inside that container shell**. If status reports the
-container is unavailable, follow [environment setup](DEVELOPMENT_ENVIRONMENT.md#2-localization-ready-simulation-environment).
-The commands here use the existing container; they do not recreate it.
-
-### 2. Build and source
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select f1tenth_gym_ros particle_filter centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
-source install/local_setup.bash
-```
-
-Continue only after a successful build. For subsequent edits, build only affected
-packages, then source again. In every new container shell, source both Foxy and
-`/sim_ws/install/local_setup.bash` before using ROS commands.
-
-### 3. Run or repeat the complete PF + PnC loop
-
-```bash
-ros2 run oudtra_driver_bringup run_localization_smoke.py \
-  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
-  --run-duration-sec 15 \
-  --result-json /tmp/localization_smoke.json
-echo "Smoke exit code: $?"
-cat /tmp/localization_smoke.json
-```
-
-This single command starts simulator, initializes PF once, releases the existing
-PnC stack, checks motion, and stops its launches. Repeat the same command after
-it exits to run a fresh check; the JSON file is overwritten, while each run has
-its own log directory. Use a different `--result-json` filename to retain a result.
-
-**Pass:** exit 0 and JSON `"result": "PASS"`. **Fail:** nonzero exit and a reason in
-JSON (or terminal output for invalid arguments/configuration). Inspect the
-`log_directory` recorded in JSON for simulator, PF, and PnC logs. These files are
-inside the container and are temporary validation artifacts.
-
-Use an unused ROS domain (`--ros-domain-id`, default 94). The runner owns its three
-launch groups; it stops PnC, publishes zero drive until stationary, then stops PF
-and simulator. To stop early, press **Ctrl-C in this container shell**; interrupted
-runs are reported as FAIL and follow the same cleanup. Do not stop the container.
-RViz retains its existing launch behavior and is not a pass/fail criterion.
-
-### 4. Repeat the essential regression checks
-
-In the same sourced container shell, from `/sim_ws`:
-
-```bash
-python3 -m pytest -q \
-  src/particle_filter/test/test_launch_time_contracts.py \
-  src/oudtra_driver_bringup/test
-```
-
-All tests must pass. These checks cover profile isolation, initialization inputs,
-and existing launch/default contracts. They complement the motion check above;
-unit-test success alone does not establish that the vehicle can drive.
-
-To exercise bounded startup failure and cleanup after changing the runner:
-
-```bash
-ros2 run oudtra_driver_bringup run_localization_smoke.py \
-  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
-  --startup-timeout-sec 0.001 \
-  --result-json /tmp/localization_smoke_timeout.json
-echo "Expected failure exit code: $?"
-cat /tmp/localization_smoke_timeout.json
-```
-
-Expected: exit 1, JSON FAIL with `Timeout in WAIT_SCAN`, no cleanup error, and
-simulator shutdown return code 0. This intentionally failing scenario checks
-failure handling; it is not an ordinary successful-drive run.
-
-For the separate perfect-localization full-stack loop or manual PF-only workflow,
-use the [canonical reference commands](DEVELOPMENT_ENVIRONMENT.md#canonical-simulation-workflows).
-Do not combine those terminals with this runner: it already starts all three stacks.
-
-## Readiness and acceptance
+### 2.2 Readiness and acceptance
 
 Each startup stage has `--startup-timeout-sec` (default 60); motion acquisition has
 `--motion-timeout-sec` (default 15). No fixed startup sleeps are used.
@@ -125,7 +53,7 @@ never repeatedly resets PF and does not subscribe GT to generate initialization.
 Manual RViz `2D Pose Estimate` remains available in the original manual workflow;
 do not manually reset PF during the automated smoke run.
 
-## Interfaces and profile
+### 2.3 Interfaces and evaluation profile
 
 `oudtra_driver_bringup/config/localization_eval.yaml` is an explicit sparse overlay:
 
@@ -164,48 +92,20 @@ GT-dependent reverse swept checks are disabled only in this profile. This short
 check does not establish recovery performance, collision freedom, localization
 accuracy, or suitability for competition deployment.
 
-## Record one simulation measurement baseline
+## 3. Recording a simulation evaluation run
 
-### Summary
+### 3.1 Recording purpose and lifecycle
 
 Optional recording preserves the same smoke run as a nine-topic rosbag plus phase
 and configuration metadata. A separate offline command produces a scorecard,
-`metrics.json`, and three plots after shutdown. Smoke completion, recording validity,
-and analysis validity are distinct; no localization performance thresholds are imposed.
+`metrics.json`, and applicable engineering plots after shutdown. Smoke completion,
+recording validity, and analysis validity are distinct; no localization performance
+thresholds are imposed.
 
-From a **host terminal**, open the existing container with revision information
-(the Git root is not mounted inside the container):
-
-```bash
-cd /home/mzhou/f1tenth_dev
-git status --short
-docker exec -it \
-  -e ROBORACER_MAIN_REV="$(git rev-parse HEAD)" \
-  -e ROBORACER_PF_REV="$(git -C particle_filter rev-parse HEAD)" \
-  f1tenth_gym_ros_rocker bash
-```
-
-In that **container shell**, build/source as above, then run. Set `--source-state`
-to `clean` or `dirty` when known from the host check; `unknown` is explicitly allowed.
-The commits identify source history, not proof that installed binaries are current.
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select oudtra_driver_bringup
-source install/local_setup.bash
-RUN_DIR="/sim_ws/src/oudtra_driver_bringup/runs/$(date -u +%Y%m%dT%H%M%SZ)"
-ros2 run oudtra_driver_bringup run_localization_smoke.py \
-  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
-  --run-duration-sec 15 \
-  --record-dir "$RUN_DIR" \
-  --source-revision "$ROBORACER_MAIN_REV" \
-  --pf-revision "$ROBORACER_PF_REV" \
-  --source-state unknown \
-  --result-json /tmp/localization_smoke.json
-echo "Recording run exit code: $?"
-cat "$RUN_DIR/smoke_result.json"
-```
+Use the maintained [recorded-run command](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#8-record-and-analyze-an-evaluation-run)
+to capture source revisions, start the same closed-loop workflow, and analyze it
+offline. The revision strings identify source history; they do not prove installed
+binaries are current.
 
 Use a new directory each time; existing directories are rejected. Exit 0 requires
 both smoke PASS and successful recording. On failure, inspect the reason and logs;
@@ -213,20 +113,14 @@ partial data is retained. No evaluation interval exists if startup never reaches
 RUNNING. The recorder is the only additional permitted passive GT subscriber.
 Without `--record-dir`, the original smoke-only invocation remains supported.
 
-After the runner exits, analyze **without restarting ROS nodes or replaying a bag**:
-
-```bash
-ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
-cat "$RUN_DIR/report.md"
-sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
-# Repeat the exact analysis; the two hashes should remain identical.
-ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
-sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
-```
+After the runner exits, analysis reads the preserved bag directly without restarting
+ROS nodes or replaying the bag. The operational reference owns the exact analysis
+and repeatability commands.
 
 `ANALYSIS PASS`/exit 0 means usable data was analyzed, not that accuracy is acceptable.
 Missing essential data returns `ANALYSIS FAIL`/exit 1. Optional reference absence
-produces unavailable reference metrics and no third plot. Analysis requires the
+produces `UNAVAILABLE_DATA` reference metrics and no reference plot. Onboard input
+without GT is valid; absolute accuracy is `NOT_APPLICABLE`. Analysis requires the
 sourced Foxy Python/message libraries, NumPy and Matplotlib already installed in
 the canonical image; it does not require a live ROS graph. This Foxy image has no
 `rosbag2_py`, so the analyzer reads uncompressed SQLite/CDR bags directly.
@@ -250,9 +144,9 @@ Artifacts are ignored by Git:
 Reanalysis overwrites only generated analysis outputs. Preserve metadata/config and
 bag together. Run the essential pytest command above after changes; its synthetic
 CDR tests include known errors, angle wrap, gaps, reference segments, emergency
-transitions, missing GT, and repeatable outputs.
+transitions, missing GT, and repeatable outputs. The shared schema and additional analysis commands are described below.
 
-## Finding the engineering deliverables
+## 4. Preserved run artifacts and deliverables
 
 Run data is written under the host checkout because `oudtra_driver_bringup` is
 bind-mounted into the container. The container path and equivalent host path are:
@@ -288,7 +182,7 @@ root. Their descriptive filenames preserve the phase order, for example
 `PHASE1_STEP3_2A_RECORDED_LOCALIZATION_BASELINE_REPORT.md`; they are not generated
 run deliverables and remain uncommitted by default.
 
-### Recorded signal contract
+### 4.1 Recorded signal contract
 
 `config/localization_recording.yaml` defines the semantic roles and topic/type
 mapping, independent of control tuning. Record only this explicit list:
@@ -307,45 +201,192 @@ mapping, independent of control tuning. Record only this explicit list:
 
 No `/tf_static` is needed for direct map/base pose comparison. No scan, map topic,
 particle cloud or visualization topics are recorded. Raw odometry, health, command
-and arbitration remain useful preserved context; they are not PF-internal headline
-metrics. The public PF poses are cross-checked against source-timed TF values.
+and arbitration support the shared consistency, availability and vehicle metrics
+below; no PF-internal statistics are promoted to headline metrics. The public PF poses are cross-checked against source-timed TF values.
 
-### Metric definitions and limits
+## 5. Shared simulation/onboard evaluation
 
-The evaluation window is `[RUNNING, EVALUATION_END)`, after the smoke's observed
-motion/displacement condition and before shutdown. Initialization, readiness,
-first observed motion and cleanup also have timestamps. It is not a whole-run
-metric including startup. Wall and monotonic durations must agree within 0.05 s.
+### 5.1 Purpose and evidence model
 
-- **Position and absolute wrapped yaw p50/p95/max:** sample-weighted PF errors
-  against GT at PF TF source timestamps. Interpolate GT XY/shortest-arc yaw only
-  across gaps <=0.10 s; no extrapolation. Report accepted/rejected coverage.
-- **Temporal localization availability:** fraction of evaluation time covered by
-  finite received PF TF poses with source age <=0.50 s. It is temporal availability,
-  not an accuracy or health-quality score. Bag receive time represents delivery.
-- **Distance and mean speed:** sum true XY segment lengths within the window,
-  then divide by elapsed wall seconds. Totals become unavailable if GT coverage
-  has gaps/invalid samples; partial observed distance remains in data quality.
-  Gym's internal speed uses physics time, which can differ under system load.
-- **Collision:** observed ego collision boolean, not impact count. Gaps make a
-  negative observation uncertain. **Emergency stops:** exact safety-mode entries;
-  repeated samples are not repeated events. Active-at-start and transitions with
-  unknown predecessors are reported separately; status gaps >0.50 s limit counts.
-- **Cross-track:** GT distance to segments of the unchanged recorded static
-  raceline. This is reference deviation, not active reactive/detour tracking error.
-  Missing/changing/invalid reference gives N/A. **Pose jumps:** deferred/N/A;
-  no threshold is invented that could confuse real motion with jumps.
+One offline analyzer accepts simulation and future onboard bags. It generates the
+same scorecard structure with explicit evidence and applicability on every metric.
+GT enables absolute localization accuracy; onboard pose/odometry agreement is
+**consistency, not accuracy**. Vehicle tracking uses GT in simulation and estimated
+map pose onboard; pace uses GT trajectory in simulation and local odometry onboard.
+These different evidence sources are labelled and do not receive automatic deltas.
+The onboard recorder is not implemented yet. Synthetic fixtures prove contracts,
+not real-vehicle performance.
 
-Timing bounds can be overridden with analyzer options `--max-gt-gap-sec`,
-`--max-pose-age-sec`, and `--max-status-gap-sec`; effective settings are in outputs.
-PF uses latest scan and odometry asynchronously, and GT is publication-stamped
-latest Gym state. Source-timed comparison improves alignment but does not establish
-ideal sensor synchronization. Sampling rates and coverage belong to each dataset;
-short-run values are not general performance claims.
+The existing smoke startup, control profile, recording topic set and PASS/FAIL
+contract are unchanged. Analysis never feeds a localization or control node.
 
 ```mermaid
 flowchart LR
-  RUN["Step 3.1 runner with optional recording"] --> DATA["Preserved metadata and rosbag"]
-  DATA --> ANALYZE["Offline analyzer"]
-  ANALYZE --> OUTPUT["Metrics, scorecard and plots"]
+  SIM["Simulation run"] --> DATA["Shared run contract"]
+  ONBOARD["Future onboard run"] --> DATA
+  DATA --> ANALYZE["Shared offline analyzer"]
+  ANALYZE --> COMMON["Continuity and vehicle scorecard"]
+  SIM --> GT["Optional simulator GT"]
+  GT --> ACCURACY["Simulation absolute accuracy"]
+  ANALYZE --> ACCURACY
+  COMMON --> REPORT["Metrics, report and plots"]
+  ACCURACY --> REPORT
 ```
+
+Simulation vehicle metrics also retain their labelled GT trajectory evidence.
+No GT input is required for the onboard branch.
+
+### 5.2 Input and output contract
+
+The directory stays `metadata.yaml`, `rosbag/`, optional `config/` and `logs/`,
+then generated `metrics.json`, `report.md`, `plots/`. Raw inputs are not rewritten.
+Input metadata schema 1 is adapted for existing recorded runs; schema 2 is the
+explicit shared contract. Output metrics use schema 2 (a deliberate JSON breaking
+change from the original scalar/null fields). Existing simulation definitions remain.
+
+Schema 2 metadata requires `platform: sim|onboard`, `roles`, and either existing
+`phases` with RUNNING/EVALUATION_END wall/monotonic stamps or an explicit `interval`
+with integer `start_wall_ns` and `end_wall_ns`. Explicit interval callers must ensure
+source and bag times share that wall-clock domain. Optional `outcome.completed` is
+boolean; legacy `smoke_result.result` is adapted. Optional startup phase events
+SEND_INITIAL_POSE/LOCALIZATION_READY provide readiness timing. No readiness is
+invented when events are absent. `run_id` preserves provenance; the directory name
+provides the human artifact title, even when a legacy directory was renamed.
+
+Roles configure ROS topic/type/frame and decoder fields. ROS libraries are needed
+to decode CDR, but no running ROS nodes or bag replay are needed. Supported adapters:
+
+| Role | Data / additional mapping |
+| --- | --- |
+| `estimated_pose` | `nav_msgs/msg/Odometry`, declared `frame`; source-stamped map/base pose |
+| `source_pose` (optional legacy adapter) | `tf2_msgs/msg/TFMessage`, `parent`/`child`; takes precedence over public estimated pose and cross-checks pose values |
+| `raw_odometry` | `nav_msgs/msg/Odometry`, local pose and declared `frame`; never treated as truth |
+| `vehicle_state` | `nav_msgs/msg/Odometry` body twist; `velocity_frame: body`; `physical_time: true` only with verified physical source timing; `lateral_velocity_observed: true` required for lateral dynamics; `evidence` describes measurement/model provenance |
+| `localization_health` | `std_msgs/msg/Float32MultiArray`, `index` (default 0), string-key `states` mapping; receive-time basis |
+| `reference_path` | `nav_msgs/msg/Path`, declared map `frame`, unchanged ordered geometry; closure must be present as an actual final segment |
+| `final_drive_command` | `ackermann_msgs/msg/AckermannDriveStamped`, source-stamped final speed/steering angle |
+| `safety_status` | `diagnostic_msgs/msg/DiagnosticArray`, `status`, `state_key` (default mode), `emergency_state` (default EMERGENCY_STOP) |
+| `control_status` | Same diagnostic adapter, plus explicit `autonomous_states` list |
+| `ground_truth_pose` (optional) | Odometry with `frame`, or DiagnosticArray with `status`, `pose_keys` (default x_m/y_m/yaw_rad) |
+| `collision_status` (optional) | DiagnosticArray with `status`, `collision_key` (default collision), true/false flag |
+
+Multiple roles may decode the same topic without additional recording. A qualified
+GT vehicle-state source can be mapped to `vehicle_state` through the supported
+Odometry adapter; the current simulator diagnostic is not a physical-time velocity
+source. Do not assert `physical_time: true` merely because a header exists.
+
+Legacy role aliases (`health`, `truth`, `reference`, `command`, `safety`,
+`arbitration`) and PF health/authority mapping remain supported. New algorithms
+need not publish PF topics or duplicate pose TF. The existing simulation adapter
+explicitly treats its odometry twist as body velocity with **unverified physical
+timing**, despite the empty child frame. New onboard adapters must verify semantics.
+
+Each metric has `status`, `value`, `unit`, `reason`, `evidence`, `method`,
+`time_basis`, and optional coverage fraction. Statuses are:
+
+- `AVAILABLE`: value supported by the stated evidence; partial observed counts
+  retain coverage and lower-bound limitations.
+- `NOT_APPLICABLE`: outside the evidence design, e.g. onboard absolute error without GT.
+- `UNAVAILABLE_DATA`: applicable but absent/insufficient data or provenance.
+- `ANALYSIS_ERROR`: malformed declared data or a violated type/frame/time contract.
+
+Unavailable values are null, never zero. Missing optional data yields a partial
+scorecard and exit 0. Malformed optional data marks affected metrics as errors,
+retains unrelated results and exits 1. Invalid interval, unreadable bag or no usable
+core estimated pose fails analysis. A PASS is data-analysis validity, not vehicle
+performance acceptance. Counts with incomplete observation are lower bounds.
+
+### 5.3 Scorecard definitions
+
+Defaults are in `oudtra_driver_bringup/config/evaluation_analysis.yaml`. Effective
+settings are written to every output. Existing bag `analysis` values override
+package defaults; `--analysis-config <yaml>` overrides those; explicit timing CLI
+options override the file. Thresholds define diagnostics only, not PF/PnC tuning.
+
+The evaluation window is `[RUNNING, EVALUATION_END)`, excluding startup and shutdown.
+Legacy wall and monotonic durations must agree within 0.05 s. Cleanup-only unstamped
+zero commands outside this interval and its 0.20 s freshness history are excluded.
+An unstamped command inside that interval is malformed, not silently retimestamped.
+
+| Group | Metric definitions |
+| --- | --- |
+| Localization / Accuracy | Position [m] and absolute wrapped yaw [rad] p50/p95/max; source-pose sample weighting, GT interpolation across <=0.10 s, no extrapolation. Original simulation definitions retained. |
+| Localization / Continuity | Flag adjacent pose increments exceeding `0.50 m + 10 m/s * dt` or `0.35 rad + 6 rad/s * dt`, only for dt <=0.20 s. Count transitions once; gaps are unknown. Largest position/yaw increment is reported regardless of flag. Resets may be legitimate discontinuities. |
+| Localization / Availability | Union of valid `[receive_time, source_time + 0.50 s]` intervals, clipped to evaluation. Complement gives dropout intervals/count/longest [s], including boundary intervals. Readiness is initial-pose event to ready event [s]. Health states held <=0.50 s give durations/observed entries and unknown duration. |
+| Localization / Consistency | Relative SE(2) pose increments over 0.50 s windows every 0.10 s, rotated into each source's starting body frame. Translation residual [m] and wrapped yaw residual [rad] p50/p95/max; no interpolation across gaps >0.20 s. Event threshold: 0.30 m or 0.25 rad; count observed entries separately from initial/after-gap exceedances. |
+| Vehicle / Robustness | Declared completion, collision observed (not impact count), emergency entries/active-at-start/uncertain entries. Narrow commanded-motion stall: autonomous state, non-emergency, abs(command speed) >=0.50 m/s and abs(vehicle speed) <=0.10 m/s continuously >=2 s. Each input must be <=0.20 s old. Duration includes the initial qualifying 2 s. This cannot detect an unintended zero command without an intent signal. |
+| Vehicle / Tracking | Distance to static reference segments [m] and absolute heading-to-segment-tangent [rad], p50/p95/max. Exclude degenerate segments and ambiguous tied headings. Changing reference is an error. Static reference deviation includes intentional obstacle avoidance. |
+| Vehicle / Smoothness | Command steering-rate magnitude [rad/s], p50/p95/max: adjacent angle difference / source dt, 0.01 <=dt<=0.20 s. This is command smoothness, not actuator response. Qualified physical velocity supports windowed acceleration/jerk below. |
+| Vehicle / Pace | Sum trajectory segment lengths [m], with interpolated window endpoints and complete bounded-gap coverage; distance / elapsed evaluation seconds [m/s]. GT in sim, local odometry proxy onboard; no lap/sector timing yet. |
+
+Physical smoothness uses a centered quadratic fit `v(t+u)=c0+c1*u+c2*u²` over
+0.50 s windows on a 0.10 s grid: longitudinal acceleration = c1 [m/s²], jerk =
+2*c2 [m/s³]. At least five unique samples, support >=0.40 s spanning both halves,
+no gaps >0.10 s, and windows wholly inside evaluation are required. Lateral
+acceleration is `d(v_y)/dt + v_x*r` [m/s²], using the same fit and measured body
+lateral velocity. Quantiles use magnitudes (acceleration p50/p95/max, jerk p95/max).
+These are windowed peaks, not impact peaks; no slip-free substitute is silently used.
+
+The legacy simulator advances fixed physics steps but stamps publications with wall
+time. Therefore physical acceleration/jerk and lateral dynamics are **unavailable**
+on this baseline. `/drive` acceleration/jerk/rate fields are unset zeros, not
+measurements. Command steering and commanded-motion stall metrics remain usable.
+Noisy or sparse data is rejected by support/gap rules; no missing interval is filled
+with invented zero motion. Pose/odometry consistency is correlated evidence because
+localization may consume the same odometry.
+
+### 5.4 Compare completed runs
+
+Use the maintained [offline comparison command](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#10-compare-two-analyzed-runs)
+after both source runs have successful schema-2 analysis. The comparison itself
+uses plain Python/JSON, no ROS imports or live graph.
+
+Output is `report.md` and `comparison.json` in the explicit separate output directory.
+Never use a run directory as comparison output. Repeating the command deterministically
+regenerates comparison outputs. Existing schema-1 outputs must be reanalyzed first.
+
+For verified comparability, metadata may declare `comparison_identity` with
+`scenario_id`, `reference_sha256`, `algorithm_id`, `algorithm_config_sha256`.
+Use platform-independent algorithm/config identity, not a whole launch-profile hash;
+platform adapters differ. Never invent values to unlock deltas. Existing revisions
+and configuration hashes remain visible as provenance. Unknown legacy identity
+suppresses deltas with a reason.
+
+Rows align by semantic name; values/applicability remain side by side. Deltas are
+right minus left (availability in percentage points), only for matching known
+identity, settings, method, evidence, units and time basis. Incomplete coverage and
+unequal-duration cumulative counts/distances suppress deltas. GT versus estimated
+tracking has different evidence and receives no delta. Booleans/nested event summaries
+are displayed without numerical differences. There is no composite score or causal
+sim-versus-onboard performance claim.
+
+### 5.5 Future onboard recording checklist
+
+Minimum analyzable input: source-stamped estimated map/base pose plus evaluation
+interval/platform metadata. For the complete core scorecard, record local odometry,
+body speed/yaw-rate state, static reference, final commands, localization health,
+safety state and autonomous authority state. Two semantic roles can share one topic.
+
+Optional: collision evidence, measured steering, measured lateral velocity or
+calibrated IMU, intended-motion/pause/reset events, independent velocity and verified
+physical clock metadata. These improve evidence or make unavailable metrics possible.
+Onboard topic names, frames, calibration and timing must be verified before recording;
+this step provides no onboard recorder or unverified vehicle launch command.
+
+### 5.6 Plots and validation artifacts
+
+Keep GT/estimate XY and absolute-error time plots when GT exists, static-reference
+XY when reference exists, and one pose-increment disagreement time plot when supported.
+Onboard XY is labelled estimated pose; no absolute-error plot is fabricated.
+All XY plots use equal scaling; time axes are elapsed evaluation seconds.
+
+Current host deliverables:
+
+- Simulation: `oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/`.
+- **Synthetic, not onboard measurements:** `oudtra_driver_bringup/runs/synthetic_onboard_no_gt_contract_fixture/`.
+- Schema/evidence comparison demonstration: `oudtra_driver_bringup/runs/sim_vs_synthetic_onboard_contract_comparison/`.
+
+Open each directory's `report.md` in VS Code preview. Run scorecards link their
+`plots/*.png`; machine results are `metrics.json` (runs) or `comparison.json`
+(comparison). Prefix host paths with `/home/mzhou/f1tenth_dev/`; container equivalents
+start `/sim_ws/src/`. These generated directories are Git-ignored and remain local.

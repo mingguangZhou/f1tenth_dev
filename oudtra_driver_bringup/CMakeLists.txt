@@ -7,7 +7,7 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/run_localization_smoke.py scripts/analyze_localization_run.py
+install(PROGRAMS scripts/run_localization_smoke.py scripts/analyze_localization_run.py scripts/compare_localization_runs.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -21,6 +21,10 @@ install(FILES README.md
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(evaluation_comparison_test
+    test/test_evaluation_comparison.py
+    TIMEOUT 30
+  )
   ament_add_pytest_test(localization_measurements_test
     test/test_localization_measurements.py
     TIMEOUT 30

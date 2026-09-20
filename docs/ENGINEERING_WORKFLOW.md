@@ -1,12 +1,16 @@
 # Engineering workflow
 
+## 1. How to use this document
+
 Use this workflow to deliver a focused, reviewable change with evidence for its
 intended behavior. Scale the detail to the task: a small fix needs a short plan
 and relevant checks, not a separate design document or approval ceremony.
 [AGENTS.md](../AGENTS.md) defines repository rules and approval boundaries;
-[Development environment](DEVELOPMENT_ENVIRONMENT.md) defines build and runtime procedures.
+[Development environment](DEVELOPMENT_ENVIRONMENT.md) defines build/runtime facts;
+the [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md)
+owns maintained commands.
 
-## Standard workflow
+## 2. Standard workflow
 
 1. **Inspect.** Read applicable instructions, check branch/HEAD and working-tree
    state, and trace the relevant implementation, configuration, consumers, and
@@ -37,7 +41,7 @@ and relevant checks, not a separate design document or approval ceremony.
    Do not mark an unmet objective complete or commit/push without
    explicit authorization.
 
-## Readability and explicit data flow
+## 3. Readability and explicit data flow
 
 Use names that express intent and include units or frames where ambiguity matters.
 Keep responsibilities focused and make inputs, outputs, state ownership, and side
@@ -45,7 +49,7 @@ effects easy to trace. Comments should explain constraints or reasons that code
 alone cannot show. Prefer familiar local patterns and straightforward control flow;
 extract shared code when there is a concrete reuse need, not just resemblance.
 
-## Tests and validation
+## 4. Tests and validation
 
 Test observable contracts and meaningful failure cases, not copies of implementation
 logic. Reuse existing fixtures and checks before adding infrastructure. A regression
@@ -60,7 +64,7 @@ when the change or evidence warrants it; avoid repeatedly running unrelated suit
 Documentation-only changes normally need diff, link, and content review, not ROS
 builds or new tests.
 
-## Validation artifact triage
+## 5. Validation artifact triage
 
 At task completion, ask: **"Will we care about this result again after today?"**
 Apply this to tests, probes, analysis scripts, logs, and engineering reports;
@@ -105,11 +109,15 @@ action needing separate authorization. Keep reports temporary/uncommitted unless
 explicitly requested otherwise; prefer outcome-oriented permanent documentation.
 ```
 
-## Documentation and diagrams
+## 6. Documentation and diagrams
 
 Start engineering documents and reports with a concise summary of the objective,
 outcome, key decisions, and material limits so readers can understand the whole
 change at a high level before reading the details.
+Use numbered top-level sections for substantial permanent human documentation and
+generated engineering reports. Near the start, include a short document map or
+experiment explanation that tells readers what the document answers and where the
+source-of-truth commands, environment, contracts, and artifacts live.
 For debugging or fixes, include the symptom, evidenced root cause(s), the steps
 used to isolate them, what changed, and why validation supports resolution. Separate
 direct causes from contributing defects and unrelated improvements; state when
@@ -143,7 +151,7 @@ Mermaid shape syntax. Avoid renderer-specific features and HTML labels unless
 needed and verified. Check parsing/rendering with an available Mermaid renderer
 before handoff; state explicitly when the target preview was not verified.
 
-## Completion
+## 7. Completion
 
 The objective is met within its non-goals; the diff is focused and reviewed; relevant
 validation supports the stated outcome; changed contracts or usage are documented;

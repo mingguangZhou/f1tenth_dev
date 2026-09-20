@@ -2,13 +2,16 @@ schema_version: 1
 roles:
   estimated_pose: {topic: /pf/pose/odom, type: nav_msgs/msg/Odometry, frame: map}
   source_pose: {topic: /tf, type: tf2_msgs/msg/TFMessage, parent: map, child: ego_racecar/base_link}
-  health: {topic: /pf/health, type: std_msgs/msg/Float32MultiArray}
+  health: {topic: /pf/health, type: std_msgs/msg/Float32MultiArray, index: 0, states: {'1': GOOD, '2': DEGRADED, '3': INVALID}}
   truth: {topic: /simulator/agent_status, type: diagnostic_msgs/msg/DiagnosticArray, status: simulator/ego, frame: map}
-  raw_odometry: {topic: /ego_racecar/odom, type: nav_msgs/msg/Odometry}
+  raw_odometry: {topic: /ego_racecar/odom, type: nav_msgs/msg/Odometry, frame: ego_racecar/odom}
   reference: {topic: /raceline_path, type: nav_msgs/msg/Path, frame: map}
   command: {topic: /drive, type: ackermann_msgs/msg/AckermannDriveStamped}
   safety: {topic: /reactive_control_v2/lower_safety_status, type: diagnostic_msgs/msg/DiagnosticArray, status: reactive_control_v2/lower_safety_controller}
-  arbitration: {topic: /drive_arbitration_v2/status, type: diagnostic_msgs/msg/DiagnosticArray, status: drive_arbitration_v2/drive_arbitrator}
+  arbitration: {topic: /drive_arbitration_v2/status, type: diagnostic_msgs/msg/DiagnosticArray, status: drive_arbitration_v2/drive_arbitrator, autonomous_states: [RACELINE, REACTIVE]}
+# Legacy role names remain for the smoke recorder. The analyzer normalizes them;
+# physical-time derivatives remain unavailable for this wall-stamped simulator.
+# Shared metric defaults live in evaluation_analysis.yaml and are copied to outputs.
 analysis:
   max_gt_gap_sec: 0.10
   max_pose_age_sec: 0.50

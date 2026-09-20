@@ -4,28 +4,28 @@
      Scale detail to the task; remove these instructions and optional sections
      that add no value. Do not paste large logs or unrelated diffs. -->
 
-## Summary
+## 1. Summary
 
 <Concise overview: objective, outcome, key decisions, and material limits. For fixes,
 state the symptom, evidenced root cause, correction, and verified completion status.>
 
-## Objective
+## 2. Objective
 
 <Problem, intended observable outcome, and acceptance criteria.>
 
-## Non-goals
+## 3. Non-goals
 
 <Behavior and subsystems intentionally outside this task.>
 
-## Existing behavior
+## 4. Existing behavior
 
 <Relevant implementation/contracts inspected and the gap being addressed.>
 
-## Engineering decision
+## 5. Engineering decision
 
 <Minimal chosen change, existing mechanisms reused, and material tradeoffs.>
 
-## Debugging and fix closure (when applicable)
+## 6. Debugging and fix closure (when applicable)
 
 <Explain symptom → evidence and isolation steps → cause → correction → validation.
 Distinguish direct causes, contributing defects, and unrelated improvements.
@@ -38,23 +38,23 @@ Disclose hypotheses rejected and whether fixes were validated together or separa
 <Mark completed work explicitly and reconcile earlier plans with the final outcome.
 Do not mark a fix done merely because code was edited.>
 
-## Files changed
+## 7. Files changed
 
 | File | Reason |
 | --- | --- |
 | <path> | <specific purpose> |
 
-## Expected behavior
+## 8. Expected behavior
 
 <Resulting contract, defaults, inputs/outputs, and operational commands when relevant.
 Link to permanent documentation rather than duplicating it.>
 
-## Diagram / data flow (optional)
+## 9. Diagram / data flow (optional)
 
 <Link to an existing diagram or include Mermaid when it clarifies relationships,
 ownership, or boundaries. Label current versus proposed behavior.>
 
-## Validation
+## 10. Validation
 
 Environment: <branch, starting HEAD, relevant container/image/platform and scenario>.
 
@@ -65,14 +65,14 @@ Environment: <branch, starting HEAD, relevant container/image/platform and scena
 <Include relevant failures and warnings, actual message checks or measurements,
 sampling conditions, and cleanup. Distinguish evidence from inference.>
 
-## Limitations / follow-up
+## 11. Limitations / follow-up
 
 <Unresolved issues, unverified behavior, and observations outside scope.
 State whether any acceptance criterion remains unmet.>
 
-## Validation artifact triage
+## 12. Validation artifact triage
 
-<Apply [the promotion rule](../ENGINEERING_WORKFLOW.md#validation-artifact-triage):
+<Apply [the promotion rule](../ENGINEERING_WORKFLOW.md#5-validation-artifact-triage):
 "Will we care about this result again after today?" List temporary artifacts,
 including /tmp probes/logs and this report, or state that none were created.
 Recommend promotions before implementing them.>
@@ -81,7 +81,7 @@ Recommend promotions before implementing them.>
 | --- | --- | --- | --- |
 | <path> | <disposable diagnostic / reusable diagnostic / regression or acceptance test> | <keep temporary / proposed tool, test, or documentation> | <future value or contract> |
 
-## Git state
+## 13. Git state
 
 <Identify pre-existing changes separately from this task. Include final output below;
 ordinary diff statistics omit untracked files, so list new files under Files changed.>

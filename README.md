@@ -1,4 +1,10 @@
 # F1TENTH gym environment ROS2 communication bridge
+
+RoboRacer developers should start with the
+[engineering documentation map](docs/README.md) for the canonical environment,
+supported operating commands, localization evaluation workflow, and artifact
+locations. The simulator bridge reference continues below.
+
 This is a containerized ROS communication bridge for the F1TENTH gym environment that turns it into a simulation in ROS2.
 
 ## Atomic Docker, simulator, and autonomy workflow

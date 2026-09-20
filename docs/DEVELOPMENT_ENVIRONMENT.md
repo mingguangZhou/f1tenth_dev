@@ -4,9 +4,16 @@ This document describes the canonical local development environment and common d
 
 It is intended as a reference for both human developers and AI-assisted development tools.
 
-For the development process and completion criteria, see [Engineering workflow](ENGINEERING_WORKFLOW.md).
+## 1. How to use this document
 
-## 1. Host repository
+Use this guide for environment facts: host paths, container identity, ROS version,
+workspace layout, and build/source conventions. Use the [documentation map](README.md)
+to choose another guide. The [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md)
+owns copyable workflows; the [engineering workflow](ENGINEERING_WORKFLOW.md) owns
+development and completion policy; [localization simulation and evaluation](LOCALIZATION_SIMULATION.md)
+owns readiness, recording, metric, and evidence contracts.
+
+## 2. Host repository
 
 Primary repository:
 
@@ -33,7 +40,7 @@ Source code should be edited on the host rather than directly inside the Docker 
 
 ---
 
-## 2. Localization-ready simulation environment
+## 3. Localization-ready simulation environment
 
 The primary development simulation environment is the localization-ready F1TENTH Docker image:
 
@@ -81,7 +88,7 @@ The host packages are bind-mounted into:
 
 ---
 
-## 3. Container helper
+## 4. Container helper
 
 From the repository root:
 
@@ -130,7 +137,7 @@ ROBORACER_WS=<workspace> ./scripts/rr_container.sh ...
 
 ---
 
-## 4. ROS package discovery
+## 5. ROS package discovery
 
 List packages visible in the ROS workspace:
 
@@ -153,7 +160,7 @@ range_lib
 
 ---
 
-## 5. Building packages
+## 6. Building packages
 
 Prefer targeted builds during development.
 
@@ -185,7 +192,7 @@ Avoid full-workspace builds during normal edit-test iterations unless they are n
 
 ---
 
-## 6. Entering a built ROS environment
+## 7. Entering a built ROS environment
 
 After a normal build:
 
@@ -204,7 +211,7 @@ ROS commands and launches can then use the workspace installation.
 
 ---
 
-## Canonical simulation workflows
+## 8. Canonical simulation environment and workflows
 
 All current post-IFAC simulation development uses the canonical
 `f1tenth_gym_ros_localization_ready` image in `f1tenth_gym_ros_rocker`.
@@ -212,67 +219,16 @@ The older `f1tenth_gym_ros` image is legacy/reference infrastructure;
 `f1tenth_gym_ros_localization_ready` is the canonical environment for current
 localization work.
 
-Run these two verified workflows separately. Each terminal below is a shell
-inside the existing container (open with `./scripts/rr_container.sh shell`).
-
-### Perfect-localization reference
-
-Terminal 1:
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select f1tenth_gym_ros
-source install/local_setup.bash
-ros2 launch f1tenth_gym_ros gym_bridge_launch.py
-```
-
-Terminal 2:
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
-source install/local_setup.bash
-ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
-```
-
-For dev-laptop commands to build, run and stop the complete PF + PnC loop,
-inspect results, and repeat essential tests, see
-[Localization simulation: manual commands](LOCALIZATION_SIMULATION.md#manual-commands-from-the-dev-laptop).
-The maintained complete command reference is [RoboRacer operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md), including the corrected PF simulation sequence and onboard command section.
-For preserved bags, offline metrics and plots, use the same document's
-[measurement baseline commands](LOCALIZATION_SIMULATION.md#record-one-simulation-measurement-baseline).
-The same document's [deliverables guide](LOCALIZATION_SIMULATION.md#finding-the-engineering-deliverables)
-shows the exact host paths for the report, metrics JSON, plots, metadata, logs,
-and rosbag produced by a run.
-
-### PF-localization simulator
-
-Terminal 1:
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select f1tenth_gym_ros
-source install/local_setup.bash
-ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py \
-  config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
-```
-
-Terminal 2:
-
-```bash
-source /opt/ros/foxy/setup.bash
-cd /sim_ws
-colcon build --packages-select particle_filter
-source install/local_setup.bash
-ros2 launch particle_filter localize_sim_launch.py
-```
+The perfect-localization reference and PF-localization workflows remain separate.
+Use the [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md)
+for their current commands, including the evaluation overlays required for the PF
+closed-loop stack to move. Use [localization simulation and shared evaluation](LOCALIZATION_SIMULATION.md)
+for readiness behavior, recorded signals, scorecard definitions, artifact paths,
+and sim/onboard evidence limits.
 
 ---
 
-## 7. Codex CLI
+## 9. Codex CLI
 
 Codex is installed on the host through the nvm-managed Node.js environment.
 
@@ -297,7 +253,7 @@ AGENTS.md
 
 ---
 
-## 8. Git workflow
+## 10. Git workflow
 
 Before development:
 
@@ -319,7 +275,7 @@ Commits and pushes should remain explicit engineering checkpoints rather than au
 
 ---
 
-## 9. Baseline
+## 11. Baseline
 
 The starting post-IFAC AI-assisted development baseline is tagged:
 
@@ -337,7 +293,7 @@ This tag identifies the software state before the new AI-assisted development an
 
 ---
 
-## 10. Documentation maintenance rule
+## 12. Documentation and deliverable maintenance
 
 When a development procedure becomes stable and repeatable:
 
@@ -371,3 +327,19 @@ directory and distinguish host paths from container paths. Identify the human
 summary, machine-readable result, plots, raw data, logs, and provenance files
 individually. Keep a stable example path or discovery command in the owning
 operational document, and update it when output names or locations change.
+
+### Keep human-facing documentation readable
+
+Major permanent documents and generated engineering reports should begin with a
+short purpose/document map and use numbered top-level sections. Generated run
+reports should explain the platform, scenario, execution flow, initialization,
+closed-loop stack, recorded evidence, producing tools, and reproduction references
+before metric tables. Link to permanent sources of truth instead of copying long
+commands or metric definitions into each report.
+
+Keep the distinction visible between source-controlled documentation under `docs/`,
+Git-ignored run artifacts under `oudtra_driver_bringup/runs/`, and temporary
+uncommitted `PHASE*_CODEX_REPORT.md` handoffs. When report formatting changes,
+regenerate maintained examples and verify metric values, applicability, schema,
+and comparison results remain unchanged. A generator-source provenance hash may
+change when its reporting code changes; record that separately from metric changes.
