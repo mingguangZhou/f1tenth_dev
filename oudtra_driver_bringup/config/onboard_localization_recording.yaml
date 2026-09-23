@@ -1,0 +1,65 @@
+schema_version: 2
+platform: onboard
+
+# Semantic roles consumed by the shared offline analyzer. These are required
+# evidence for the intended onboard scorecard; simulator ground truth is absent.
+roles:
+  estimated_pose:
+    topic: /pf/pose/odom
+    type: nav_msgs/msg/Odometry
+    frame: /map
+  localization_health:
+    topic: /pf/health
+    type: std_msgs/msg/Float32MultiArray
+    index: 0
+    states: {'1': GOOD, '2': DEGRADED, '3': INVALID}
+  raw_odometry:
+    topic: /odom
+    type: nav_msgs/msg/Odometry
+    frame: odom
+  reference_path:
+    topic: /raceline_path
+    type: nav_msgs/msg/Path
+    frame: map
+  final_drive_command:
+    topic: /ackermann_cmd
+    type: ackermann_msgs/msg/AckermannDriveStamped
+  safety_status:
+    topic: /reactive_control_v2/lower_safety_status
+    type: diagnostic_msgs/msg/DiagnosticArray
+    status: reactive_control_v2/lower_safety_controller
+    state_key: mode
+    emergency_state: EMERGENCY_STOP
+  control_status:
+    topic: /drive_arbitration_v2/status
+    type: diagnostic_msgs/msg/DiagnosticArray
+    status: drive_arbitration_v2/drive_arbitrator
+    state_key: mode
+    autonomous_states: [RACELINE, REACTIVE]
+
+# All entries are recorded. Required entries must have a publisher, the declared
+# type, and at least one observed message during bounded preflight.
+evidence:
+  required:
+    scan: {topic: /scan, type: sensor_msgs/msg/LaserScan}
+    upstream_autonomy_command: {topic: /drive, type: ackermann_msgs/msg/AckermannDriveStamped}
+    vesc_telemetry: {topic: /sensors/core, type: vesc_msgs/msg/VescStateStamped}
+    measured_imu: {topic: /sensors/imu/raw, type: sensor_msgs/msg/Imu}
+    servo_command_echo: {topic: /sensors/servo_position_command, type: std_msgs/msg/Float64}
+    tf: {topic: /tf, type: tf2_msgs/msg/TFMessage}
+    tf_static: {topic: /tf_static, type: tf2_msgs/msg/TFMessage}
+  optional:
+    initial_pose_event: {topic: /initialpose, type: geometry_msgs/msg/PoseWithCovarianceStamped}
+
+# Static evidence may have been published before the recorder joined the graph.
+qos:
+  /raceline_path:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
+  /tf_static:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1

@@ -17,7 +17,7 @@ checks 15 seconds of autonomous motion. It fixes clock/frame integration and use
 existing controller behavior, with simulator-GT-dependent recovery disabled.
 PASS proves short-run startup and motion, not localization accuracy or racing robustness.
 The perfect-localization and onboard defaults are unchanged. The shared offline
-scorecard also analyzes future onboard-style data without GT; see
+scorecard also analyzes onboard data without GT; see
 [shared evaluation](#5-shared-simulationonboard-evaluation) for metrics, limitations
 and comparison commands.
 
@@ -209,14 +209,17 @@ below; no PF-internal statistics are promoted to headline metrics. The public PF
 
 ### 5.1 Purpose and evidence model
 
-One offline analyzer accepts simulation and future onboard bags. It generates the
+One offline analyzer accepts simulation and onboard bags. It generates the
 same scorecard structure with explicit evidence and applicability on every metric.
 GT enables absolute localization accuracy; onboard pose/odometry agreement is
 **consistency, not accuracy**. Vehicle tracking uses GT in simulation and estimated
 map pose onboard; pace uses GT trajectory in simulation and local odometry onboard.
 These different evidence sources are labelled and do not receive automatic deltas.
-The onboard recorder is not implemented yet. Synthetic fixtures prove contracts,
-not real-vehicle performance.
+The passive onboard recorder now produces this same run-directory contract without
+launching or mutating the vehicle stack. Tests and a controlled ROS graph validate
+the software path; no current artifact is a physical onboard measurement. Use the
+[Terminal 4 procedure](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement)
+for maintained commands.
 
 The existing smoke startup, control profile, recording topic set and PASS/FAIL
 contract are unchanged. Analysis never feeds a localization or control node.
@@ -224,7 +227,7 @@ contract are unchanged. Analysis never feeds a localization or control node.
 ```mermaid
 flowchart LR
   SIM["Simulation run"] --> DATA["Shared run contract"]
-  ONBOARD["Future onboard run"] --> DATA
+  ONBOARD["Onboard run"] --> DATA
   DATA --> ANALYZE["Shared offline analyzer"]
   ANALYZE --> COMMON["Continuity and vehicle scorecard"]
   SIM --> GT["Optional simulator GT"]
@@ -395,18 +398,42 @@ tracking has different evidence and receives no delta. Booleans/nested event sum
 are displayed without numerical differences. There is no composite score or causal
 sim-versus-onboard performance claim.
 
-### 5.5 Future onboard recording checklist
+### 5.5 Onboard recording contract
 
-Minimum analyzable input: source-stamped estimated map/base pose plus evaluation
-interval/platform metadata. For the complete core scorecard, record local odometry,
-body speed/yaw-rate state, static reference, final commands, localization health,
-safety state and autonomous authority state. Two semantic roles can share one topic.
+`config/onboard_localization_recording.yaml` is the explicit no-GT contract used by
+`record_onboard_localization.py`. The recorder is an observer: it creates
+subscriptions and a rosbag process, but no vehicle/control publishers, parameter
+clients, launch processes, or PF initialization events. A bounded preflight requires
+the semantic scorecard topics plus scan, VESC telemetry, measured VESC IMU, the
+servo-command echo, and TF streams. `/initialpose` is optional because an event may
+occur before the recorder joins; start Terminal 4 before initialization when retaining
+that event matters.
 
-Optional: collision evidence, measured steering, measured lateral velocity or
-calibrated IMU, intended-motion/pause/reset events, independent velocity and verified
-physical clock metadata. These improve evidence or make unavailable metrics possible.
-Onboard topic names, frames, calibration and timing must be verified before recording;
-this step provides no onboard recorder or unverified vehicle launch command.
+| Evidence | Current onboard source | Meaning |
+| --- | --- | --- |
+| Estimated pose / health | `/pf/pose/odom`, `/pf/health` | PF map pose and published PF health. |
+| Raw odometry | `/odom` | VESC-derived local pose and forward speed; odometry is not GT. |
+| Static reference | `/raceline_path` | Latched map-frame raceline used for tracking evidence. |
+| Final drive command | `/ackermann_cmd` | Output selected by `ackermann_mux` and consumed by `ackermann_to_vesc_node`; shared plant-input command evidence. |
+| Upstream autonomous command | `/drive` | Lower-safety/PnC output before teleop/lock mux selection; retained for debugging, not the shared final-command role. |
+| Safety / authority | `/reactive_control_v2/lower_safety_status`, `/drive_arbitration_v2/status` | Emergency state and selected autonomous controller mode. |
+| Forward vehicle speed | `/odom` `twist.linear.x` | Derived from measured VESC motor RPM by `vesc_to_odom`. |
+| Measured yaw rate | `/sensors/imu/raw` `angular_velocity.z` | VESC IMU measurement retained for the future split vehicle-state adapter. |
+| Steering evidence | `/sensors/servo_position_command` | VESC driver's echo of commanded servo position; it is not physical steering feedback. |
+
+The analyzer currently expects forward speed and yaw rate in one `vehicle_state`
+adapter. The onboard contract deliberately does not map `/odom` model-derived
+`twist.angular.z` as measured yaw rate. It therefore preserves `/odom` and the real
+IMU separately; forward-speed/yaw-rate smoothness and stall detection remain
+`UNAVAILABLE_DATA` until the split adapter is implemented. Command smoothness,
+continuity, availability, consistency, estimated-pose tracking, and odometry-based
+pace remain supported. Absolute localization accuracy is `NOT_APPLICABLE` without GT.
+
+Every run records platform/run/time, evaluation boundaries, main/PF/f1tenth_system
+Git revision and clean/dirty/unknown state, contract/tool hashes, preflight topic/type/
+frame observations, message counts, and supplied map/image/raceline/config hashes.
+Missing paths or Git facts remain explicitly unknown. Bags and generated run data
+stay under the Git-ignored `oudtra_driver_bringup/runs/` after transfer.
 
 ### 5.6 Plots and validation artifacts
 

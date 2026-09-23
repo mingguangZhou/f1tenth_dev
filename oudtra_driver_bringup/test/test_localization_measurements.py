@@ -438,3 +438,11 @@ def test_declared_different_frames_are_not_compared_numerically(tmp_path):
     result = A.analyze(root)
     assert result['localization']['accuracy']['position_error_m']['status'] == 'ANALYSIS_ERROR'
     assert result['vehicle']['tracking']['static_reference_deviation_m']['status'] == 'ANALYSIS_ERROR'
+
+
+def test_deprecated_leading_frame_slash_is_semantically_equivalent(tmp_path):
+    root = make_run(tmp_path)
+    edit_metadata(root, lambda m: m['roles']['estimated_pose'].update(frame='/map'))
+    result = A.analyze(root)
+    assert result['analysis_status'] == 'PASS'
+    assert result['localization']['accuracy']['position_error_m']['status'] == 'AVAILABLE'

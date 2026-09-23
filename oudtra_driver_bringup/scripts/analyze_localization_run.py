@@ -97,6 +97,11 @@ def yaw(quaternion):
     return math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))
 
 
+def same_frame(left, right):
+    """Compare ROS frame IDs while tolerating the deprecated leading slash."""
+    return isinstance(left, str) and isinstance(right, str) and left.lstrip('/') == right.lstrip('/')
+
+
 # Legacy input adapters retain the original recording interface. New inputs use
 # semantic role names directly and do not need PF-specific topics or TF.
 ALIASES = {'health': 'localization_health', 'truth': 'ground_truth_pose',
@@ -203,7 +208,7 @@ def decode(records, roles, origin, errors, duration=None, command_history_sec=.2
                 if role == 'final_drive_command' and duration is not None and not -command_history_sec <= receive < duration:
                     continue
                 if role == 'reference_path':
-                    if msg.header.frame_id != spec['frame']:
+                    if not same_frame(msg.header.frame_id, spec['frame']):
                         raise ValueError('Reference frame mismatch')
                     points = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses])
                     if len(points) < 2 or not np.all(np.isfinite(points)):
@@ -214,7 +219,8 @@ def decode(records, roles, origin, errors, duration=None, command_history_sec=.2
                     continue
                 messages = msg.transforms if role == 'source_pose' else [msg]
                 for item in messages:
-                    if role == 'source_pose' and (item.header.frame_id != spec['parent'] or item.child_frame_id != spec['child']):
+                    if role == 'source_pose' and (not same_frame(item.header.frame_id, spec['parent']) or
+                                                  not same_frame(item.child_frame_id, spec['child'])):
                         continue
                     if role == 'localization_health':
                         values = [receive, spec['states'][str(int(msg.data[spec.get('index', 0)]))]]
@@ -229,13 +235,13 @@ def decode(records, roles, origin, errors, duration=None, command_history_sec=.2
                             if role == 'source_pose':
                                 position, rotation = item.transform.translation, item.transform.rotation
                             else:
-                                if spec.get('frame') and item.header.frame_id != spec['frame']:
+                                if spec.get('frame') and not same_frame(item.header.frame_id, spec['frame']):
                                     raise ValueError('Pose frame mismatch')
                                 position, rotation = item.pose.pose.position, item.pose.pose.orientation
                             values = [t, position.x, position.y, yaw(rotation), receive]
                         elif role == 'ground_truth_pose':
                             if spec['type'] == 'nav_msgs/msg/Odometry':
-                                if item.header.frame_id != spec['frame']:
+                                if not same_frame(item.header.frame_id, spec['frame']):
                                     raise ValueError('GT pose frame mismatch')
                                 p = item.pose.pose
                                 values = [t, p.position.x, p.position.y, yaw(p.orientation), receive]
@@ -244,7 +250,7 @@ def decode(records, roles, origin, errors, duration=None, command_history_sec=.2
                                 keys = spec.get('pose_keys', ['x_m', 'y_m', 'yaw_rad'])
                                 values = [t] + [float(fields[k]) for k in keys] + [receive]
                         elif role == 'vehicle_state':
-                            if spec.get('frame') and item.header.frame_id != spec['frame']:
+                            if spec.get('frame') and not same_frame(item.header.frame_id, spec['frame']):
                                 raise ValueError('Vehicle-state frame mismatch')
                             twist = item.twist.twist
                             values = [t, twist.linear.x, twist.linear.y, twist.angular.z, receive]
@@ -569,7 +575,7 @@ def analyze(root, overrides=None):
 
     truth = data.get('ground_truth_pose')
     pose_frame = roles[pose_role].get('parent', roles[pose_role].get('frame'))
-    if truth is not None and roles.get('ground_truth_pose', {}).get('frame') != pose_frame:
+    if truth is not None and not same_frame(roles.get('ground_truth_pose', {}).get('frame'), pose_frame):
         errors['ground_truth_pose'] = 'GT and estimated pose frames differ; no implicit transform'
         truth = None
     truth_ok = truth is not None and len(truth) > 0
@@ -675,7 +681,7 @@ def analyze(root, overrides=None):
     track = track[(track[:, 0] >= 0) & (track[:, 0] < duration)] if track is not None else np.empty((0, 5))
     reference = data.get('reference_path')
     track_frame = roles.get(track_role, {}).get('parent', roles.get(track_role, {}).get('frame'))
-    if reference is not None and roles['reference_path'].get('frame') != track_frame:
+    if reference is not None and not same_frame(roles['reference_path'].get('frame'), track_frame):
         errors['reference_path'] = 'Reference and vehicle pose frames differ; no implicit transform'
         reference = None
     deviations, headings = np.array([]), np.array([])

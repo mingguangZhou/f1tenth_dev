@@ -2,12 +2,13 @@
 import hashlib
 from pathlib import Path
 import os
-import signal
 import sqlite3
 import subprocess
 import time
 
 import yaml
+
+from recording_support import bag_counts, stop_rosbag
 
 
 class RunRecording:
@@ -73,14 +74,7 @@ class RunRecording:
             raise RuntimeError('Recorder exited before requested stop')
 
     def counts(self):
-        counts = {}
-        for path in (self.root / 'rosbag').glob('*.db3'):
-            with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True, timeout=.1) as db:
-                for topic, count in db.execute(
-                        'SELECT topics.name, COUNT(messages.id) FROM topics '
-                        'LEFT JOIN messages ON topics.id=messages.topic_id GROUP BY topics.id'):
-                    counts[topic] = counts.get(topic, 0) + count
-        return counts
+        return bag_counts(self.root / 'rosbag')
 
     def ready(self, roles):
         self.check()
@@ -94,16 +88,7 @@ class RunRecording:
         self.metadata['smoke_result'] = result
         try:
             self.check()
-            os.killpg(self.process.pid, signal.SIGINT)
-            try:
-                code = self.process.wait(timeout=12)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGTERM)
-                self.process.wait(timeout=5)
-                raise RuntimeError('Recorder did not finalize on SIGINT')
-            # This Foxy CLI returns 2 on a requested SIGINT, with a valid finalized bag.
-            if code not in (0, 2):
-                raise RuntimeError('Unexpected recorder exit: ' + str(code))
+            code, counts = stop_rosbag(self.process, self.root / 'rosbag')
             try:
                 os.killpg(self.process.pid, 0)
             except ProcessLookupError:
@@ -111,13 +96,6 @@ class RunRecording:
             else:
                 raise RuntimeError('Recorder process group survived shutdown')
             self.metadata['recording']['return_code'] = code
-            if not (self.root / 'rosbag/metadata.yaml').is_file():
-                raise RuntimeError('Recorder did not finalize bag metadata')
-            for path in (self.root / 'rosbag').glob('*.db3'):
-                with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as db:
-                    if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-                        raise RuntimeError('Bag SQLite integrity check failed')
-            counts = self.counts()
             missing = [r['topic'] for r in self.contract['roles'].values()
                        if counts.get(r['topic'], 0) == 0]
             self.metadata['recording']['message_counts'] = counts

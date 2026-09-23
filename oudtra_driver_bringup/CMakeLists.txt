@@ -7,11 +7,11 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/run_localization_smoke.py scripts/analyze_localization_run.py scripts/compare_localization_runs.py
+install(PROGRAMS scripts/run_localization_smoke.py scripts/analyze_localization_run.py scripts/compare_localization_runs.py scripts/record_onboard_localization.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(FILES scripts/localization_recording.py
+install(FILES scripts/localization_recording.py scripts/recording_support.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -39,6 +39,10 @@ if(BUILD_TESTING)
   )
   ament_add_pytest_test(onboard_profile_contracts_test
     test/test_onboard_profile_contracts.py
+    TIMEOUT 30
+  )
+  ament_add_pytest_test(onboard_recording_test
+    test/test_onboard_recording.py
     TIMEOUT 30
   )
 endif()

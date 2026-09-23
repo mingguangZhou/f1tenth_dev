@@ -133,12 +133,87 @@ reverse gate. Confirm motion from `/drive` and `/ego_racecar/odom`; stop PnC
 first, then PF and simulator. The dedicated runner below remains the preferred
 repeatable path because it performs readiness and cleanup automatically.
 
-## 5. Onboard/default command placeholder
+## 5. Onboard stack and passive measurement
 
-Onboard operation uses the same full-stack launch family with `platform:=onboard`
-and onboard configuration paths. Add verified vehicle-computer commands here when
-that workflow is updated; do not copy simulator overlays or GT-isolation settings
-into onboard instructions.
+These commands reflect the current onboard launch and recording contracts. The
+recorder has been validated against tests and a controlled ROS graph, but this
+four-terminal procedure still requires its first real-car verification. It does
+not replace the vehicle team's normal safety checks or operating authority.
+After deploying this repository revision, build `oudtra_driver_bringup` in
+`/f1tenth_ws` once so Terminal 4 uses the installed recorder and contract.
+
+In each terminal inside the existing onboard ROS 2 Foxy container:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /f1tenth_ws
+source install/setup.bash
+```
+
+Use the existing workflow unchanged in Terminals 1–3:
+
+```text
+Terminal 1: ros2 launch f1tenth_stack bringup_launch.py
+Terminal 2: ros2 launch particle_filter localize_onboard_rviz_launch.py
+Terminal 3: ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
+```
+
+Initialize PF with RViz `2D Pose Estimate` as usual. The passive recorder does
+not publish `/initialpose`, reset PF, enable autonomy, or launch any stack node.
+
+In Terminal 4, first check the live contract without creating a run:
+
+```bash
+ros2 run oudtra_driver_bringup record_onboard_localization.py \
+  --preflight-only
+```
+
+`PASS` requires every required topic to have the declared type and an observed
+message. Missing optional `/initialpose` evidence is reported but does not fail
+preflight. Start a descriptive run before enabling/driving autonomous motion:
+
+```bash
+RUN_DIR="/f1tenth_ws/onboard_runs/ifac_pf_onboard_$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 run oudtra_driver_bringup record_onboard_localization.py "$RUN_DIR" \
+  --map-yaml /f1tenth_ws/src/f1tenth_dev/particle_filter/maps/ifac_roboracer.yaml \
+  --map-image /f1tenth_ws/src/f1tenth_dev/particle_filter/maps/ifac_roboracer.png \
+  --raceline-csv /f1tenth_ws/src/f1tenth_dev/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv \
+  --config pf=/f1tenth_ws/src/f1tenth_dev/particle_filter/config/localize.yaml \
+  --config pnc=/f1tenth_ws/src/f1tenth_dev/oudtra_driver_bringup/config/full_stack.yaml \
+  --config path=/f1tenth_ws/src/f1tenth_dev/path_following_v2/config/path_following_v2.yaml \
+  --config reactive=/f1tenth_ws/src/f1tenth_dev/reactive_control_v2/config/reactive_control_v2.yaml \
+  --config arbitration=/f1tenth_ws/src/f1tenth_dev/drive_arbitration_v2/config/drive_arbitration_v2.yaml \
+  --config mux=/f1tenth_ws/src/f1tenth_system/f1tenth_stack/config/mux.yaml \
+  --config vesc=/f1tenth_ws/src/f1tenth_system/f1tenth_stack/config/vesc.yaml
+```
+
+The recorder immediately retains startup evidence, then waits. Press Enter once
+to mark the evaluation start. Press Ctrl-C once at the intended end; it marks the
+evaluation end, asks rosbag to finalize, validates the bag, and updates
+`metadata.yaml`. A 0.5 s passive post-roll preserves samples just beyond the
+evaluation boundary; it is not included in the evaluated interval. The tool rejects
+an existing run directory rather than overwriting it.
+An interrupted preflight/startup still leaves explicit incomplete/failure metadata
+when a run directory was created.
+
+The onboard host sees the run under `~/f1tenth_ws/onboard_runs/<run-id>/` when
+the standard workspace bind mount is used. From the development laptop, copy the
+whole directory without changing its contents:
+
+```bash
+rsync -a <vehicle-user>@<vehicle-host>:~/f1tenth_ws/onboard_runs/<run-id>/ \
+  /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<run-id>/
+```
+
+Then analyze it inside the sourced localization-ready development container:
+
+```bash
+ros2 run oudtra_driver_bringup analyze_localization_run.py \
+  /sim_ws/src/oudtra_driver_bringup/runs/<run-id>
+```
+
+Open `report.md`, `metrics.json`, and `plots/` under the copied run directory.
+Absolute GT accuracy is correctly reported as not applicable onboard.
 
 ## 6. Essential regression checks
 
@@ -265,8 +340,8 @@ ros2 run oudtra_driver_bringup compare_localization_runs.py \
 ```
 
 Replace the angle-bracket paths with real analyzed runs. Comparison requires no
-onboard recorder; that workflow remains future work. Unknown identity or incompatible
-evidence suppresses deltas instead of suggesting equivalent measurements.
+live ROS graph. Unknown identity or incompatible evidence suppresses deltas instead
+of suggesting equivalent measurements.
 
 Open `report.md` beside `metrics.json` in each run; plots are linked under `plots/`.
 Comparison writes `report.md` and `comparison.json` in its separate output directory.
