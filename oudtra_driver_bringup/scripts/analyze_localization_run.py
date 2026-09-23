@@ -10,7 +10,7 @@ import sqlite3
 import numpy as np
 import yaml
 
-VERSION = 2
+VERSION = 3
 
 
 def wrapped(angle):
@@ -351,6 +351,84 @@ def windowed_dynamics(state, duration, settings):
     return np.asarray(result).reshape((-1, 4))
 
 
+def driven_progress(track, duration, max_gap):
+    """Return source time and cumulative driven distance for a covered trajectory."""
+    if track is None or len(track) < 2:
+        return np.empty((0, 2)), 0.
+    coverage_fraction = coverage(
+        [(a, b) for a, b in zip(track[:-1, 0], track[1:, 0]) if 0 < b-a <= max_gap],
+        0, duration) / duration
+    ends = interpolate(track, [0., duration], max_gap)
+    inside = track[(track[:, 0] > 0) & (track[:, 0] < duration), :4]
+    bounded = np.vstack(([0., *ends[0]], inside, [duration, *ends[1]]))
+    if coverage_fraction < 1-1e-6 or not np.all(np.isfinite(bounded[:, 1:3])):
+        return np.empty((0, 2)), coverage_fraction
+    station = np.r_[0., np.cumsum(np.linalg.norm(np.diff(bounded[:, 1:3], axis=0), axis=1))]
+    return np.column_stack((bounded[:, 0], station)), coverage_fraction
+
+
+def station_oscillation(signal, value_column, progress, settings):
+    """Remove a local linear trend from a signal sampled over driven distance."""
+    empty = np.empty((0, 4))
+    if signal is None or len(signal) < 2 or len(progress) < 2 or progress[-1, 1] <= 0:
+        return None, empty, 0.
+    step = settings['oscillation_station_step_m']
+    window = settings['oscillation_trend_window_m']
+    max_gap = settings['oscillation_max_interpolation_gap_m']
+    times = signal[:, 0]
+    inside = (times >= progress[0, 0]) & (times <= progress[-1, 0])
+    samples = signal[inside]
+    if len(samples) < 2:
+        return None, empty, 0.
+    station = np.interp(samples[:, 0], progress[:, 0], progress[:, 1])
+    # Several messages while stationary have the same station. Their mean is a
+    # deterministic station-domain value; time-domain chatter while stopped is
+    # intentionally outside this metric.
+    unique, inverse = np.unique(np.round(station, 9), return_inverse=True)
+    values = np.zeros(len(unique))
+    counts = np.zeros(len(unique))
+    np.add.at(values, inverse, samples[:, value_column])
+    np.add.at(counts, inverse, 1)
+    values /= counts
+    if len(unique) < 3 or unique[-1]-unique[0] < window/2:
+        return None, empty, 0.
+    first = math.ceil(unique[0]/step-1e-9)*step
+    last = math.floor(unique[-1]/step+1e-9)*step
+    grid = np.arange(first, last+step/2, step)
+    sampled = np.interp(grid, unique, values)
+    right = np.searchsorted(unique, grid, side='left')
+    exact = (right < len(unique)) & (np.abs(unique[np.minimum(right, len(unique)-1)]-grid) <= 1e-8)
+    bracketed = (right > 0) & (right < len(unique))
+    gaps = np.full(len(grid), np.inf)
+    gaps[exact] = 0.
+    gaps[bracketed] = unique[right[bracketed]]-unique[right[bracketed]-1]
+    sampled[gaps > max_gap+1e-9] = np.nan
+    residual_rows = []
+    half = window/2
+    finite_grid = np.isfinite(sampled)
+    segment_ids = np.cumsum(~finite_grid)
+    for index, (station_value, value) in enumerate(zip(grid, sampled)):
+        if not finite_grid[index]:
+            continue
+        local = (finite_grid & (segment_ids == segment_ids[index]) &
+                 (np.abs(grid-station_value) <= half+1e-9))
+        if (not math.isfinite(value) or np.count_nonzero(local) < 3 or
+                np.ptp(grid[local]) < half-1e-9):
+            continue
+        offsets = grid[local]-station_value
+        design = np.column_stack((np.ones(np.count_nonzero(local)), offsets))
+        trend = float(np.linalg.lstsq(design, sampled[local], rcond=None)[0][0])
+        residual_rows.append([station_value, value, trend, value-trend])
+    trace = np.asarray(residual_rows).reshape((-1, 4))
+    expected = max(1, int(math.floor(progress[-1, 1]/step+1e-9))+1)
+    coverage_fraction = len(trace)/expected
+    if not len(trace):
+        return None, trace, coverage_fraction
+    residual = trace[:, 3]
+    return {'rms': float(np.sqrt(np.mean(residual*residual))),
+            'p95_absolute': float(np.percentile(np.abs(residual), 95))}, trace, coverage_fraction
+
+
 def discontinuities(selected, settings):
     dt = np.diff(selected[:, 0])
     adjacent = (dt > 0) & (dt <= settings['max_increment_gap_sec'])
@@ -432,6 +510,10 @@ def load_settings(metadata, overrides):
         raise ValueError('Analysis bounds must be finite and positive')
     if settings['smoothness_min_span_sec'] > settings['smoothness_window_sec']:
         raise ValueError('Smoothness span exceeds window')
+    if settings['oscillation_trend_window_m'] < 2*settings['oscillation_station_step_m']:
+        raise ValueError('Oscillation trend window must span at least two station steps')
+    if settings['oscillation_max_interpolation_gap_m'] < settings['oscillation_station_step_m']:
+        raise ValueError('Oscillation interpolation gap must cover at least one station step')
     return settings
 
 
@@ -475,7 +557,7 @@ def analyze(root, overrides=None):
             if not any(tuple(np.round(row[1:4], 8)) in values for row in public):
                 errors['estimated_pose'] = 'No public/source pose agreement'
     score = {'localization': {g: {} for g in ('accuracy', 'continuity', 'availability', 'consistency')},
-             'vehicle': {g: {} for g in ('robustness', 'tracking', 'smoothness', 'pace')}}
+             'vehicle': {g: {} for g in ('robustness', 'tracking', 'smoothness', 'dynamics_diagnostics', 'pace')}}
 
     def put(section, group, name, value, unit, evidence, method, deps=(), reason='', status=None, cov=None, time_basis='source_wall'):
         bad = [errors[r] for r in deps if r in errors]
@@ -607,16 +689,28 @@ def analyze(root, overrides=None):
             'nearest_static_segment_v1', (track_role, 'reference_path'), 'Static raceline deviation includes intentional avoidance; ambiguous segment headings excluded',
             cov=len(vals)/len(track) if len(track) else 0.)
 
-    steering = np.array([])
-    steering_coverage = 0.
-    if command is not None and len(command):
-        cmd = command[(command[:, 0] >= 0) & (command[:, 0] < duration)]
-        delta = np.diff(cmd[:, 0])
-        accepted = (delta >= settings['steering_min_dt_sec']) & (delta <= settings['max_increment_gap_sec'])
-        steering = np.abs(np.diff(cmd[:, 2])[accepted]/delta[accepted])
-        steering_coverage = float(np.mean(accepted)) if len(accepted) else 0.
-    put('vehicle', 'smoothness', 'command_steering_rate_radps', quantiles(steering), 'rad/s', 'commanded_steering',
-        'adjacent_command_rate_v1', ('final_drive_command',), 'Command smoothness, not measured steering response', cov=steering_coverage)
+    # Raw-odometry arc length is the common sim/onboard station coordinate. It
+    # keeps these vehicle metrics independent of simulator-only GT.
+    progress_role = 'raw_odometry'
+    progress, progress_coverage = driven_progress(
+        data.get(progress_role), duration, settings['max_increment_gap_sec'])
+    oscillation_traces = {}
+    state_evidence = roles.get('vehicle_state', {}).get(
+        'evidence', 'simulator_odometry_body_twist' if platform == 'sim' else 'measured_vehicle_state')
+    oscillation_inputs = [
+        ('speed_command_oscillation', command, 1, 'm/s', 'final_speed_command', 'final_drive_command'),
+        ('steering_command_oscillation', command, 2, 'rad', 'final_steering_command', 'final_drive_command'),
+        ('forward_speed_oscillation', state, 1, 'm/s', state_evidence + '_forward_speed', 'vehicle_state'),
+        ('yaw_rate_oscillation', state, 3, 'rad/s', state_evidence + '_yaw_rate', 'vehicle_state')]
+    for name, samples, column, unit, signal_evidence, signal_role in oscillation_inputs:
+        value, trace, signal_coverage = station_oscillation(samples, column, progress, settings)
+        oscillation_traces[name] = trace
+        reason = ('Requires continuous driven-progress pose and sufficient signal coverage over distance'
+                  if value is None else
+                  'Residual around a local distance-domain trend; lower generally means less short-scale oscillation')
+        put('vehicle', 'smoothness', name, value, unit, signal_evidence,
+            'uniform_station_local_linear_residual_v1', (signal_role, progress_role), reason,
+            cov=min(progress_coverage, signal_coverage), time_basis='driven_distance')
     spec = roles.get('vehicle_state', {})
     qualified = spec.get('physical_time') is True and spec.get('velocity_frame') == 'body' and spec.get('lateral_velocity_observed') is True
     dynamics = windowed_dynamics(state, duration, settings) if state is not None and len(state) and spec.get('physical_time') is True and spec.get('velocity_frame') == 'body' else np.empty((0, 4))
@@ -625,7 +719,7 @@ def analyze(root, overrides=None):
         q = quantiles(vals)
         if q and col == 2:
             q.pop('p50')
-        put('vehicle', 'smoothness', name, q, unit, spec.get('evidence', 'vehicle_state'), 'windowed_body_velocity_quadratic_v1', ('vehicle_state',),
+        put('vehicle', 'dynamics_diagnostics', name, q, unit, spec.get('evidence', 'vehicle_state'), 'windowed_body_velocity_quadratic_v1', ('vehicle_state',),
             '' if q else 'Requires body velocity with verified physical timestamps and window support; lateral metric also requires observed lateral velocity', time_basis='physical_source')
 
     metrics = {'schema_version': 2, 'analyzer_version': VERSION, 'run_id': metadata.get('run_id', root.name),
@@ -643,10 +737,10 @@ def analyze(root, overrides=None):
                'limitations': ['Consistency is not truth error; odometry may be an input to localization.',
                                'Onboard tracking uses estimated map pose and can hide localization bias.',
                                'Commanded-motion stalls exclude intentional zero commands and emergency stops.',
-                               'Quantiles are sample-weighted; smoothness fits use a uniform time grid.',
+                               'Oscillation uses uniform driven-distance sampling; it does not measure chatter while stationary.',
                                'Legacy simulator physics steps are not publication timestamps; physical acceleration/jerk may be unavailable.',
                                'Health timing uses bag receive time; state transitions between samples can be missed.']}
-    write_outputs(root, metrics, metadata, selected, aligned, valid, track, reference, residuals)
+    write_outputs(root, metrics, metadata, selected, aligned, valid, track, reference, residuals, oscillation_traces)
     return metrics
 
 
@@ -657,8 +751,106 @@ def display(metric):
     if isinstance(value, bool):
         return 'Yes' if value else 'No'
     if isinstance(value, dict):
-        return ', '.join('{}={}'.format(k, ('Yes' if v else 'No') if isinstance(v, bool) else format(v, '.4g') if isinstance(v, (float, int)) else json.dumps(v, sort_keys=True)) for k, v in value.items())
+        labels = {'rms': 'RMS', 'p95_absolute': 'P95 absolute'}
+        return '; '.join('{}: {}'.format(labels.get(k, k), ('Yes' if v else 'No') if isinstance(v, bool) else format(v, '.4g') if isinstance(v, (float, int)) else json.dumps(v, sort_keys=True)) for k, v in value.items())
     return format(value, '.5g') if isinstance(value, (float, int)) else str(value)
+
+
+def human_result(name, metric):
+    """Render structured machine values as concise engineering prose."""
+    if metric['status'] != 'AVAILABLE':
+        return display(metric)
+    value = metric['value']
+    yes_no = lambda item: 'Unknown' if item is None else 'Yes' if item else 'No'
+    if name == 'health_states':
+        durations = value.get('duration_sec', {})
+        known = ['GOOD', 'DEGRADED', 'INVALID']
+        rows = ['{}: {:.2f} s'.format(state, durations.get(state, 0.)) for state in known]
+        rows += ['{}: {:.2f} s'.format(state, seconds)
+                 for state, seconds in sorted(durations.items()) if state not in known]
+        rows.append('Unknown: {:.2f} s'.format(value.get('unknown_duration_sec', 0.)))
+        entries = value.get('observed_entries', {})
+        rows.append('Observed state transitions: ' +
+                    (', '.join('{}={}'.format(k, v) for k, v in sorted(entries.items())) or 'none'))
+        return '<br>'.join(rows)
+    if name == 'emergency_stops':
+        return ('Emergency observed: {}<br>Entries: {}<br>Active at interval start: {}'
+                '<br>Uncertain entries after gaps: {}').format(
+                    yes_no(value.get('observed')), value.get('observed_entries', 0),
+                    yes_no(value.get('active_at_start')), value.get('uncertain_entries', 0))
+    if name == 'commanded_motion_stalls':
+        intervals = value.get('episodes_sec', [])
+        interval_text = ', '.join('{:.2f}–{:.2f} s'.format(a, b) for a, b in intervals) or 'none'
+        return ('Observed episodes: {}<br>Observed duration: {:.2f} s<br>Intervals: {}').format(
+            value.get('observed_count', 0), value.get('observed_duration_sec', 0.), interval_text)
+    if name == 'disagreement_events':
+        return ('Observed entries: {}<br>Initial/after-gap exceedances: {}').format(
+            value.get('observed_entries', 0), value.get('initial_or_after_gap', 0))
+    return display(metric)
+
+
+GROUP_EXPLANATIONS = {
+    ('localization', 'accuracy'): ('Question: how close was the estimated global pose to independent simulator truth? Source-timed PF poses are aligned with interpolated ground truth, then position and wrapped heading errors are summarized. Lower is more accurate. This absolute result requires independent GT and therefore does not exist for an ordinary onboard run.'),
+    ('localization', 'continuity'): ('Question: did localization change abruptly? Adjacent estimated poses are checked against time-scaled position and yaw motion bounds; flagged transitions and the largest observed increments are reported. Fewer/smaller jumps are generally preferable, but gaps are unknown and a legitimate localization reset can also look discontinuous.'),
+    ('localization', 'availability'): ('Question: for how much of the evaluation window was a fresh pose usable? Source and receive timestamps define freshness intervals; their uncovered complement gives dropout count and duration. Higher availability and shorter dropouts are preferable. Health-state timing uses bag receive time, so transitions between messages may be missed.'),
+    ('localization', 'consistency'): ('Question: did PF motion agree with raw-odometry motion over short windows? Body-relative translation and yaw increments are compared every 0.10 s over 0.50 s windows. Lower disagreement is more internally consistent, but this is correlated evidence because PF may consume the same odometry; it is not absolute accuracy.'),
+    ('vehicle', 'robustness'): ('Question: did the bounded run complete without observed collision, emergency-stop entry, or a sustained commanded-motion stall? Results combine declared run outcome, collision observations, lower-safety state, final command, vehicle speed, and control authority. Zero events is favorable only within the stated evidence coverage and does not prove long-run robustness.'),
+    ('vehicle', 'tracking'): ('Question: how closely did the vehicle follow the recorded static raceline? Simulator GT position is projected to the nearest reference segment; lateral distance and heading-to-segment error are summarized. Lower is closer to the reference, although intentional obstacle avoidance can correctly increase both values.'),
+    ('vehicle', 'dynamics_diagnostics'): ('These secondary physical acceleration and jerk diagnostics require body velocity and qualified physical source timing. They do not substitute wall time or an assumed no-slip model when evidence is insufficient.'),
+    ('vehicle', 'pace'): ('Question: how much motion occurred during the bounded interval? Consecutive trajectory segments give distance, and distance divided by elapsed evaluation time gives mean speed. Larger values mean more distance or pace in this run, not a lap-time or racing-performance result.')}
+
+GROUP_LABELS = {'accuracy': 'Accuracy', 'continuity': 'Continuity', 'availability': 'Availability',
+                'consistency': 'Consistency', 'robustness': 'Robustness', 'tracking': 'Tracking',
+                'smoothness': 'Smoothness', 'dynamics_diagnostics': 'Additional dynamics diagnostics',
+                'pace': 'Pace'}
+
+METRIC_LABELS = {
+    'position_error_m': 'Position error', 'absolute_heading_error_rad': 'Absolute heading error',
+    'pose_jump_count': 'Pose jumps', 'largest_position_jump_m': 'Largest position jump',
+    'largest_yaw_jump_rad': 'Largest yaw jump', 'availability_percent': 'Localization availability',
+    'dropout_count': 'Localization dropouts', 'longest_dropout_sec': 'Longest localization dropout',
+    'readiness_time_sec': 'Localization readiness time', 'health_states': 'Localization health states',
+    'pose_increment_disagreement_m': 'Pose-increment disagreement',
+    'yaw_increment_disagreement_rad': 'Yaw-increment disagreement',
+    'disagreement_events': 'Motion disagreement events', 'completed': 'Run completed',
+    'collision_observed': 'Collision observed', 'emergency_stops': 'Emergency stops',
+    'commanded_motion_stalls': 'Commanded-motion stalls',
+    'static_reference_deviation_m': 'Static-reference deviation',
+    'heading_to_reference_rad': 'Heading-to-reference error',
+    'speed_command_oscillation': 'Speed-command oscillation',
+    'steering_command_oscillation': 'Steering-command oscillation',
+    'forward_speed_oscillation': 'Forward-speed oscillation',
+    'yaw_rate_oscillation': 'Yaw-rate oscillation',
+    'longitudinal_acceleration_mps2': 'Longitudinal acceleration',
+    'longitudinal_jerk_mps3': 'Longitudinal jerk',
+    'lateral_acceleration_mps2': 'Lateral acceleration',
+    'distance_travelled_m': 'Distance travelled',
+    'mean_elapsed_time_speed_mps': 'Mean elapsed-time speed'}
+
+EVIDENCE_LABELS = {
+    'independent_gt': 'Independent ground truth', 'estimated_pose': 'Estimated pose',
+    'localization_vs_raw_odometry': 'PF pose and raw odometry', 'published_health': 'Published localization health',
+    'run_events': 'Recorded startup events', 'run_outcome': 'Declared run outcome',
+    'collision_sensor': 'Collision-status observations', 'safety_state': 'Lower-safety state',
+    'command_vs_vehicle_speed_with_authority': 'Final command, vehicle speed, control authority, and safety state',
+    'gt_map_pose': 'Simulator GT map pose', 'estimated_map_pose_proxy': 'Estimated map pose proxy',
+    'final_speed_command': 'Final drive speed command', 'final_steering_command': 'Final drive steering command',
+    'simulator_odometry_body_twist_forward_speed': 'Simulated forward speed in the vehicle body frame (`/ego_racecar/odom` `twist.linear.x`)',
+    'simulator_odometry_body_twist_yaw_rate': 'Simulated yaw rate in the vehicle body frame (`/ego_racecar/odom` `twist.angular.z`)',
+    'gt_trajectory': 'Simulator GT trajectory', 'odometry_trajectory_proxy': 'Local odometry trajectory proxy'}
+
+PLOT_CAPTIONS = {
+    'trajectory_xy.png': ('GT and PF estimated map-frame trajectories. Separation between the lines is absolute position error; equal axis scaling preserves geometry.'),
+    'position_error.png': ('Absolute PF-versus-GT position error over elapsed evaluation time. Lower is more accurate; line breaks would mark unsupported intervals.'),
+    'reference_trajectory.png': ('Recorded static raceline and driven trajectory in map coordinates. Separation includes both tracking error and intentional avoidance.'),
+    'pose_increment_disagreement.png': ('PF-versus-odometry translation-increment disagreement over time. This is correlated consistency evidence, not truth error.'),
+    'smoothness_oscillations.png': ('Each panel shows only the oscillation residual—evaluated signal minus its local linear trend—against raw-odometry driven progress. Zero follows the local trend; excursions show shorter-scale variation. The raw signal and fitted trend are used by analysis but are not drawn.')}
+
+PLOT_TITLES = {'trajectory_xy.png': 'GT and estimated trajectory',
+               'position_error.png': 'Absolute position error',
+               'reference_trajectory.png': 'Reference and driven trajectory',
+               'pose_increment_disagreement.png': 'Localization/odometry consistency',
+               'smoothness_oscillations.png': 'Smoothness residuals over driven progress'}
 
 
 def report_context(metadata, metrics):
@@ -699,7 +891,22 @@ def report_context(metadata, metrics):
             'flow': flow, 'roles': roles, 'producers': producers}
 
 
-def write_outputs(root, metrics, metadata, selected, aligned, valid, track, reference, residuals):
+def report_metric_table(items, names=None):
+    """Human Markdown view; structured values remain unchanged in metrics.json."""
+    names = names or list(items)
+    report = '| Metric [unit] | Result | Evidence | Coverage |\n| --- | --- | --- | --- |\n'
+    for name in names:
+        metric = items[name]
+        coverage_text = ('{:.1f}%'.format(100*metric['coverage'])
+                         if metric.get('coverage') is not None else 'Not quantified')
+        evidence_text = EVIDENCE_LABELS.get(metric['evidence'], metric['evidence'].replace('_', ' '))
+        report += '| {} [{}] | {} | {} | {} |\n'.format(
+            METRIC_LABELS.get(name, name.replace('_', ' ').title()), metric['unit'],
+            human_result(name, metric).replace('|', '/'), evidence_text, coverage_text)
+    return report + '\n'
+
+
+def write_outputs(root, metrics, metadata, selected, aligned, valid, track, reference, residuals, oscillation_traces):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -743,50 +950,137 @@ def write_outputs(root, metrics, metadata, selected, aligned, valid, track, refe
         xy('reference_trajectory.png', 'Static reference and vehicle trajectory', [(reference, 'Static reference'), (track[:, 1:3], 'GT' if metrics['platform'] == 'sim' else 'Estimated pose (proxy)')])
     if len(residuals) and np.any(np.isfinite(residuals[:, 1])):
         line('pose_increment_disagreement.png', 'Localization / odometry motion consistency', residuals[:, 0], residuals[:, 1], 'Body-relative increment disagreement [m]')
-    for name in ('trajectory_xy.png', 'position_error.png', 'reference_trajectory.png', 'pose_increment_disagreement.png'):
+    plotted = [(name, trace) for name, trace in oscillation_traces.items() if len(trace)]
+    if plotted:
+        fig, axes = plt.subplots(len(plotted), 1, sharex=True, figsize=(7, 2.2*len(plotted)))
+        axes = np.atleast_1d(axes)
+        for ax, (name, trace) in zip(axes, plotted):
+            metric = metrics['vehicle']['smoothness'][name]
+            ax.plot(trace[:, 0], trace[:, 3], linewidth=1)
+            ax.axhline(0, color='black', linewidth=.6)
+            ax.set(ylabel='Residual [{}]'.format(metric['unit']), title=METRIC_LABELS[name])
+        axes[-1].set_xlabel('Raw-odometry driven progress [m]')
+        fig.suptitle('Short-scale smoothness residuals after local linear trend removal')
+        save(fig, 'smoothness_oscillations.png')
+    for name in ('trajectory_xy.png', 'position_error.png', 'reference_trajectory.png',
+                 'pose_increment_disagreement.png', 'smoothness_oscillations.png'):
         if name not in generated and (plots / name).exists():
             (plots / name).unlink()
     metrics['plots'] = generated
     context = report_context(metadata, metrics)
+    position_metric = metrics['localization']['accuracy']['position_error_m']
+    position_p95 = ('{:.4g} m'.format(position_metric['value']['p95'])
+                    if position_metric['status'] == 'AVAILABLE' else position_metric['status'])
     report = '# Evaluation scorecard — {}\n\n## 1. Summary\n\n'.format(metrics['title'])
     report += '{} run, {:.3f} s evaluation; analysis **{}**, recording **{}**. '.format(metrics['platform'], metrics['interval']['duration_sec'], metrics['analysis_status'], metrics['recording_status'])
-    report += 'Analysis status describes data validity, not performance acceptance. Command-based diagnostics are labelled; unavailable physical measurements are not filled with zeros.\n\n'
-    report += 'Completed: {}. Localization availability: {}%. Observed pose jumps: {}.\n\n'.format(
+    report += 'The scorecard confirms whether recorded evidence was valid; it does not apply performance acceptance thresholds.\n\n'
+    report += ('Run completed: **{}**. Localization availability: **{}%**. Observed pose jumps: **{}**. '
+               'Absolute position-error P95: **{}**. All four spatial oscillation metrics were **{}**.\n\n').format(
         display(metrics['vehicle']['robustness']['completed']),
         display(metrics['localization']['availability']['availability_percent']),
-        display(metrics['localization']['continuity']['pose_jump_count']))
+        display(metrics['localization']['continuity']['pose_jump_count']),
+        position_p95,
+        'AVAILABLE' if all(m['status'] == 'AVAILABLE' for m in metrics['vehicle']['smoothness'].values())
+        else 'partially available')
+    report += ('The numbers describe this bounded run only. They do not by themselves prove controller quality, '
+               'long-run robustness, onboard equivalence, or causal performance improvement.\n\n')
     report += '## 2. What this run tested\n\n'+context['purpose']+'\n\n'
     if metrics['description'] and metrics['description'] != context['purpose']:
         report += metrics['description']+'\n\n'
-    report += '## 3. How the run was executed\n\n'
+    report += '## 3. How this experiment produces the scorecard\n\n'
+    report += ('The live closed loop was Gym simulator → scan/raw odometry → particle filter → estimated map pose → '
+               'existing planning-and-control stack → final drive command → Gym simulator. During the bounded evaluation '
+               'interval, selected semantic ROS signals were recorded to rosbag. Simulator ground truth was recorded on a '
+               'validation-only branch and never fed to PF or control.\n\n')
+    report += ('```mermaid\nflowchart LR\n'
+               '  SIM["Gym simulator"] -->|"scan and raw odometry"| PF["Particle filter"]\n'
+               '  PF -->|"estimated map pose"| PNC["Existing PnC stack"]\n'
+               '  PNC -->|"final drive command"| SIM\n'
+               '  SIM -->|"validation-only GT"| BAG["Recorded rosbag"]\n'
+               '  PF --> BAG\n'
+               '  PNC --> BAG\n'
+               '  META["Run metadata"] --> ANALYZER["Offline analyzer after shutdown"]\n'
+               '  BAG --> ANALYZER\n'
+               '  ANALYZER --> OUTPUTS["metrics.json, report.md, plots"]\n'
+               '```\n\n')
+    report += ('After shutdown, the offline analyzer validates declared topic types, frames, timestamps, and coverage; aligns '
+               'compatible evidence; then derives localization and vehicle metrics. The analyzer never publishes into the '
+               'live graph and cannot influence localization or control.\n\n')
     report += '| Item | Recorded context |\n| --- | --- |\n'
     report += '| Platform | `{}` |\n'.format(metrics['platform'])
     report += '| Scenario / map | `{}` |\n'.format(context['scenario'].replace('|', '/'))
     report += '| Evaluation window | {:.3f} s |\n'.format(metrics['interval']['duration_sec'])
     report += '| Localization initialization | {} |\n'.format(context['initialization'])
-    report += '| Execution flow / stack | {} |\n'.format(context['flow'].replace('|', '/'))
+    report += '| Launched stack | {} |\n'.format(context['flow'].replace('|', '/'))
     report += '| Recorded semantic signals | {} |\n\n'.format('<br>'.join(context['roles']) if context['roles'] else 'Not recorded')
-    report += ('The report was produced by {}. The analyzer ran offline after the recorded interval; '
-               'its outputs did not feed localization or control.\n\n').format(', '.join(context['producers']))
-    for number, section in ((4, 'localization'), (5, 'vehicle')):
+    report += 'The run and report were produced by {}.\n\n'.format(', '.join(context['producers']))
+    report += ('## 4. How to read the results\n\n'
+               '| Term | Meaning in this report |\n| --- | --- |\n'
+               '| p50 | Median: the middle evaluated value; a useful typical level. |\n'
+               '| p95 | 95% of evaluated values are at or below this level. |\n'
+               '| RMS | Root-mean-square magnitude; used here as typical oscillation amplitude. |\n'
+               '| max | Largest observed value in the supported evidence. |\n'
+               '| Coverage | Fraction of the relevant evaluation evidence valid enough to support the metric. |\n'
+               '| `AVAILABLE` | Declared evidence supports the result. |\n'
+               '| `NOT_APPLICABLE` | The metric is not meaningful for this evidence design. |\n'
+               '| `UNAVAILABLE_DATA` | The metric is meaningful, but required evidence is missing or insufficient. |\n'
+               '| `ANALYSIS_ERROR` | A declared input exists but violates its expected data, frame, or time contract. |\n\n'
+               '| Evidence term | Meaning |\n| --- | --- |\n'
+               '| Estimated map pose | PF estimate of vehicle position and heading in the global map frame. |\n'
+               '| Ground truth (GT) | Simulator internal true pose, recorded only for independent evaluation. |\n'
+               '| Raw odometry | Local motion/pose input used by PF; it can drift and is not absolute truth. |\n'
+               '| Vehicle body frame | Coordinates fixed to the car: x is forward and angular z is yaw rate. |\n'
+               '| Station / driven progress | Cumulative distance along the raw-odometry trajectory actually driven; it is a spatial coordinate, not publication time. |\n'
+               '| Local trend | Slowly varying behavior estimated from a neighborhood around a station. |\n'
+               '| Oscillation residual | Evaluated signal minus its local trend; shorter-scale variation around the intended maneuver. |\n\n')
+    for number, section in ((5, 'localization'), (6, 'vehicle')):
         report += '## {}. {} results\n\n'.format(number, section.title())
         for group, items in metrics[section].items():
-            report += '### ' + group.title() + '\n\n| Metric [unit] | Result | Evidence |\n| --- | --- | --- |\n'
-            for name, metric in items.items():
-                report += '| {} [{}] | {} | {} |\n'.format(name, metric['unit'], display(metric).replace('|', '/'), metric['evidence'])
-            report += '\n'
-    report += '## 6. Data quality and limitations\n\n'
-    report += 'Aligned absolute-accuracy samples: {}/{}. See `metrics.json` for coverage, effective thresholds, methods and provenance.\n\n'.format(metrics['data_quality']['aligned_samples'], len(selected))
+            report += '### ' + GROUP_LABELS.get(group, group.replace('_', ' ').title()) + '\n\n'
+            if section == 'vehicle' and group == 'smoothness':
+                report += ('Smoothness asks whether commands and vehicle response contain short-scale wiggle or chatter around an intended maneuver. '
+                           'The analyzer associates each recorded sample with station, resamples it on a uniform spatial grid, estimates a slowly varying '
+                           'local linear trend, and computes **oscillation residual = signal − local trend**. Removing the trend prevents normal acceleration, '
+                           'braking, and steering through corners from automatically counting as vibration.\n\n')
+                report += ('The {:.2f} m station spacing evaluates the signal about every {:.0f} cm of driven progress. The {:.2f} m trend window estimates '
+                           'intended behavior from roughly a one-metre neighborhood. Gaps above {:.2f} m are not bridged. RMS is typical residual amplitude; '
+                           'P95 absolute is the level below which 95% of absolute residuals fall. Lower values generally mean less short-scale chatter, but '
+                           'do not alone prove better tracking, faster driving, or better control.\n\n').format(
+                               metrics['settings']['oscillation_station_step_m'],
+                               metrics['settings']['oscillation_station_step_m']*100,
+                               metrics['settings']['oscillation_trend_window_m'],
+                               metrics['settings']['oscillation_max_interpolation_gap_m'])
+                report += '#### Command behavior\n\nThese rows describe what the final controller output requested.\n\n'
+                report += report_metric_table(items, ['speed_command_oscillation', 'steering_command_oscillation'])
+                report += '#### Vehicle response\n\nThese rows describe simulated vehicle motion in the vehicle body frame.\n\n'
+                report += report_metric_table(items, ['forward_speed_oscillation', 'yaw_rate_oscillation'])
+                continue
+            if section == 'vehicle' and group == 'dynamics_diagnostics' and all(
+                    metric['status'] == 'UNAVAILABLE_DATA' for metric in items.values()):
+                report += ('Longitudinal acceleration, longitudinal jerk, and lateral acceleration are all `UNAVAILABLE_DATA`. '
+                           'They require qualified physical source timing, while the legacy simulator publications use wall-clock stamps. '
+                           'They remain in `metrics.json` as secondary diagnostics and are not fabricated from unqualified timing.\n\n')
+                continue
+            report += GROUP_EXPLANATIONS.get((section, group), '') + '\n\n'
+            report += report_metric_table(items)
+    report += '## 7. Data quality, conclusions, and limitations\n\n'
+    report += 'Aligned absolute-accuracy samples: {}/{}. See `metrics.json` for effective thresholds, methods, complete structured values, and provenance.\n\n'.format(metrics['data_quality']['aligned_samples'], len(selected))
+    report += ('**Supported:** the recorded bounded run completed, the stated signals covered the reported intervals, and the displayed measurements were '
+               'derived under their declared evidence contracts. **Not supported:** performance acceptance, controller causality, long-run racing robustness, '
+               'or equivalence to future onboard evidence.\n\n')
     report += ''.join('- '+v+'\n' for v in metrics['limitations'])
     report += ''.join('- ANALYSIS_ERROR: '+k+': '+v+'\n' for k, v in metrics['data_quality']['errors'].items())
-    report += ('\n## 7. Reproduction and source references\n\n'
+    report += ('\n## 8. Reproduction and source references\n\n'
                '- [RoboRacer operational command reference](../../../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) '
                'contains the maintained recording, analysis, and comparison commands.\n'
                '- [Localization simulation and shared evaluation](../../../docs/LOCALIZATION_SIMULATION.md) '
                'defines the workflow, semantic signals, metric meanings, and evidence limits.\n'
                '- [Development environment](../../../docs/DEVELOPMENT_ENVIRONMENT.md) identifies the canonical ROS 2 Foxy container and workspace.\n\n')
-    report += '## 8. Deliverables and plots\n\n`metrics.json` contains machine-readable results; `metadata.yaml`, `config/` and `rosbag/` retain run evidence. Plots are in `plots/` next to this report.\n\n'
-    report += ''.join('![{}](plots/{})\n\n'.format(name.replace('_', ' '), name) for name in generated)
+    report += '## 9. Deliverables and plots\n\n`metrics.json` contains machine-readable results; `metadata.yaml`, `config/` and `rosbag/` retain run evidence. Plots are in `plots/` next to this report.\n\n'
+    for name in generated:
+        report += '### {}\n\n{}\n\n![{}](plots/{})\n\n'.format(
+            PLOT_TITLES.get(name, name.replace('_', ' ').title()), PLOT_CAPTIONS.get(name, ''),
+            PLOT_TITLES.get(name, name.replace('_', ' ')), name)
     (root / 'metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True, allow_nan=False)+'\n')
     (root / 'report.md').write_text(report)
 

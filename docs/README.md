@@ -30,9 +30,9 @@ These artifact classes have different lifetimes:
 | Preserved run artifacts | Git-ignored `oudtra_driver_bringup/runs/<descriptive-run-id>/`; raw bag, metadata, generated scorecard, JSON, plots, logs, and copied configuration |
 | Temporary engineering handoff | Repository-root `PHASE*_CODEX_REPORT.md`; task evidence that remains uncommitted unless explicitly promoted |
 
-The canonical local example is
-`oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/`.
-When present locally, open its [human scorecard](../oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/report.md)
+The current local simulation example is
+`oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/`.
+When present locally, open its [human scorecard](../oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/report.md)
 and adjacent `metrics.json`. See [artifact discovery and regeneration](LOCALIZATION_SIMULATION.md#4-preserved-run-artifacts-and-deliverables)
 for host/container paths, directory contents, and reanalysis commands. Bags and
 generated datasets are not committed merely to make them discoverable.

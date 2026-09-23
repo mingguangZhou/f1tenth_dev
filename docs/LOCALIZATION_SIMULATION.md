@@ -156,14 +156,15 @@ Container: /sim_ws/src/oudtra_driver_bringup/runs/<run-id>/
 Host:      /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<run-id>/
 ```
 
-Use a descriptive run ID such as `ifac_pf_closed_loop_localization_baseline_20260918T120000Z`; do not use a numeric-only directory name. For the validated baseline, open these files on the dev laptop:
+Use a descriptive run ID such as `ifac_pf_closed_loop_localization_baseline_20260918T120000Z`; do not use a numeric-only directory name. For the current validated simulation example, open these files on the dev laptop:
 
 ```text
-/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/report.md
-/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/metrics.json
-/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/trajectory_xy.png
-/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/position_error.png
-/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/plots/reference_trajectory.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/report.md
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/metrics.json
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/plots/trajectory_xy.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/plots/position_error.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/plots/reference_trajectory.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/plots/smoothness_oscillations.png
 ```
 
 `report.md` is the human summary, `metrics.json` is the machine-readable result,
@@ -193,7 +194,7 @@ mapping, independent of control tuning. Record only this explicit list:
 | Source-timed estimated pose | `/tf` | Analyze only `map -> ego_racecar/base_link`; identical PF pose stamped with input odometry time. |
 | Localization health | `/pf/health` | Element 0: 1 GOOD, 2 DEGRADED, 3 INVALID; unstamped, bag receive time only. |
 | Simulator truth/collision | `/simulator/agent_status` | `simulator/ego` true map/base XY/yaw and collision flag from Gym state. |
-| Raw odometry | `/ego_racecar/odom` | PF input in its local odometry frame, not map GT. |
+| Raw odometry | `/ego_racecar/odom` | PF input in its local odometry frame, not map GT; its body-twist `linear.x` and `angular.z` supply simulated forward-speed and yaw-rate evidence. |
 | Static reference | `/raceline_path` | Recorded map-frame raceline; reliable/transient-local QoS. |
 | Final command | `/drive` | Final speed/steering commanded into simulator. |
 | Safety state | `/reactive_control_v2/lower_safety_status` | Exact `mode` value, including `EMERGENCY_STOP`. |
@@ -303,6 +304,21 @@ settings are written to every output. Existing bag `analysis` values override
 package defaults; `--analysis-config <yaml>` overrides those; explicit timing CLI
 options override the file. Thresholds define diagnostics only, not PF/PnC tuning.
 
+Localization-specific terminology used by the scorecard:
+
+| Term | Definition |
+| --- | --- |
+| Estimated map pose | PF estimate of vehicle position and heading in the global map frame. |
+| Simulator ground truth (GT) | Gym's internal true vehicle pose, exposed only as passive evaluation evidence. |
+| Raw odometry | Local motion/pose input to PF; it can drift and is not absolute truth. |
+| Body frame | Coordinates fixed to the vehicle: x is forward and angular z is yaw rate. |
+| Accuracy | Estimated global pose compared with independent GT. |
+| Consistency | Agreement between PF and odometry motion; correlated evidence, not truth error. |
+| Station / driven progress | Cumulative distance along the raw-odometry trajectory actually driven. It is a spatial coordinate, not publication time or raceline index. |
+| Local trend | Slowly varying signal behavior fitted from the configured distance neighborhood. |
+| Oscillation residual | Station-sampled signal minus its local trend. |
+| Coverage | Fraction of relevant evidence that satisfied the metric's support and validity rules. |
+
 The evaluation window is `[RUNNING, EVALUATION_END)`, excluding startup and shutdown.
 Legacy wall and monotonic durations must agree within 0.05 s. Cleanup-only unstamped
 zero commands outside this interval and its 0.20 s freshness history are excluded.
@@ -316,21 +332,40 @@ An unstamped command inside that interval is malformed, not silently retimestamp
 | Localization / Consistency | Relative SE(2) pose increments over 0.50 s windows every 0.10 s, rotated into each source's starting body frame. Translation residual [m] and wrapped yaw residual [rad] p50/p95/max; no interpolation across gaps >0.20 s. Event threshold: 0.30 m or 0.25 rad; count observed entries separately from initial/after-gap exceedances. |
 | Vehicle / Robustness | Declared completion, collision observed (not impact count), emergency entries/active-at-start/uncertain entries. Narrow commanded-motion stall: autonomous state, non-emergency, abs(command speed) >=0.50 m/s and abs(vehicle speed) <=0.10 m/s continuously >=2 s. Each input must be <=0.20 s old. Duration includes the initial qualifying 2 s. This cannot detect an unintended zero command without an intent signal. |
 | Vehicle / Tracking | Distance to static reference segments [m] and absolute heading-to-segment-tangent [rad], p50/p95/max. Exclude degenerate segments and ambiguous tied headings. Changing reference is an error. Static reference deviation includes intentional obstacle avoidance. |
-| Vehicle / Smoothness | Command steering-rate magnitude [rad/s], p50/p95/max: adjacent angle difference / source dt, 0.01 <=dt<=0.20 s. This is command smoothness, not actuator response. Qualified physical velocity supports windowed acceleration/jerk below. |
+| Vehicle / Smoothness | Four distance-domain oscillation metrics: final speed command [m/s], final steering command [rad], vehicle forward speed [m/s], and vehicle yaw rate [rad/s]. Each reports RMS residual and P95 absolute residual around a local linear trend. Command rows describe requested behavior; vehicle-state rows describe simulated/measured response. Lower generally means less short-scale variation, without defining a performance threshold. |
 | Vehicle / Pace | Sum trajectory segment lengths [m], with interpolated window endpoints and complete bounded-gap coverage; distance / elapsed evaluation seconds [m/s]. GT in sim, local odometry proxy onboard; no lap/sector timing yet. |
 
-Physical smoothness uses a centered quadratic fit `v(t+u)=c0+c1*u+c2*u²` over
-0.50 s windows on a 0.10 s grid: longitudinal acceleration = c1 [m/s²], jerk =
-2*c2 [m/s³]. At least five unique samples, support >=0.40 s spanning both halves,
-no gaps >0.10 s, and windows wholly inside evaluation are required. Lateral
-acceleration is `d(v_y)/dt + v_x*r` [m/s²], using the same fit and measured body
-lateral velocity. Quantiles use magnitudes (acceleration p50/p95/max, jerk p95/max).
-These are windowed peaks, not impact peaks; no slip-free substitute is silently used.
+Smoothness first computes cumulative distance along the raw-odometry trajectory,
+which provides the common sim/onboard driven-progress coordinate without using GT.
+Each semantic signal is linearly resampled on a uniform 0.10 m station grid; raw
+station gaps above 0.50 m remain unknown. At every supported station, a least-squares
+local linear trend is fitted over a 1.00 m window. The signal minus that trend is the
+oscillation residual. RMS describes typical residual amplitude; P95 means 95% of
+absolute residuals are below that value. Coverage is the supported residual-grid
+fraction of the driven interval. The method is deterministic for irregular source
+sampling and does not use time derivatives or count chatter while the vehicle is
+stationary. Settings are analysis-only and do not tune controllers.
+
+Current simulation evidence maps final `/drive` speed and steering angle to the two
+command metrics, and `/ego_racecar/odom` body-twist `linear.x` and `angular.z` to
+forward-speed and yaw-rate metrics. The semantic roles allow future onboard mappings
+to final Ackermann command, VESC-derived speed, and measured IMU yaw rate without
+changing metric meaning. That onboard adapter is not implemented here.
+
+Physical acceleration, jerk, and lateral acceleration remain secondary diagnostics.
+When qualified evidence exists, they use a centered quadratic fit
+`v(t+u)=c0+c1*u+c2*u²` over 0.50 s windows on a 0.10 s time grid: longitudinal
+acceleration = c1 [m/s²], jerk = 2*c2 [m/s³], and lateral acceleration is
+`d(v_y)/dt + v_x*r` [m/s²]. At least five unique samples, support >=0.40 s spanning
+both halves, no gaps >0.10 s, and windows wholly inside evaluation are required.
+They remain unavailable when timing or body-state evidence is insufficient; no
+slip-free or wall-time substitute is silently used.
 
 The legacy simulator advances fixed physics steps but stamps publications with wall
 time. Therefore physical acceleration/jerk and lateral dynamics are **unavailable**
 on this baseline. `/drive` acceleration/jerk/rate fields are unset zeros, not
-measurements. Command steering and commanded-motion stall metrics remain usable.
+measurements. The distance-domain command and body-twist oscillation metrics remain
+usable, as does the commanded-motion stall metric.
 Noisy or sparse data is rejected by support/gap rules; no missing interval is filled
 with invented zero motion. Pose/odometry consistency is correlated evidence because
 localization may consume the same odometry.
@@ -376,13 +411,18 @@ this step provides no onboard recorder or unverified vehicle launch command.
 ### 5.6 Plots and validation artifacts
 
 Keep GT/estimate XY and absolute-error time plots when GT exists, static-reference
-XY when reference exists, and one pose-increment disagreement time plot when supported.
+XY when reference exists, one pose-increment disagreement time plot when supported,
+and one four-panel smoothness-residual plot over driven progress when any headline
+oscillation metric is available.
 Onboard XY is labelled estimated pose; no absolute-error plot is fabricated.
-All XY plots use equal scaling; time axes are elapsed evaluation seconds.
+All XY plots use equal scaling; time axes are elapsed evaluation seconds. The
+smoothness plot shows residuals only: each evaluated signal minus its fitted local
+trend. Zero follows the local trend; excursions show shorter-scale variation. Raw
+signals and fitted trends are used by the analyzer but are not drawn.
 
 Current host deliverables:
 
-- Simulation: `oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_final/`.
+- Current simulation smoothness baseline: `oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/`.
 - **Synthetic, not onboard measurements:** `oudtra_driver_bringup/runs/synthetic_onboard_no_gt_contract_fixture/`.
 - Schema/evidence comparison demonstration: `oudtra_driver_bringup/runs/sim_vs_synthetic_onboard_contract_comparison/`.
 

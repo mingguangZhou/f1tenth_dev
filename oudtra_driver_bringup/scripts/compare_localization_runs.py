@@ -6,6 +6,13 @@ import math
 import os
 from pathlib import Path
 
+GROUP_LABELS = {'dynamics_diagnostics': 'Secondary dynamics diagnostics'}
+METRIC_LABELS = {
+    'speed_command_oscillation': 'Speed-command oscillation',
+    'steering_command_oscillation': 'Steering-command oscillation',
+    'forward_speed_oscillation': 'Forward-speed oscillation',
+    'yaw_rate_oscillation': 'Yaw-rate oscillation'}
+
 
 def flatten(report):
     return {'.'.join((section, group, name)): metric
@@ -104,14 +111,16 @@ def compare(left_root, right_root, output):
         report += '\n## {}. {} comparison\n\n'.format(number, section.title())
         groups = sorted({name.split('.')[1] for name in rows if name.startswith(section+'.')})
         for group in groups:
-            report += '### '+group.title()+'\n\n'
+            report += '### '+GROUP_LABELS.get(group, group.replace('_', ' ').title())+'\n\n'
             report += '| Metric | Left | Right | Delta (right - left) | Metric-specific limit |\n| --- | --- | --- | --- | --- |\n'
             for name, row in rows.items():
                 if not name.startswith(section+'.'+group+'.'):
                     continue
                 local = [reason for reason in row['reasons'] if reason not in shared_reasons]
                 limit = '; '.join(local) or ('See global assessment' if shared_reasons else 'Comparable')
-                report += '| {} | {} | {} | {} | {} |\n'.format(name.split('.')[-1], value(row['left']), value(row['right']),
+                metric_name = name.split('.')[-1]
+                report += '| {} | {} | {} | {} | {} |\n'.format(
+                    METRIC_LABELS.get(metric_name, metric_name.replace('_', ' ').title()), value(row['left']), value(row['right']),
                     json.dumps(row['delta_right_minus_left']) if row['delta_right_minus_left'] is not None else 'N/A', limit)
             report += '\n'
     report += ('## 6. Interpretation limitations\n\n'

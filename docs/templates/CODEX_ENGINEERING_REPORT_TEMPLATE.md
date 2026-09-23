@@ -2,28 +2,40 @@
 
 <!-- Task reports are temporary/uncommitted unless explicitly requested otherwise.
      Scale detail to the task; remove these instructions and optional sections
-     that add no value. Do not paste large logs or unrelated diffs. -->
+     that add no value. Do not paste large logs or unrelated diffs.
+
+     Write in three layers: (1) quick purpose/outcome/findings/limits, (2) system,
+     evidence flow, mechanism and necessary terms, then (3) exact evidence,
+     validation, provenance and reproduction links. A normal experiment/validation
+     report is usually about 1,000–2,000 words excluding tables/code/captions, but
+     correctness and interpretability take priority. -->
 
 ## 1. Summary
 
 <Concise overview: objective, outcome, key decisions, and material limits. For fixes,
 state the symptom, evidenced root cause, correction, and verified completion status.>
 
-## 2. Objective
+## 2. Objective and non-goals
 
 <Problem, intended observable outcome, and acceptance criteria.>
 
-## 3. Non-goals
-
 <Behavior and subsystems intentionally outside this task.>
 
-## 4. Existing behavior
+## 3. System / experiment and evidence flow
+
+<What was exercised; relevant data/control flow; what evidence was collected; and
+how it produced the result. Define only terms needed by the reader. Link maintained
+commands, formal definitions, source, logs, and machine artifacts instead of copying
+them. Add a compact diagram only when it clarifies relationships.>
+
+## 4. Existing behavior / observations
 
 <Relevant implementation/contracts inspected and the gap being addressed.>
 
-## 5. Engineering decision
+## 5. Engineering decision / mechanism
 
-<Minimal chosen change, existing mechanisms reused, and material tradeoffs.>
+<Minimal chosen change, existing mechanisms reused, high-level operation, how to
+interpret its outputs, and material tradeoffs.>
 
 ## 6. Debugging and fix closure (when applicable)
 
@@ -49,12 +61,12 @@ Do not mark a fix done merely because code was edited.>
 <Resulting contract, defaults, inputs/outputs, and operational commands when relevant.
 Link to permanent documentation rather than duplicating it.>
 
-## 9. Diagram / data flow (optional)
+## 9. Diagram / data flow (optional; omit if covered above)
 
 <Link to an existing diagram or include Mermaid when it clarifies relationships,
 ownership, or boundaries. Label current versus proposed behavior.>
 
-## 10. Validation
+## 10. Detailed evidence and validation
 
 Environment: <branch, starting HEAD, relevant container/image/platform and scenario>.
 
@@ -62,8 +74,9 @@ Environment: <branch, starting HEAD, relevant container/image/platform and scena
 | --- | --- | --- |
 | <build/test/runtime check> | <pass/fail/not run> | <observations; reason if omitted> |
 
-<Include relevant failures and warnings, actual message checks or measurements,
-sampling conditions, and cleanup. Distinguish evidence from inference.>
+<Include exact results, relevant failures/warnings, measurements, sampling conditions,
+plots or artifact links, and cleanup. Explain larger/smaller values where applicable.
+Distinguish verified evidence from inference.>
 
 ## 11. Limitations / follow-up
 

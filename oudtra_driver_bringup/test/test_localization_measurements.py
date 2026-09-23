@@ -128,18 +128,45 @@ def test_real_cdr_run_metrics_and_reanalysis_are_deterministic(tmp_path):
     assert result['vehicle']['pace']['mean_elapsed_time_speed_mps']['value'] == pytest.approx(1)
     assert result['vehicle']['robustness']['emergency_stops']['value']['observed_entries'] == 1
     assert result['vehicle']['robustness']['collision_observed']['value'] is False
+    for name in ('speed_command_oscillation', 'steering_command_oscillation',
+                 'forward_speed_oscillation', 'yaw_rate_oscillation'):
+        metric = result['vehicle']['smoothness'][name]
+        assert metric['status'] == 'AVAILABLE'
+        assert metric['value']['rms'] == pytest.approx(0, abs=1e-12)
+        assert metric['value']['p95_absolute'] == pytest.approx(0, abs=1e-12)
     first = [(root / name).read_bytes() for name in ('metrics.json', 'report.md')]
     report = first[1].decode()
     assert '## 2. What this run tested' in report
-    assert '## 3. How the run was executed' in report
-    assert '## 4. Localization results' in report
-    assert '## 5. Vehicle results' in report
-    assert '## 7. Reproduction and source references' in report
+    assert '## 3. How this experiment produces the scorecard' in report
+    assert 'Gym simulator' in report and 'Offline analyzer after shutdown' in report
+    assert 'never publishes into the live graph' in report
+    assert '## 4. How to read the results' in report
+    for term in ('p50', 'p95', 'RMS', 'Coverage', '`AVAILABLE`', '`NOT_APPLICABLE`',
+                 '`UNAVAILABLE_DATA`', '`ANALYSIS_ERROR`', 'Station / driven progress',
+                 'Vehicle body frame', 'Ground truth (GT)'):
+        assert term in report
+    assert '## 5. Localization results' in report
+    assert '## 6. Vehicle results' in report
+    assert '## 8. Reproduction and source references' in report
+    assert '## 9. Deliverables and plots' in report
     assert '`estimated_pose`' in report and '`/pf/pose/odom`' in report
     assert '../../../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md' in report
+    assert 'Accuracy' in report and 'estimated global pose to independent simulator truth' in report
+    assert 'Consistency' in report and 'it is not absolute accuracy' in report
+    assert 'oscillation residual = signal − local trend' in report
+    assert 'about every 10 cm' in report and 'one-metre neighborhood' in report
+    assert '#### Command behavior' in report and '#### Vehicle response' in report
+    assert 'Speed-command oscillation' in report and 'Forward-speed oscillation' in report
+    assert 'Final drive speed command' in report and 'Simulated yaw rate in the vehicle body frame' in report
+    assert 'GOOD: 1.00 s' in report and 'DEGRADED: 0.00 s' in report
+    assert 'Emergency observed: Yes' in report and 'Observed episodes: 0' in report
+    assert 'duration_sec={' not in report and 'observed_entries={' not in report
+    assert 'Longitudinal acceleration [m/s²]' not in report
+    assert 'all `UNAVAILABLE_DATA`' in report
+    assert 'Each panel shows only the oscillation residual' in report
     A.analyze(root)
     assert first == [(root / name).read_bytes() for name in ('metrics.json', 'report.md')]
-    assert len(list((root / 'plots').glob('*.png'))) == 4
+    assert len(list((root / 'plots').glob('*.png'))) == 5
     assert json.loads(first[0])['analysis_status'] == 'PASS'
 
 
@@ -177,7 +204,7 @@ def test_no_gt_onboard_and_no_tf_are_valid(tmp_path):
     assert result['localization']['accuracy']['position_error_m']['status'] == 'NOT_APPLICABLE'
     assert result['vehicle']['pace']['distance_travelled_m']['value'] == pytest.approx(1)
     assert result['vehicle']['tracking']['static_reference_deviation_m']['status'] == 'AVAILABLE'
-    assert result['vehicle']['smoothness']['longitudinal_jerk_mps3']['status'] == 'UNAVAILABLE_DATA'
+    assert result['vehicle']['dynamics_diagnostics']['longitudinal_jerk_mps3']['status'] == 'UNAVAILABLE_DATA'
     assert not (root / 'plots/position_error.png').exists()
 
 
@@ -188,7 +215,7 @@ def test_shared_topic_and_physical_state_adapter(tmp_path):
                                          velocity_frame='body', lateral_velocity_observed=True)
     edit_metadata(root, change)
     result = A.analyze(root)
-    assert result['vehicle']['smoothness']['longitudinal_acceleration_mps2']['value']['max'] == 0
+    assert result['vehicle']['dynamics_diagnostics']['longitudinal_acceleration_mps2']['value']['max'] == 0
     assert result['data_quality']['message_counts']['vehicle_state'] == result['data_quality']['message_counts']['raw_odometry']
 
 
@@ -197,7 +224,7 @@ def test_malformed_optional_signal_marks_analysis_error(tmp_path):
     edit_metadata(root, lambda m: m['roles']['command'].update(type='std_msgs/msg/Float32'))
     result = A.analyze(root)
     assert result['analysis_status'] == 'FAIL'
-    assert result['vehicle']['smoothness']['command_steering_rate_radps']['status'] == 'ANALYSIS_ERROR'
+    assert result['vehicle']['smoothness']['steering_command_oscillation']['status'] == 'ANALYSIS_ERROR'
     assert result['localization']['accuracy']['position_error_m']['status'] == 'AVAILABLE'
 
 
@@ -207,7 +234,7 @@ def test_invalid_cdr_is_not_missing_data(tmp_path):
     with sqlite3.connect(str(root / 'rosbag/fixture.db3')) as db:
         db.execute("UPDATE messages SET data=? WHERE topic_id IN (SELECT id FROM topics WHERE name='/drive')", (b'broken',))
     result = A.analyze(root)
-    assert result['vehicle']['smoothness']['command_steering_rate_radps']['status'] == 'ANALYSIS_ERROR'
+    assert result['vehicle']['smoothness']['steering_command_oscillation']['status'] == 'ANALYSIS_ERROR'
 
 
 def test_unknown_health_is_error_not_healthy(tmp_path):
@@ -245,6 +272,57 @@ def test_windowed_acceleration_jerk_and_lateral_units():
     assert result[:, 2] == pytest.approx(np.full(len(result), 8.))
     assert result[:, 3] == pytest.approx(.5 + .2*(2+3*result[:, 0]+4*result[:, 0]**2))
     assert not len(A.windowed_dynamics(state[::10], 3, settings()))
+
+
+def oscillation_fixture(function, irregular=False):
+    config = settings()
+    config.update(oscillation_station_step_m=.02,
+                  oscillation_trend_window_m=1.,
+                  oscillation_max_interpolation_gap_m=.50)
+    progress_time = np.linspace(0, 4, 401)
+    progress = np.column_stack((progress_time, progress_time))
+    stations = (np.array([0., .03, .09, .16, .27, .39, .54, .71, .93, 1.18,
+                          1.47, 1.79, 2.14, 2.52, 2.91, 3.25, 3.53, 3.75, 3.9, 4.])
+                if irregular else np.linspace(0, 4, 201))
+    signal = np.column_stack((stations, function(stations)))
+    return A.station_oscillation(signal, 1, progress, config)
+
+
+def test_station_oscillation_constant_and_smooth_trend_are_negligible():
+    constant, _, coverage = oscillation_fixture(lambda station: station*0+2.)
+    trend, _, _ = oscillation_fixture(lambda station: 1.+.4*station)
+    assert coverage == pytest.approx(1)
+    assert constant['rms'] < 1e-12 and constant['p95_absolute'] < 1e-12
+    assert trend['rms'] < 1e-12 and trend['p95_absolute'] < 1e-12
+
+
+def test_short_scale_oscillation_is_clearly_larger_than_local_trend():
+    smooth, _, _ = oscillation_fixture(lambda station: 1.+.4*station)
+    oscillating, _, _ = oscillation_fixture(
+        lambda station: 1.+.4*station+.3*np.sin(2*np.pi*station/.25))
+    assert oscillating['rms'] > smooth['rms']+.15
+    assert oscillating['p95_absolute'] > smooth['p95_absolute']+.2
+
+
+def test_irregular_sampling_gives_deterministic_station_domain_result():
+    function = lambda station: 2.+.1*station+.2*np.sin(2*np.pi*station/.4)
+    first, trace_first, coverage_first = oscillation_fixture(function, irregular=True)
+    second, trace_second, coverage_second = oscillation_fixture(function, irregular=True)
+    assert first == second
+    assert trace_first == pytest.approx(trace_second)
+    assert coverage_first == coverage_second
+    assert first['rms'] > .05
+
+
+def test_station_oscillation_insufficient_evidence_is_unavailable(tmp_path):
+    import sqlite3
+    root = make_run(tmp_path)
+    with sqlite3.connect(str(root / 'rosbag/fixture.db3')) as db:
+        db.execute("DELETE FROM messages WHERE topic_id IN (SELECT id FROM topics WHERE name='/drive')")
+    result = A.analyze(root)
+    assert result['vehicle']['smoothness']['speed_command_oscillation']['status'] == 'UNAVAILABLE_DATA'
+    assert result['vehicle']['smoothness']['steering_command_oscillation']['status'] == 'UNAVAILABLE_DATA'
+    assert result['vehicle']['smoothness']['forward_speed_oscillation']['status'] == 'AVAILABLE'
 
 
 def test_reference_heading_ambiguous_segments_excluded():
@@ -300,10 +378,10 @@ def test_unstamped_cleanup_command_excluded_but_in_window_rejected(tmp_path):
     with sqlite3.connect(str(root / 'rosbag/fixture.db3')) as db:
         db.execute('INSERT INTO messages(topic_id,timestamp,data) VALUES(?,?,?)',
                    (topic, 100500000000, serialize_message(AckermannDriveStamped())))
-    assert A.analyze(root)['vehicle']['smoothness']['command_steering_rate_radps']['status'] == 'ANALYSIS_ERROR'
+    assert A.analyze(root)['vehicle']['smoothness']['steering_command_oscillation']['status'] == 'ANALYSIS_ERROR'
 
 
-def test_command_ramp_reports_rate_not_unset_rate_field(tmp_path):
+def test_command_ramp_has_negligible_station_domain_oscillation(tmp_path):
     import sqlite3
     from rclpy.serialization import deserialize_message, serialize_message
     from ackermann_msgs.msg import AckermannDriveStamped
@@ -313,8 +391,8 @@ def test_command_ramp_reports_rate_not_unset_rate_field(tmp_path):
             msg = deserialize_message(payload, AckermannDriveStamped)
             msg.drive.steering_angle = (A.stamp(msg.header)-100000000000)*1e-9*.2
             db.execute('UPDATE messages SET data=? WHERE id=?', (serialize_message(msg), ident))
-    result = A.analyze(root)['vehicle']['smoothness']['command_steering_rate_radps']
-    assert result['value']['p95'] == pytest.approx(.2, abs=1e-6)
+    result = A.analyze(root)['vehicle']['smoothness']['steering_command_oscillation']
+    assert result['value']['p95_absolute'] < 1e-7
 
 
 def test_missing_optional_reference_is_unavailable_and_stale_plot_removed(tmp_path):
@@ -331,7 +409,7 @@ def test_missing_optional_reference_is_unavailable_and_stale_plot_removed(tmp_pa
 def test_sim_wall_clock_cannot_claim_physical_derivatives(tmp_path):
     result = A.analyze(make_run(tmp_path))
     for name in ('longitudinal_acceleration_mps2', 'longitudinal_jerk_mps3', 'lateral_acceleration_mps2'):
-        assert result['vehicle']['smoothness'][name]['status'] == 'UNAVAILABLE_DATA'
+        assert result['vehicle']['dynamics_diagnostics'][name]['status'] == 'UNAVAILABLE_DATA'
 
 
 def test_cli_malformed_optional_data_returns_failure(tmp_path, monkeypatch):

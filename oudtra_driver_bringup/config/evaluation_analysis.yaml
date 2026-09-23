@@ -12,11 +12,15 @@ consistency_window_sec: 0.50
 analysis_grid_sec: 0.10
 consistency_position_threshold_m: 0.30
 consistency_yaw_threshold_rad: 0.25
+# Short-scale oscillation is measured against a local linear trend over driven
+# distance. The station grid is coarser than the IFAC raceline (~0.03 m points).
+oscillation_station_step_m: 0.10
+oscillation_trend_window_m: 1.00
+oscillation_max_interpolation_gap_m: 0.50
 # Centered quadratic velocity fit; physical source timestamps required.
 smoothness_window_sec: 0.50
 smoothness_min_span_sec: 0.40
 smoothness_max_gap_sec: 0.10
-steering_min_dt_sec: 0.01
 stall_command_mps: 0.50
 stall_speed_mps: 0.10
 stall_duration_sec: 2.0

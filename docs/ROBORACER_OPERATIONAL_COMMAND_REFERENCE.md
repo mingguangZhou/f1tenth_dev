@@ -244,6 +244,7 @@ Open the human report and plots from the host after analysis:
 /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/plots/trajectory_xy.png
 /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/plots/position_error.png
 /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/plots/reference_trajectory.png
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/plots/smoothness_oscillations.png
 ```
 
 `report.md` is the concise human scorecard; `metrics.json` is the machine result;

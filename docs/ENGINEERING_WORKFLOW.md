@@ -125,6 +125,38 @@ changes were only tested together. Mark actions **Done**, **Attempted / rejected
 or **Unresolved / deferred**, with evidence for completed fixes. Update earlier
 proposed plans to reflect final status; do not leave implemented work ambiguous.
 
+### Technical report standard
+
+Write experiment, validation, debugging, performance, integration, and subsystem
+reports in three reading layers. Combine or omit sections when that reads better.
+
+1. **Quick engineering understanding:** purpose, outcome, main findings, and the
+   limitations that materially qualify them.
+2. **Engineering mechanics:** the system or workflow exercised, relevant data/control
+   flow, how evidence became results, and only the terminology needed to interpret
+   those results.
+3. **Detailed evidence:** metric tables, exact values, plots, validation evidence,
+   provenance, and links for reproduction or deeper inspection.
+
+Where applicable, a technically literate reader should be able to answer: What was
+the purpose? What system or experiment ran? How did control and evidence flow? What
+was collected, and how were the important results derived? What do the main terms,
+numbers, and larger/smaller values mean? Which limitations affect interpretation?
+What was verified versus inferred? Where can the reader reproduce or inspect it?
+These are reader questions, not mandatory one-question-per-section headings.
+
+Keep reports self-explanatory without turning them into textbooks. Start with a
+short whole-result summary; define a term once and use it consistently; explain one
+clear mechanism instead of repeating it; use compact tables for repeated facts; and
+use diagrams only when relationships are clearer visually. Link to maintained
+commands, formal definitions, source, machine schemas, and raw logs rather than
+copying them. Omit sections that add no useful information. As a practical default,
+a normal generated experiment or validation report should usually remain around
+1,000–2,000 words, excluding tables, code blocks, and captions. This is guidance,
+not a failure threshold: use less for small work and exceed it when correct
+interpretation genuinely requires more detail. Never achieve brevity by removing
+evidence, terminology, or limitations needed to understand the result.
+
 Permanent documentation describes supported behavior, interfaces, operating commands,
 and decisions needed for maintenance. Keep it concise, operational, and close to its
 subject. Link to the source of truth rather than copying instructions between files.
