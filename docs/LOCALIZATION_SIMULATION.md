@@ -11,10 +11,11 @@ for recording, artifacts, and evaluation semantics.
 
 ## 2. Closed-loop localization workflow
 
-The opt-in localization evaluation profile starts the existing Gym simulator, PF,
-and full PnC stack, initializes PF once from the configured simulator start, and
-checks 15 seconds of autonomous motion. It fixes clock/frame integration and uses
-existing controller behavior, with simulator-GT-dependent recovery disabled.
+The opt-in localization evaluation workflow starts the existing Gym simulator, PF,
+and full PnC stack, initializes PF once from the selected simulator start, and
+checks 15 seconds of autonomous motion. The runner receives the scenario, simulator
+config, PF map, raceline and direction explicitly. A separate integration overlay
+fixes clock/frame integration and disables simulator-GT-dependent recovery.
 PASS proves short-run startup and motion, not localization accuracy or racing robustness.
 The perfect-localization and onboard defaults are unchanged. The shared offline
 scorecard also analyzes onboard data without GT; see
@@ -55,7 +56,8 @@ do not manually reset PF during the automated smoke run.
 
 ### 2.3 Interfaces and evaluation profile
 
-`oudtra_driver_bringup/config/localization_eval.yaml` is an explicit sparse overlay:
+`oudtra_driver_bringup/config/localization_eval_sim.yaml` is an explicit sparse
+simulation-integration overlay:
 
 - Wall time throughout: the current Gym bridge publishes wall timestamps, no `/clock`.
 - PF frame names have no leading slash; lower safety consumes `/pf/pose/odom`
@@ -66,14 +68,33 @@ do not manually reset PF during the automated smoke run.
 - `enable_sim_reverse_swept_gate: false`; lower safety's GT topic points to an
   unused topic. Simulator truth is used only by the passive motion observer.
 
-The existing `full_stack_sim_launch.py` accepts this file through its four
+It deliberately contains no map, raceline, start pose, or IFAC-specific path. Those
+belong to the selected track/scenario contract:
+
+| Input | Ownership |
+| --- | --- |
+| Scenario ID | Human-readable identity recorded with the run. |
+| Simulator config | Simulator map path/image extension and initial pose. |
+| PF map YAML/image | Explicit map-server input; normally the same YAML/image used by the simulator. |
+| Raceline CSV and direction | Static reference passed explicitly to PnC. |
+| PF localize config | PF base configuration; it does not override an explicit `map_yaml`. |
+| `localization_eval_sim.yaml` | Clock, frames, PF/PnC integration, PF-health gate and simulator-GT isolation. |
+
+The existing `full_stack_sim_launch.py` accepts the integration overlay through its four
 `*_platform_config` arguments. Its optional `use_sim_time` argument selects the
 raceline publisher clock; the overlay selects the other node clocks. An empty
 clock argument preserves the platform default. PF's `localize_sim_launch.py`
-accepts optional `parameter_overlay`, applied last to PF/map/lifecycle nodes;
-an empty overlay preserves the original launch defaults. The runner records
-all exact launch commands in JSON. This workflow targets the IFAC map/raceline;
-arbitrary-map support and accuracy evaluation are outside its contract.
+accepts `localize_config`, an explicit authoritative `map_yaml`, and optional
+`parameter_overlay`, applied last to PF/map/lifecycle nodes. Omitting `map_yaml`
+retains the legacy map name from the resolved runtime `localize_config`. The
+maintained runner always supplies it explicitly and records all launch arguments.
+
+Before launch, the runner parses every selected input, verifies the map image named
+by each YAML, compares simulator/PF map metadata and image hashes, and validates
+finite raceline `x`/`y` geometry. A mismatch fails before ROS processes start.
+Recorded metadata preserves paths and SHA-256 hashes for the simulator config,
+both map descriptions/images, raceline, PF config and evaluation overlay. IFAC is
+the current validated fixture; it is not a semantic requirement of the runner.
 
 ```mermaid
 flowchart TD
@@ -91,6 +112,16 @@ flowchart TD
 GT-dependent reverse swept checks are disabled only in this profile. This short
 check does not establish recovery performance, collision freedom, localization
 accuracy, or suitability for competition deployment.
+
+### 2.4 Adding a simulation track
+
+Add the track image and map YAML, generate and validate its optimized raceline, and
+create a simulator config containing the map path and start pose. Then run the same
+workflow with a new scenario ID and explicit simulator config, map YAML, raceline
+and direction. No Python or launch source change should normally be required.
+Use the [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md)
+for the maintained copyable command shape; geometric raceline validation remains
+owned by the centerline/raceline tooling.
 
 ## 3. Recording a simulation evaluation run
 

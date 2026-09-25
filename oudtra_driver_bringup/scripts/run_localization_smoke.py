@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Bounded PF/PnC startup and motion acceptance check; run in a sourced ROS workspace."""
 import argparse
+import csv
+import hashlib
 import json
 import math
 import os
@@ -9,6 +11,104 @@ import signal
 import subprocess
 import tempfile
 import time
+
+import yaml
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _map_image(map_yaml):
+    try:
+        data = yaml.safe_load(Path(map_yaml).read_text()) or {}
+    except (OSError, yaml.YAMLError) as error:
+        raise ValueError('Invalid map YAML {}: {}'.format(map_yaml, error))
+    if not isinstance(data, dict):
+        raise ValueError('Map YAML root must be a mapping: ' + str(map_yaml))
+    image = data.get('image')
+    if not isinstance(image, str) or not image:
+        raise ValueError('Map YAML has no image: ' + str(map_yaml))
+    path = Path(image)
+    return (path if path.is_absolute() else Path(map_yaml).parent / path).resolve(), data
+
+
+def validate_track_inputs(scenario_id, sim_config, pf_map_yaml, raceline_csv,
+                          raceline_direction, localize_config):
+    """Validate one explicit scenario before any ROS process is launched."""
+    if not scenario_id or not scenario_id.strip():
+        raise ValueError('scenario_id must not be empty')
+    if raceline_direction not in ('csv', 'normal', 'reverse'):
+        raise ValueError('raceline_direction must be csv, normal, or reverse')
+    paths = {name: Path(value).expanduser().resolve() for name, value in {
+        'simulator_config': sim_config, 'pf_map_yaml': pf_map_yaml,
+        'raceline_csv': raceline_csv, 'localize_config': localize_config}.items()}
+    for name, path in paths.items():
+        if not path.is_file():
+            raise ValueError('{} does not exist: {}'.format(name, path))
+    try:
+        sim_parameters = yaml.safe_load(paths['simulator_config'].read_text())['bridge']['ros__parameters']
+        map_path = Path(sim_parameters['map_path'])
+        if not map_path.is_absolute():
+            map_path = paths['simulator_config'].parent / map_path
+        sim_map_yaml = Path(str(map_path) + '.yaml').resolve()
+        sim_config_image = Path(str(map_path) + str(sim_parameters['map_img_ext'])).resolve()
+        for key in ('sx', 'sy', 'stheta'):
+            float(sim_parameters[key])
+    except (OSError, yaml.YAMLError, KeyError, TypeError, ValueError) as error:
+        raise ValueError('Invalid simulator bridge track configuration: ' + str(error))
+    for label, path in [('simulator map YAML', sim_map_yaml),
+                        ('simulator map image', sim_config_image)]:
+        if not path.is_file():
+            raise ValueError('{} does not exist: {}'.format(label, path))
+    sim_yaml_image, sim_map = _map_image(sim_map_yaml)
+    pf_image, pf_map = _map_image(paths['pf_map_yaml'])
+    for label, path in [('image referenced by simulator map YAML', sim_yaml_image),
+                        ('image referenced by PF map YAML', pf_image)]:
+        if not path.is_file():
+            raise ValueError('{} does not exist: {}'.format(label, path))
+    if _sha256(sim_config_image) != _sha256(sim_yaml_image):
+        raise ValueError('Simulator map_img_ext image disagrees with its map YAML image')
+    map_fields = ('resolution', 'origin', 'negate', 'occupied_thresh', 'free_thresh')
+    if (any(sim_map.get(key) != pf_map.get(key) for key in map_fields) or
+            _sha256(sim_yaml_image) != _sha256(pf_image)):
+        raise ValueError('Simulator and PF map inputs describe different maps')
+    try:
+        with paths['raceline_csv'].open(newline='') as stream:
+            reader = csv.DictReader(stream)
+            if not reader.fieldnames or not {'x', 'y'} <= set(reader.fieldnames):
+                raise ValueError('raceline CSV requires x and y columns')
+            points = [(float(row['x']), float(row['y'])) for row in reader]
+        if len(points) < 2 or not all(math.isfinite(v) for point in points for v in point):
+            raise ValueError('raceline CSV requires at least two finite geometry rows')
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise ValueError('Invalid raceline CSV: ' + str(error))
+    assets = {
+        **{name: {'path': str(path), 'sha256': _sha256(path)} for name, path in paths.items()},
+        'simulator_map_yaml': {'path': str(sim_map_yaml), 'sha256': _sha256(sim_map_yaml)},
+        'simulator_map_image': {'path': str(sim_config_image), 'sha256': _sha256(sim_config_image)},
+        'pf_map_image': {'path': str(pf_image), 'sha256': _sha256(pf_image)},
+    }
+    return {'scenario_id': scenario_id.strip(), 'raceline_direction': raceline_direction,
+            'sim_parameters': sim_parameters, 'assets': assets}
+
+
+def pf_launch_arguments(localize_config, map_yaml, overlay):
+    """Build the explicit PF launch contract for one selected track."""
+    return ['localize_config:=' + str(Path(localize_config).expanduser().resolve()),
+            'map_yaml:=' + str(Path(map_yaml).expanduser().resolve()),
+            'parameter_overlay:=' + str(Path(overlay).expanduser().resolve())]
+
+
+def pnc_launch_arguments(raceline_csv, raceline_direction, overlay):
+    """Build the explicit PnC launch contract for one selected reference."""
+    arguments = ['use_sim_time:=false',
+                 'raceline_csv_path:=' + str(Path(raceline_csv).expanduser().resolve()),
+                 'raceline_direction:=' + raceline_direction]
+    arguments += [key + ':=' + str(Path(overlay).expanduser().resolve()) for key in (
+        'path_platform_config', 'reactive_platform_config',
+        'arbitration_platform_config', 'integration_platform_config')]
+    return arguments
 
 
 def initial_pose(config, offsets):
@@ -21,7 +121,13 @@ def initial_pose(config, offsets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--scenario-id', required=True)
     parser.add_argument('--sim-config', required=True)
+    parser.add_argument('--pf-map-yaml', required=True)
+    parser.add_argument('--raceline-csv', required=True)
+    parser.add_argument('--raceline-direction', required=True,
+                        choices=('csv', 'normal', 'reverse'))
+    parser.add_argument('--localize-config', required=True)
     parser.add_argument('--run-duration-sec', type=float, default=15)
     parser.add_argument('--startup-timeout-sec', type=float, default=60)
     parser.add_argument('--motion-timeout-sec', type=float, default=15)
@@ -39,7 +145,6 @@ def main():
         if not math.isfinite(value) or value <= 0:
             parser.error('Durations must be finite and positive')
     os.environ['ROS_DOMAIN_ID'] = str(args.ros_domain_id)
-    import yaml
     import rclpy
     from rclpy.time import Time
     from rclpy.qos import qos_profile_sensor_data
@@ -53,36 +158,48 @@ def main():
     from std_msgs.msg import Float32MultiArray
     from rcl_interfaces.srv import GetParameters
 
-    config = yaml.safe_load(Path(args.sim_config).read_text())['bridge']['ros__parameters']
+    track = validate_track_inputs(
+        args.scenario_id, args.sim_config, args.pf_map_yaml, args.raceline_csv,
+        args.raceline_direction, args.localize_config)
+    config = track['sim_parameters']
     pose = initial_pose(config, (args.x_offset_m, args.y_offset_m, args.yaw_offset_rad))
     overlay = str(Path(get_package_share_directory('oudtra_driver_bringup')) /
-                  'config/localization_eval.yaml')
+                  'config/localization_eval_sim.yaml')
     recording = None
     if args.record_dir:
         from localization_recording import RunRecording
         share = Path(get_package_share_directory('oudtra_driver_bringup'))
-        configs = {'simulator': args.sim_config, 'evaluation': overlay,
+        configs = {'simulator': args.sim_config, 'evaluation_sim': overlay,
                    'recording': share / 'config/localization_recording.yaml',
-                   'integration': share / 'config/full_stack.yaml'}
-        for package, filename in [('particle_filter', 'localize_sim.yaml'),
-                                  ('path_following_v2', 'path_following_v2.yaml'),
+                   'integration': share / 'config/full_stack.yaml',
+                   'particle_filter': args.localize_config,
+                   'pf_map_yaml': args.pf_map_yaml,
+                   'pf_map_image': track['assets']['pf_map_image']['path'],
+                   'map_yaml': track['assets']['simulator_map_yaml']['path'],
+                   'map_image': track['assets']['simulator_map_image']['path'],
+                   'reference_csv': args.raceline_csv}
+        for package, filename in [('path_following_v2', 'path_following_v2.yaml'),
                                   ('reactive_control_v2', 'reactive_control_v2.yaml'),
                                   ('drive_arbitration_v2', 'drive_arbitration_v2.yaml'),
                                   ('centerline_tools', 'raceline_publisher.yaml')]:
             configs[package] = Path(get_package_share_directory(package)) / 'config' / filename
-        configs['reference_csv'] = Path('/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv')
-        pf_map = yaml.safe_load(Path(configs['particle_filter']).read_text())['map_server']['ros__parameters']['map']
-        pf_map_path = Path(get_package_share_directory('particle_filter')) / 'maps' / (pf_map + '.yaml')
-        configs['pf_map_yaml'] = pf_map_path
-        pf_image = Path(yaml.safe_load(pf_map_path.read_text())['image'])
-        configs['pf_map_image'] = pf_image if pf_image.is_absolute() else pf_map_path.parent / pf_image
-        configs['map_yaml'] = Path(config['map_path'] + '.yaml')
-        configs['map_image'] = Path(config['map_path'] + config['map_img_ext'])
         recording = RunRecording(args.record_dir, configs['recording'], args, configs)
         recording.metadata['initial_pose'] = pose
-        recording.metadata['scenario'] = config['map_path']
+        recording.metadata['scenario'] = track['scenario_id']
+        recording.metadata['track'] = {
+            'scenario_id': track['scenario_id'],
+            'raceline_direction': track['raceline_direction'],
+            'assets': track['assets']}
+        recording.metadata['comparison_identity'] = {
+            'scenario_id': track['scenario_id'],
+            'reference_sha256': track['assets']['raceline_csv']['sha256'],
+            'algorithm_id': 'particle_filter',
+            'algorithm_config_sha256': track['assets']['localize_config']['sha256']}
     logdir = recording.root / 'logs' if recording else Path(tempfile.mkdtemp(prefix='localization_smoke_'))
-    result = {'result': 'FAIL', 'log_directory': str(logdir), 'states': [], 'commands': []}
+    result = {'result': 'FAIL', 'log_directory': str(logdir), 'states': [], 'commands': [],
+              'track': {'scenario_id': track['scenario_id'],
+                        'raceline_direction': track['raceline_direction'],
+                        'assets': track['assets']}}
     processes = {}
     last, received, counts = {}, {}, {}
     rclpy.init()
@@ -209,7 +326,7 @@ def main():
             # This observer owns the sole (zero-only) drive publisher until PnC starts.
             raise RuntimeError('ROS domain is not exclusive; use an unused --ros-domain-id')
         launch('pf', 'particle_filter', 'localize_sim_launch.py',
-               ['parameter_overlay:=' + overlay])
+               pf_launch_arguments(args.localize_config, args.pf_map_yaml, overlay))
         wait('WAIT_PF', lambda: fresh('/pf/pose/odom') and initpub.get_subscription_count() > 0)
         if recording:
             wait('WAIT_RECORDING_INPUTS', lambda: recording.ready(
@@ -230,9 +347,7 @@ def main():
         start_xy = truth_xy()
         mark('START_PNC')
         launch('pnc', 'oudtra_driver_bringup', 'full_stack_sim_launch.py',
-               ['use_sim_time:=false'] + [key + ':=' + overlay for key in (
-                   'path_platform_config', 'reactive_platform_config',
-                   'arbitration_platform_config', 'integration_platform_config')])
+               pnc_launch_arguments(args.raceline_csv, args.raceline_direction, overlay))
         values = parameters('lower_safety_controller',
                             ['enable_sim_reverse_swept_gate', 'odom_topic'])
         if values[0].bool_value or values[1].string_value != '/pf/pose/odom':

@@ -94,7 +94,9 @@ cd /sim_ws
 colcon build --packages-select particle_filter
 source install/local_setup.bash
 ros2 launch particle_filter localize_sim_launch.py \
-  parameter_overlay:=/sim_ws/src/oudtra_driver_bringup/config/localization_eval.yaml
+  localize_config:=/sim_ws/src/particle_filter/config/localize_sim.yaml \
+  map_yaml:=/sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml \
+  parameter_overlay:=/sim_ws/src/oudtra_driver_bringup/config/localization_eval_sim.yaml
 ```
 
 After PF is running, send one initial pose in RViz with `2D Pose Estimate`, or
@@ -118,13 +120,16 @@ source /opt/ros/foxy/setup.bash
 cd /sim_ws
 colcon build --packages-select centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
 source install/local_setup.bash
-EVAL=/sim_ws/src/oudtra_driver_bringup/config/localization_eval.yaml
+EVAL_SIM=/sim_ws/src/oudtra_driver_bringup/config/localization_eval_sim.yaml
+RACELINE=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   use_sim_time:=false \
-  path_platform_config:=$EVAL \
-  reactive_platform_config:=$EVAL \
-  arbitration_platform_config:=$EVAL \
-  integration_platform_config:=$EVAL
+  raceline_csv_path:=$RACELINE \
+  raceline_direction:=csv \
+  path_platform_config:=$EVAL_SIM \
+  reactive_platform_config:=$EVAL_SIM \
+  arbitration_platform_config:=$EVAL_SIM \
+  integration_platform_config:=$EVAL_SIM
 ```
 
 This overlay keeps the bounded transform wait, routes lower safety to
@@ -238,8 +243,18 @@ initializes PF once, checks physical motion, and cleans up its own processes:
 
 ```bash
 cd /sim_ws
+SCENARIO_ID=ifac_roboracer
+SIM_CONFIG=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
+MAP_YAML=/sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml
+RACELINE=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+LOCALIZE_CONFIG=/sim_ws/src/particle_filter/config/localize_sim.yaml
 ros2 run oudtra_driver_bringup run_localization_smoke.py \
-  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
+  --scenario-id "$SCENARIO_ID" \
+  --sim-config "$SIM_CONFIG" \
+  --pf-map-yaml "$MAP_YAML" \
+  --raceline-csv "$RACELINE" \
+  --raceline-direction csv \
+  --localize-config "$LOCALIZE_CONFIG" \
   --run-duration-sec 15 \
   --result-json /tmp/localization_smoke.json
 ```
@@ -263,23 +278,33 @@ docker exec -it \
   f1tenth_gym_ros_rocker bash
 ```
 
-Inside that container shell, build/source the analyzer package and use a descriptive
-run ID. Set `--source-state` to `clean` or `dirty` from the host status when known;
-`unknown` remains explicit.
+Inside that container shell, build/source the runner and its dependency closure,
+then use a descriptive run ID. Set `--source-state` to `clean` or `dirty` from the
+host status when known; `unknown` remains explicit.
 
 ```bash
 source /opt/ros/foxy/setup.bash
 cd /sim_ws
-colcon build --packages-select oudtra_driver_bringup
+colcon build --packages-up-to oudtra_driver_bringup
 source install/local_setup.bash
 RUN_DIR="/sim_ws/src/oudtra_driver_bringup/runs/ifac_pf_closed_loop_localization_baseline_$(date -u +%Y%m%dT%H%M%SZ)"
+SCENARIO_ID=ifac_roboracer
+SIM_CONFIG=/sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml
+MAP_YAML=/sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml
+RACELINE=/sim_ws/src/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv
+LOCALIZE_CONFIG=/sim_ws/src/particle_filter/config/localize_sim.yaml
 ```
 
 Run and analyze it after all simulation processes stop:
 
 ```bash
 ros2 run oudtra_driver_bringup run_localization_smoke.py \
-  --sim-config /sim_ws/src/f1tenth_gym_ros/config/sim_ifac_roboracer.yaml \
+  --scenario-id "$SCENARIO_ID" \
+  --sim-config "$SIM_CONFIG" \
+  --pf-map-yaml "$MAP_YAML" \
+  --raceline-csv "$RACELINE" \
+  --raceline-direction csv \
+  --localize-config "$LOCALIZE_CONFIG" \
   --run-duration-sec 15 \
   --record-dir "$RUN_DIR" \
   --source-revision "$ROBORACER_MAIN_REV" \
@@ -308,6 +333,12 @@ sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
 ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
 sha256sum "$RUN_DIR/metrics.json" "$RUN_DIR/report.md"
 ```
+
+To add a new track, copy/add its map image and YAML, generate and validate
+`raceline_points_optimized.csv`, and create a simulator config with the track map
+path and start pose. Set the five variables above to the new scenario and assets;
+the runner preflight checks map agreement and raceline geometry before launch.
+The evaluation integration overlay remains unchanged.
 
 ## 9. Open run deliverables
 
