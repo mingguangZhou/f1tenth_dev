@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import statistics
 import subprocess
 import tempfile
 import time
@@ -119,6 +120,33 @@ def initial_pose(config, offsets):
     return values
 
 
+def timing_distribution(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+
+    def percentile(p):
+        location = (len(ordered) - 1) * p
+        low = int(location)
+        high = min(low + 1, len(ordered) - 1)
+        return ordered[low] + (ordered[high] - ordered[low]) * (location - low)
+
+    return {'p50': percentile(.50), 'p95': percentile(.95), 'max': ordered[-1]}
+
+
+def summarize_observer_timing(samples, duration_sec):
+    arrivals = [row[0] for row in samples]
+    gaps = [(right - left) / 1000000 for left, right in zip(arrivals, arrivals[1:])]
+    ages = [row[1] for row in samples if row[1] is not None]
+    median_gap = statistics.median(gaps) if gaps else None
+    return {'count': len(samples), 'rate_hz': len(samples) / duration_sec,
+            'interarrival_ms': timing_distribution(gaps),
+            'interarrival_jitter_ms': timing_distribution(
+                [abs(gap - median_gap) for gap in gaps]),
+            'source_to_observer_age_ms': timing_distribution(ages),
+            'source_age_samples': len(ages)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario-id', required=True)
@@ -129,6 +157,8 @@ def main():
                         choices=('csv', 'normal', 'reverse'))
     parser.add_argument('--localize-config', required=True)
     parser.add_argument('--run-duration-sec', type=float, default=15)
+    parser.add_argument('--with-rviz', action='store_true',
+                        help='Start interactive RViz; automated runs are headless by default')
     parser.add_argument('--startup-timeout-sec', type=float, default=60)
     parser.add_argument('--motion-timeout-sec', type=float, default=15)
     parser.add_argument('--x-offset-m', type=float, default=0)
@@ -185,6 +215,7 @@ def main():
             configs[package] = Path(get_package_share_directory(package)) / 'config' / filename
         recording = RunRecording(args.record_dir, configs['recording'], args, configs)
         recording.metadata['initial_pose'] = pose
+        recording.metadata['visualization_mode'] = 'rviz' if args.with_rviz else 'headless'
         recording.metadata['scenario'] = track['scenario_id']
         recording.metadata['track'] = {
             'scenario_id': track['scenario_id'],
@@ -197,11 +228,15 @@ def main():
             'algorithm_config_sha256': track['assets']['localize_config']['sha256']}
     logdir = recording.root / 'logs' if recording else Path(tempfile.mkdtemp(prefix='localization_smoke_'))
     result = {'result': 'FAIL', 'log_directory': str(logdir), 'states': [], 'commands': [],
+              'visualization_mode': 'rviz' if args.with_rviz else 'headless',
               'track': {'scenario_id': track['scenario_id'],
                         'raceline_direction': track['raceline_direction'],
                         'assets': track['assets']}}
     processes = {}
     last, received, counts = {}, {}, {}
+    timing_samples = {}
+    evaluation_running = False
+    evaluation_end_marked = False
     rclpy.init()
     node = rclpy.create_node('localization_smoke')
     buffer = Buffer()
@@ -212,6 +247,11 @@ def main():
         last[topic] = message
         received[topic] = time.monotonic()
         counts[topic] = counts.get(topic, 0) + 1
+        if evaluation_running and hasattr(message, 'header'):
+            stamp = message.header.stamp
+            source_ns = stamp.sec * 1000000000 + stamp.nanosec
+            age_ms = (time.time_ns() - source_ns) / 1000000 if source_ns > 0 else None
+            timing_samples.setdefault(topic, []).append((time.monotonic_ns(), age_ms))
         if (recording and topic == '/ego_racecar/odom' and moving() and
                 not any(p['state'] == 'MOTION_OBSERVED' for p in recording.metadata['phases'])):
             recording.mark('MOTION_OBSERVED', node)
@@ -319,7 +359,8 @@ def main():
         if recording:
             recording.start()
         launch('sim', 'f1tenth_gym_ros', 'gym_bridge_slam_launch.py',
-               ['config_file:=' + str(Path(args.sim_config).resolve())])
+               ['config_file:=' + str(Path(args.sim_config).resolve()),
+                'use_rviz:=' + ('true' if args.with_rviz else 'false')])
         wait('WAIT_SCAN', lambda: fresh('/scan') and fresh('/ego_racecar/odom') and
              fresh('/simulator/agent_status'))
         if node.count_publishers('/scan') != 1 or node.count_publishers('/drive') != 1:
@@ -371,6 +412,7 @@ def main():
              args.motion_timeout_sec)
         mark('RUNNING')
         start = time.monotonic()
+        evaluation_running = True
         running_counts = counts.copy()
         last_motion = start
         progress_time, progress_xy = start, truth_xy()
@@ -389,6 +431,15 @@ def main():
                     raise RuntimeError('No physical progress over two seconds')
                 progress_time, progress_xy = time.monotonic(), current_xy
         result['motion_duration_sec'] = time.monotonic() - start
+        evaluation_running = False
+        if recording:
+            recording.mark('EVALUATION_END', node)
+            evaluation_end_marked = True
+        result['observer_timing'] = {
+            topic: summarize_observer_timing(timing_samples.get(topic, []),
+                                             result['motion_duration_sec'])
+            for topic in ('/scan', '/ego_racecar/odom', '/pf/pose/odom', '/drive',
+                          '/simulator/agent_status')}
         result['running_rates_hz'] = {topic: (count - running_counts.get(topic, 0)) /
                                       result['motion_duration_sec']
                                       for topic, count in counts.items()}
@@ -399,7 +450,8 @@ def main():
     finally:
         # A recording I/O failure must never bypass vehicle/process shutdown.
         try:
-            if recording and any(p['state'] == 'RUNNING' for p in recording.metadata['phases']):
+            if (recording and not evaluation_end_marked and
+                    any(p['state'] == 'RUNNING' for p in recording.metadata['phases'])):
                 recording.mark('EVALUATION_END', node)
             mark('STOP')
         except Exception as error:

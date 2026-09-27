@@ -121,3 +121,14 @@ def test_explicit_pf_and_pnc_arguments_are_forwarded(tmp_path):
     assert 'raceline_csv_path:=' + str(raceline) in pnc
     assert 'raceline_direction:=reverse' in pnc
     assert sum(str(overlay) in value for value in pnc) == 4
+
+
+def test_passive_timing_summary_reports_rate_jitter_and_age():
+    samples = [(1000000000, 2.0), (1010000000, 3.0),
+               (1030000000, 4.0)]
+    summary = SMOKE.summarize_observer_timing(samples, 0.04)
+    assert summary['count'] == 3
+    assert summary['rate_hz'] == 75
+    assert summary['interarrival_ms'] == {'p50': 15, 'p95': 19.5, 'max': 20}
+    assert summary['source_to_observer_age_ms'] == {'p50': 3, 'p95': 3.9, 'max': 4}
+    assert SMOKE.summarize_observer_timing([], 1)['interarrival_ms'] is None

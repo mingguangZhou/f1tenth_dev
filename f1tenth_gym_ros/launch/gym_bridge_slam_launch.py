@@ -25,6 +25,7 @@ from launch_ros.actions import Node
 from launch.substitutions import Command
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
@@ -50,6 +51,7 @@ def launch_nodes(context):
         package='rviz2',
         executable='rviz2',
         name='rviz',
+        condition=IfCondition(LaunchConfiguration('use_rviz')),
         arguments=['-d', os.path.join(get_package_share_directory('f1tenth_gym_ros'), 'launch', 'gym_bridge.rviz')]
     )
     map_server_node = Node(
@@ -108,6 +110,11 @@ def generate_launch_description():
             'slam_mapping_on',
             default_value='false',
             description='Enable odom→base_link TF for SLAM mapping',
+        ),
+        DeclareLaunchArgument(
+            'use_rviz',
+            default_value='true',
+            description='Start RViz for interactive observation.',
         ),
         OpaqueFunction(function=launch_nodes),
     ])

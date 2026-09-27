@@ -262,6 +262,8 @@ ros2 run oudtra_driver_bringup run_localization_smoke.py \
 PASS means exit 0 and JSON `"result": "PASS"`. Use an unused ROS domain with
 `--ros-domain-id` when another experiment is active. This runner already owns
 the launch sequence; do not start the manual terminals above in the same domain.
+It is headless by default and requires no display. Add `--with-rviz` only for
+interactive observation; RViz appearance is not benchmark evidence.
 
 ## 8. Record and analyze an evaluation run
 
@@ -313,13 +315,15 @@ ros2 run oudtra_driver_bringup run_localization_smoke.py \
   --result-json /tmp/localization_smoke_recorded.json
 
 ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
+ros2 run oudtra_driver_bringup analyze_sim_timing.py "$RUN_DIR"
 cat "$RUN_DIR/report.md"
 cat "$RUN_DIR/metrics.json"
 ```
 
 The run directory contains `metadata.yaml`, `smoke_result.json`, `rosbag/`,
-`config/`, `logs/`, `metrics.json`, `report.md`, and `plots/`. The host-visible
-equivalent is `/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/`.
+`config/`, `logs/`, `metrics.json`, `timing.json`, `report.md`, and `plots/`. The
+host-visible equivalent is
+`/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<descriptive-run-id>/`.
 
 For a simple performance matrix, repeat with one descriptive run directory per
 scenario, such as `..._offset0`, `..._offset_x02m`, or `..._duration30s`.

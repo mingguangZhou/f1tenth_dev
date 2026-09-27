@@ -123,6 +123,29 @@ Use the [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.
 for the maintained copyable command shape; geometric raceline validation remains
 owned by the centerline/raceline tooling.
 
+### 2.5 Headless execution and timing evidence
+
+The automated runner now passes `use_rviz:=false` to the localization simulator
+launch by default, so it runs without a display. Manual simulator launch retains
+RViz by default; `--with-rviz` restores it for an interactive runner session.
+The Gym bridge does not call its renderer in this workflow. PF visualization
+computation is guarded by subscriber counts; PnC still publishes some diagnostic
+markers, which are not part of the evaluation evidence. Visualization is for
+observation, not benchmark acceptance.
+
+For a completed recorded simulation run, `analyze_sim_timing.py` writes a separate
+`timing.json` without changing `metrics.json` or the scorecard. Bag receive times
+within `[RUNNING, EVALUATION_END)` give bridge-status, raw-odometry, PF-pose, and
+final-drive rates, interarrival jitter, and wall-stamp-to-bag ages. `/scan` is not
+recorded in the scorecard bag; its timing comes from the runner's passive callback.
+The bridge publishes scan and agent status in the same timer callback, so the
+recorded status rate is a source-publication proxy when the runner misses scans.
+The PF map-to-base TF retains the last raw-odometry stamp; its age gives combined
+input queue, PF work, and transport delay, not isolated PF compute time. The
+simulation exposes no qualified physics clock or step counter, so real-time factor
+is unavailable. Compare display, message transport, PF input age, and control
+rates separately; wall-time execution is preserved.
+
 ## 3. Recording a simulation evaluation run
 
 ### 3.1 Recording purpose and lifecycle

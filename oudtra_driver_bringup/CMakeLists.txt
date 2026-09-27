@@ -7,7 +7,12 @@ install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/run_localization_smoke.py scripts/analyze_localization_run.py scripts/compare_localization_runs.py scripts/record_onboard_localization.py
+install(PROGRAMS
+  scripts/run_localization_smoke.py
+  scripts/analyze_localization_run.py
+  scripts/analyze_sim_timing.py
+  scripts/compare_localization_runs.py
+  scripts/record_onboard_localization.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -31,6 +36,10 @@ if(BUILD_TESTING)
   )
   ament_add_pytest_test(localization_smoke_test
     test/test_localization_smoke.py
+    TIMEOUT 30
+  )
+  ament_add_pytest_test(sim_timing_test
+    test/test_sim_timing.py
     TIMEOUT 30
   )
   ament_add_pytest_test(full_stack_sim_defaults_test
