@@ -15,11 +15,13 @@ owns maintained commands.
 1. **Inspect.** Read applicable instructions, check branch/HEAD and working-tree
    state, and trace the relevant implementation, configuration, consumers, and
    existing tests. Preserve unrelated work.
-2. **Define objective and non-goals.** State the concrete problem, expected
+2. **Define objective and non-goals.** Confirm the human-defined problem, expected
    observable behavior, acceptance criteria, and boundaries of this task.
 3. **Plan the minimal change.** Identify affected packages and contracts, reuse
    existing mechanisms, and choose the smallest sufficient design and validation.
    Explain meaningful tradeoffs; avoid abstractions for hypothetical future needs.
+   Resolve minor implementation details within authorization. If a major choice
+   is not covered by the task, present alternatives and request human direction.
 4. **Implement.** Make focused host-source edits. Preserve compatibility and
    behavior outside scope. Handle realistic failures explicitly without hidden
    fallbacks, unnecessary configuration, or unrelated refactoring.
@@ -170,28 +172,34 @@ every report, transcript, or generated log. Keep temporary artifacts out of comm
 
 ### Persistent engineering records
 
-Use the existing documentation homes for commands and technical contracts. The
-following records summarize progress without replacing them or the task report:
+[PROJECT_RECORD.md](PROJECT_RECORD.md) holds a dated factual status, concise
+milestones, significant decisions/implementation rationale, and open evidence gaps.
+It complements technical documentation and temporary detailed task reports; it
+is not a roadmap or authorization to fix every listed issue.
 
-| Record | Responsibility |
-| --- | --- |
-| [Project status](PROJECT_STATUS.md) | Assessed current state, evidence level, active work, risks and proposed priorities; include assessment date and Git revision. |
-| [Development log](DEVELOPMENT_LOG.md) | Append-only meaningful milestones and concluded investigations, including useful failures; use Git committer dates for Git milestones and label reconstructed or uncertain dates. |
-| [Decisions](DECISIONS.md) | Significant choices and constraints with stable IDs, evidence, tradeoffs and accepted/proposed/superseded/historical status. |
-| Temporary [engineering report](templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md) | Detailed task mechanics, validation and handoff; remains uncommitted by default. |
+The human engineer owns objectives, strategic priorities, development sequence,
+scope, and major design approval. Codex plans the assigned task, investigates,
+implements within authorization, validates, and records evidence. Suggestions do
+not become official objectives, priorities or accepted decisions. Keep them in
+conversation or temporary reports unless the human explicitly requests permanent
+tracking; then label **AI suggestion — not approved**, separate from confirmed
+direction. If direction is unknown, state **Not specified / awaiting human direction**.
+A commit, merge or earlier AI report does not establish human approval. Report
+safety risks immediately without treating them as authorization to broaden scope.
 
-Read current status and relevant earlier milestones/decisions during inspection.
-At completion, update only records affected by the task: refresh changed status,
-append one milestone for meaningful work, and record a decision only when a
-significant choice changes. Tiny edits and intermediate debugging do not need
-entries. Correct inaccurate history explicitly with a dated correction; preserve
-the original reference and link superseding decisions rather than silently
-rewriting history. Keep verified code, build/test, runtime, performance and hardware
-evidence distinct; mark reported, inferred or unknown claims and omitted checks.
-Link accessible permanent evidence; identify local-only artifacts without promising
-their availability to other checkouts. Do not move, delete or commit reports/data
-as part of tracking maintenance. Respect explicit code-only/documentation-only
-scope limits and report any recommended update outside the authorized scope.
+During inspection, read relevant record entries and technical sources, confirm the
+human task, and check branch/HEAD/working tree. At completion, refresh materially
+changed factual status, append one concise milestone for a meaningful result or
+concluded investigation, and update significant decisions/constraints when warranted.
+Do not invent next priorities or add entries for tiny edits/intermediate debugging.
+Keep implemented, build/test, runtime, performance and hardware evidence distinct;
+label reported, inferred and unknown outcomes. Decision entries distinguish explicit
+human confirmation from implementation evidence and historical/unresolved choices.
+Correct history explicitly with a dated correction and preserve its references;
+link superseding choices rather than silently rewriting history. Link accessible
+permanent evidence and identify local-only artifacts without promising availability.
+Maintenance does not authorize moving/deleting reports or data, committing, or
+pushing. Honor limited task scopes; report recommended tracking updates outside them.
 
 Include an architecture or data-flow diagram when relationships, ownership, or
 boundaries are clearer visually—for example ROS producers/consumers, TF ownership,

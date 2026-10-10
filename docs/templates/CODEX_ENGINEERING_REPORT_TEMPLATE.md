@@ -17,7 +17,8 @@ state the symptom, evidenced root cause, correction, and verified completion sta
 
 ## 2. Objective and non-goals
 
-<Problem, intended observable outcome, and acceptance criteria.>
+<Human-defined problem, intended observable outcome, and acceptance criteria.
+If future project direction is unknown, say "Not specified / awaiting human direction".>
 
 <Behavior and subsystems intentionally outside this task.>
 
@@ -35,7 +36,9 @@ them. Add a compact diagram only when it clarifies relationships.>
 ## 5. Engineering decision / mechanism
 
 <Minimal chosen change, existing mechanisms reused, high-level operation, how to
-interpret its outputs, and material tradeoffs.>
+interpret its outputs, and material tradeoffs. Distinguish implemented technical
+choices from explicit human-confirmed decisions; a commit/merge is not approval.
+Major choices outside the assigned task require human direction.>
 
 ## 6. Debugging and fix closure (when applicable)
 
@@ -81,7 +84,10 @@ Distinguish verified evidence from inference.>
 ## 11. Limitations / follow-up
 
 <Unresolved issues, unverified behavior, and observations outside scope.
-State whether any acceptance criterion remains unmet.>
+State whether any acceptance criterion remains unmet. Optional AI suggestions
+are not approved priorities or tasks; do not invent a next strategic plan. Track
+suggestions permanently only if explicitly requested, labelled "AI suggestion —
+not approved".>
 
 ## 12. Validation artifact triage
 

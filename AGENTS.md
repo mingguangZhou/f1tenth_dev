@@ -38,10 +38,21 @@ ROS distribution:
 
 Follow [Engineering workflow](docs/ENGINEERING_WORKFLOW.md), scaled to the task.
 
-Before meaningful development, read [Project status](docs/PROJECT_STATUS.md),
-the relevant permanent technical documents, and applicable milestones or decisions
-in [Development log](docs/DEVELOPMENT_LOG.md) and [Decisions](docs/DECISIONS.md).
-Check the current branch, HEAD, and working tree against that assessment.
+The human engineer owns project objectives, direction, priorities, development
+sequence, scope, and approval of major design choices. Codex investigates, proposes,
+plans and executes the authorized task, validates outcomes, and records evidence.
+Minor implementation details within scope may be resolved independently; major
+choices outside the task require human direction. Task-level planning does not
+authorize the next project objective.
+
+Before meaningful development, read the relevant [Project record](docs/PROJECT_RECORD.md)
+and permanent technical documents, confirm the human-defined task objective, and
+check branch, HEAD and working tree. Use earlier milestones and choices as context,
+not authorization. AI suggestions belong in conversation or temporary reports;
+track them permanently only when explicitly requested, labelled **AI suggestion —
+not approved** and separate from human-confirmed direction. When direction is
+unknown, state **Not specified / awaiting human direction**. Report safety risks
+immediately; reporting a risk does not authorize broader work.
 
 * Start from a concrete purpose, expected behavior, and explicit non-goals.
 * Choose the simplest sufficient design; reuse existing contracts and tools before duplicating them.
@@ -62,12 +73,13 @@ After modifying code:
 * report build or test failures without hiding them;
 * avoid unrelated cleanup or refactoring unless explicitly requested.
 
-After meaningful work, update project status when state, active work, risks, or
-priorities changed; append one concise milestone for a significant result or
-concluded investigation; update decisions only for significant choices or
-supersessions. Maintain the existing technical/command documentation as needed.
-Honor explicitly limited task scopes and report recommended tracking updates
-outside them. These updates never authorize committing or pushing.
+After meaningful work, update the project record only when factual status, a
+significant milestone, decision or implemented constraint changed. Preserve Git
+references and validation levels; report unresolved issues without assigning
+priorities or implying human approval from a commit. Tiny edits need no entry.
+Maintain technical/command documentation as needed. Honor explicitly limited
+scopes and report recommended tracking updates outside them. These updates never
+authorize committing or pushing.
 
 Prefer targeted builds such as:
 
