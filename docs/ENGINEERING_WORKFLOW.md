@@ -168,6 +168,31 @@ when a report is useful or requested; omit optional sections that add no value.
 Promote stable lessons into the appropriate permanent document rather than preserving
 every report, transcript, or generated log. Keep temporary artifacts out of commits.
 
+### Persistent engineering records
+
+Use the existing documentation homes for commands and technical contracts. The
+following records summarize progress without replacing them or the task report:
+
+| Record | Responsibility |
+| --- | --- |
+| [Project status](PROJECT_STATUS.md) | Assessed current state, evidence level, active work, risks and proposed priorities; include assessment date and Git revision. |
+| [Development log](DEVELOPMENT_LOG.md) | Append-only meaningful milestones and concluded investigations, including useful failures; use Git committer dates for Git milestones and label reconstructed or uncertain dates. |
+| [Decisions](DECISIONS.md) | Significant choices and constraints with stable IDs, evidence, tradeoffs and accepted/proposed/superseded/historical status. |
+| Temporary [engineering report](templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md) | Detailed task mechanics, validation and handoff; remains uncommitted by default. |
+
+Read current status and relevant earlier milestones/decisions during inspection.
+At completion, update only records affected by the task: refresh changed status,
+append one milestone for meaningful work, and record a decision only when a
+significant choice changes. Tiny edits and intermediate debugging do not need
+entries. Correct inaccurate history explicitly with a dated correction; preserve
+the original reference and link superseding decisions rather than silently
+rewriting history. Keep verified code, build/test, runtime, performance and hardware
+evidence distinct; mark reported, inferred or unknown claims and omitted checks.
+Link accessible permanent evidence; identify local-only artifacts without promising
+their availability to other checkouts. Do not move, delete or commit reports/data
+as part of tracking maintenance. Respect explicit code-only/documentation-only
+scope limits and report any recommended update outside the authorized scope.
+
 Include an architecture or data-flow diagram when relationships, ownership, or
 boundaries are clearer visually—for example ROS producers/consumers, TF ownership,
 or separation of validation and control paths. Prefer Mermaid in committed Markdown

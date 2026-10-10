@@ -6,10 +6,17 @@ Start here when setting up the workspace, running a supported workflow, or
 interpreting an evaluation result. Each subject has one permanent source of truth;
 the links below avoid duplicating commands and metric definitions.
 
+Begin with [project status](PROJECT_STATUS.md) for the assessed state and open
+work. Consult the [milestone log](DEVELOPMENT_LOG.md) for evolution and
+[decisions](DECISIONS.md) for constraints before changing a subsystem.
+
 ## 2. Document map
 
 | Question | Source of truth |
 | --- | --- |
+| What is implemented, demonstrated, currently active, or still uncertain? | [Project status](PROJECT_STATUS.md) |
+| Which meaningful milestones and unsuccessful investigations led here? | [Development log](DEVELOPMENT_LOG.md) |
+| Why were significant approaches selected, and which constraints still apply? | [Decisions](DECISIONS.md) |
 | Which host, container, ROS distribution, and workspace should I use? | [Development environment](DEVELOPMENT_ENVIRONMENT.md) |
 | What engineering process and validation standard applies? | [Engineering workflow](ENGINEERING_WORKFLOW.md) |
 | Which commands run the simulator, PF/full stack, tests, recording, and offline analysis? | [Operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) |
@@ -27,6 +34,7 @@ These artifact classes have different lifetimes:
 | Class | Location and purpose |
 | --- | --- |
 | Permanent documentation | Source-controlled files under `docs/`; supported environment, commands, contracts, and interpretation guidance |
+| Persistent progress and decisions | `PROJECT_STATUS.md`, `DEVELOPMENT_LOG.md`, `DECISIONS.md`; concise assessed state, milestones and architectural rationale, linked to evidence |
 | Preserved run artifacts | Git-ignored `oudtra_driver_bringup/runs/<descriptive-run-id>/`; raw bag, metadata, generated scorecard, JSON, plots, logs, and copied configuration |
 | Temporary engineering handoff | Repository-root `PHASE*_CODEX_REPORT.md`; task evidence that remains uncommitted unless explicitly promoted |
 
@@ -44,3 +52,5 @@ guide, engineering policy in the workflow, and metric/recording definitions in t
 localization evaluation document. Generated reports should link to those sources
 instead of copying their instructions. Update navigation, operating commands, and
 artifact paths in the same change when their contracts move.
+Maintain the progress records during meaningful task completion as defined in the
+[engineering workflow](ENGINEERING_WORKFLOW.md#persistent-engineering-records).

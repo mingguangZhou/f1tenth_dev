@@ -38,6 +38,11 @@ ROS distribution:
 
 Follow [Engineering workflow](docs/ENGINEERING_WORKFLOW.md), scaled to the task.
 
+Before meaningful development, read [Project status](docs/PROJECT_STATUS.md),
+the relevant permanent technical documents, and applicable milestones or decisions
+in [Development log](docs/DEVELOPMENT_LOG.md) and [Decisions](docs/DECISIONS.md).
+Check the current branch, HEAD, and working tree against that assessment.
+
 * Start from a concrete purpose, expected behavior, and explicit non-goals.
 * Choose the simplest sufficient design; reuse existing contracts and tools before duplicating them.
 * Favor readable code, explicit data flow, and clear ownership of state and side effects.
@@ -56,6 +61,13 @@ After modifying code:
 * run the smallest relevant build/test first;
 * report build or test failures without hiding them;
 * avoid unrelated cleanup or refactoring unless explicitly requested.
+
+After meaningful work, update project status when state, active work, risks, or
+priorities changed; append one concise milestone for a significant result or
+concluded investigation; update decisions only for significant choices or
+supersessions. Maintain the existing technical/command documentation as needed.
+Honor explicitly limited task scopes and report recommended tracking updates
+outside them. These updates never authorize committing or pushing.
 
 Prefer targeted builds such as:
 
