@@ -7,6 +7,22 @@ locations. The simulator bridge reference continues below.
 
 This is a containerized ROS communication bridge for the F1TENTH gym environment that turns it into a simulation in ROS2.
 
+<!-- table-of-contents:start -->
+**Table of contents**
+
+  - [Atomic Docker, simulator, and autonomy workflow](#atomic-docker-simulator-and-autonomy-workflow)
+  - [Without an NVIDIA gpu:](#without-an-nvidia-gpu)
+  - [With an NVIDIA gpu:](#with-an-nvidia-gpu)
+- [Launching the Simulation](#launching-the-simulation)
+- [Configuring the simulation](#configuring-the-simulation)
+- [Topics published by the simulation](#topics-published-by-the-simulation)
+- [Topics subscribed by the simulation](#topics-subscribed-by-the-simulation)
+- [Keyboard Teleop](#keyboard-teleop)
+- [Using Slam-Toolbox within the simulator](#using-slam-toolbox-within-the-simulator)
+- [Using Particle Filter Localization within the simulator](#using-particle-filter-localization-within-the-simulator)
+- [Developing and creating your own agent in ROS 2](#developing-and-creating-your-own-agent-in-ros-2)
+<!-- table-of-contents:end -->
+
 ## Atomic Docker, simulator, and autonomy workflow
 
 The development commands deliberately separate container lifecycle from ROS

@@ -3,6 +3,36 @@
 ROS 2 Foxy localization-based raceline following with a persistent local
 trajectory planner.
 
+## How to use this guide
+
+**Purpose:** understand the primary trajectory planner, follower contracts and
+configuration. **Start here:** [data flow](#data-flow) and [nodes/topics](#nodes-and-topics).
+For running the full PF/PnC loop, use the [canonical operator guide](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+**Quick links:** [activation](#planner-activation) · [trajectory construction](#trajectory-construction) ·
+[safety/side choice](#candidate-safety-and-side-choice) · [held plans](#exactly-how-a-plan-is-held) ·
+[replanning](#when-an-active-plan-is-updated) · [states](#states) ·
+[speed/visualization](#speed-and-visualization) · [package build](#build-and-run).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [How to use this guide](#how-to-use-this-guide)
+- [Data flow](#data-flow)
+- [Common vehicle envelope](#common-vehicle-envelope)
+- [Metric horizon](#metric-horizon)
+- [Planner activation](#planner-activation)
+- [Trajectory construction](#trajectory-construction)
+- [Candidate safety and side choice](#candidate-safety-and-side-choice)
+- [Exactly how a plan is held](#exactly-how-a-plan-is-held)
+- [When an active plan is updated](#when-an-active-plan-is-updated)
+- [States](#states)
+- [Bounded computation](#bounded-computation)
+- [Moving obstacles and safe waiting](#moving-obstacles-and-safe-waiting)
+- [Speed and visualization](#speed-and-visualization)
+- [Nodes and topics](#nodes-and-topics)
+- [Build and run](#build-and-run)
+<!-- table-of-contents:end -->
+
 ## Data flow
 
 ```text

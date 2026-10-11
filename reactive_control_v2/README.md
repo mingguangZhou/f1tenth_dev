@@ -22,6 +22,37 @@ trajectory against the scan. Reverse recovery uses VESC-derived odometry as its
 primary motion feedback; scan-derived motion and PF switching remain future
 extensions.
 
+## How to use this guide
+
+**Purpose:** understand reactive fallback, final safety gating and recovery behavior.
+**Start here:** [I/O](#io) and [lower safety](#lower-safety-controller).
+The [operator guide](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow)
+owns current integrated simulation/onboard procedures; package examples below are
+subsystem references, not new-track qualification.
+**Quick links:** [vehicle envelope](#common-vehicle-envelope) · [reverse recovery](#reverse-recovery) ·
+[swept checks](#swept-path-validation-and-hysteresis) · [build](#build) ·
+[simulator checks](#simulator-test) · [YAML guide](#yaml-tuning-guide).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [How to use this guide](#how-to-use-this-guide)
+- [Common vehicle envelope](#common-vehicle-envelope)
+- [I/O](#io)
+- [Lower safety controller](#lower-safety-controller)
+- [Low-speed assistance](#low-speed-assistance)
+- [Reverse recovery](#reverse-recovery)
+- [Swept-path validation and hysteresis](#swept-path-validation-and-hysteresis)
+- [Algorithm](#algorithm)
+- [Build](#build)
+- [Simulator test](#simulator-test)
+- [ROS launch log directory](#ros-launch-log-directory)
+- [Useful checks](#useful-checks)
+- [YAML tuning guide](#yaml-tuning-guide)
+- [Main tuning order](#main-tuning-order)
+- [Version](#version)
+<!-- table-of-contents:end -->
+
 ## Common vehicle envelope
 
 The upper corridor follower uses the measured `0.28 m` car width and the same

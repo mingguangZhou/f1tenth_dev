@@ -1,5 +1,26 @@
 # RoboRacer project engineering record
 
+**Purpose:** factual demonstrated status, milestone evidence, rationale and open gaps.
+**Start here:** [current status](#1-current-engineering-status); for hands-on work,
+use the [operator entry point](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+**Quick links:** [milestones](#2-development-milestones) · [decisions/rationale](#3-engineering-decisions-and-implementation-rationale) ·
+[unresolved evidence](#4-open-issues-and-validation-gaps). This record is context,
+not authorization to choose the next project objective.
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. Current engineering status](#1-current-engineering-status)
+- [2. Development milestones](#2-development-milestones)
+  - [Foundations and historical boundary](#foundations-and-historical-boundary)
+  - [Localization integration and measurement](#localization-integration-and-measurement)
+  - [New-track investigation and record maintenance](#new-track-investigation-and-record-maintenance)
+  - [2026-10-11 — selected Tempo experimental low-speed simulation](#2026-10-11--selected-tempo-experimental-low-speed-simulation)
+  - [2026-10-11 — documentation status correction and operator handoff](#2026-10-11--documentation-status-correction-and-operator-handoff)
+- [3. Engineering decisions and implementation rationale](#3-engineering-decisions-and-implementation-rationale)
+- [4. Open issues and validation gaps](#4-open-issues-and-validation-gaps)
+<!-- table-of-contents:end -->
+
 ## 1. Current engineering status
 
 The repository implements short IFAC PF-localized closed-loop simulation,
@@ -14,8 +35,9 @@ that export production-valid. IFAC V2 selection passed a fresh bounded simulatio
 
 **Assessment:** 2026-10-11, `mingguangZhou/f1tenth_dev`, branch
 `mingguang_localization_robustness_ai_workspace`, revision
-[1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efcdc6b1211dbe93ed00a7d468a9b410d05d)
-plus the uncommitted V2 UX/selection and low-speed simulation changes below.
+[050d9ab](https://github.com/mingguangZhou/f1tenth_dev/commit/050d9abfc0edcdf898aae4d1185415466b12f389).
+This documentation-only assessment inspected source and preserved local run evidence;
+build/runtime results below are recorded historical validation, not rerun here.
 Pinned PF: [dfd07cb](https://github.com/mingguangZhou/particle_filter/commit/dfd07cb895e854a7a5ca872339a0f567e24fa5ba).
 Current evidence: targeted Foxy build, 66 centerline/workbench tests, 82 bringup
 regression tests, fresh IFAC/Tempo offline generation, Tk window/event-loop smoke including map-only latest-export preview and Finish/Exit,
@@ -25,16 +47,12 @@ PASS and no observed collisions or emergency stops. No hardware or human race-da
 usability validation was performed.
 Earlier historical evidence retains its original qualification.
 
-**Human-confirmed current objective:** run the operator-selected Tempo experimental
-CSV through PF + PnC at a nominal 0.5–2.0 m/s command range, preserve evidence and
-repeatable simulator/comparison guidance. The preceding task established V2 race-day workbench UX, explicit truthful
-validated/experimental export and auditable downstream selection; the human review
-adds wheel zoom, exact preset values, typed/dragged fields, deliberate new-profile
-limit edits and saved-output/exit clarity. Only the requested opt-in command-speed
-limits changed; no optimizer/PF algorithms, steering limits, vehicle dynamics or
-automatic execution from the workbench changed. **Subsequent
-objective, strategic priorities and development sequence: Not specified / awaiting
-human direction.** Open issues below are observations, not assigned work.
+**Human-confirmed current activity:** manually repeat the established closed-loop
+simulation, prepare onboard data collection subject to hardware/track qualification,
+then analyze and compare preserved datasets. This documentation task organizes
+local evidence and the operator handoff; it authorizes no vehicle operation or
+functional change. Future strategic priorities remain human-owned. Open issues
+below are observations, not automatically assigned work.
 
 | Capability | Demonstrated evidence and boundary |
 | --- | --- |
@@ -92,15 +110,15 @@ changes and failures rather than every commit.
 
 | Date | Milestone, evidence and limitation |
 | --- | --- |
-| Experiment 2026-10-02; commit 10-07 | **Tempo Coffee unresolved.** [9d4abc0](https://github.com/mingguangZhou/f1tenth_dev/commit/9d4abc0) commits PGM/YAML only. Local handoff reports optimizer corridor/curvature rejection; archived metadata/results corroborate provisional centerline 10 s PASS (14.824 m, no collision, one emergency entry) but a requested 20 s run stops at 7.59 s with collision. Experimental config/generated path/docs were rolled back. No validated optimized raceline; link between optimizer rejection and driving failure is inferred, not isolated. Artifacts/reports are local-only. |
+| Map scan 2026-10-02; experiment date uncertain; cleanup/commit 10-07 | **Tempo Coffee unresolved.** [9d4abc0](https://github.com/mingguangZhou/f1tenth_dev/commit/9d4abc0) commits PGM/YAML only. Local handoff reports optimizer corridor/curvature rejection; archived metadata/results corroborate provisional centerline 10 s PASS (14.824 m, no collision, one emergency entry) but a requested 20 s run stops at 7.59 s with collision. Experimental config/generated path/docs were rolled back. No validated optimized raceline; link between optimizer rejection and driving failure is inferred, not isolated. Artifacts/reports are local-only. |
 | Reconstruction 2026-10-09; commit 10-10 | **Persistent engineering history.** [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b) records source/Git/report inspection, bag counts and IFAC manifest/hash corroboration. Documentation checks reported passing; no new ROS/hardware validation. The prior entry's “uncommitted” status is corrected by this commit evidence. |
-| 2026-10-10; this uncommitted task | **Human-led consolidated record.** Explicit human request replaces the three-record layout with this record, removes AI-assigned priorities and distinguishes implementation from approval. Documentation/reference/scope checks are the applicable validation; no functional change or ROS validation. |
-| 2026-10-10; uncommitted workbench task | **Offline raceline workflow.** [Workbench](../centerline_tools/raceline_workbench.py) reuses Charlie and E/A/X, with shared production gates, isolated/hash-qualified outputs and 16 deterministic retries. Fresh IFAC fixture AUTO_PASS (max 0.699 1/m); Tempo AUTO_SEARCH_EXHAUSTED (best corridor-safe candidate 1.460 > 1.082 1/m). Tests/targeted Foxy build passed; no runtime/hardware acceptance inferred. See [contract](../centerline_tools/README.md#2-workbench-contract) and [commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench). |
-| 2026-10-11; V1 commit / V2 working tree | **Race-day selection.** V1 is now committed at [1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efc); this corrects its earlier “uncommitted” label without changing the experiment date. V2 adds GUI-default/fresh sessions, readable tuning and explicit validated/experimental manifests. 57 centerline and 78 bringup tests plus targeted build PASS; IFAC selection runs 10 s/14.57 m and records exact evidence with clean shutdown. IFAC output matches V1 SHA; Tempo remains exhausted, with experimental export only. Subsequent human UX review adds zoom, preset-number visibility, eight typed/dragged controls, confirmed new-profile limit edits, prior-export preview and Finish/Exit; 66 centerline tests PASS. Interactive Tk smoke is not human usability or hardware validation. See [selection contract](../centerline_tools/README.md#selection-and-downstream-handoff). |
+| 2026-10-10; committed [d28f615](https://github.com/mingguangZhou/f1tenth_dev/commit/d28f615) | **Human-led consolidated record.** Explicit human request replaces the three-record layout with this record, removes AI-assigned priorities and distinguishes implementation from approval. Documentation/reference/scope checks are the applicable validation; no functional change or ROS validation. |
+| 2026-10-10 local investigation; committed 2026-10-11 [1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efc) | **Offline raceline workflow.** [Workbench](../centerline_tools/raceline_workbench.py) reuses Charlie and E/A/X, with shared production gates, isolated/hash-qualified outputs and 16 deterministic retries. Fresh IFAC fixture AUTO_PASS (max 0.699 1/m); Tempo AUTO_SEARCH_EXHAUSTED (best corridor-safe candidate 1.460 > 1.082 1/m). Tests/targeted Foxy build passed; no runtime/hardware acceptance inferred. See [contract](../centerline_tools/README.md#2-workbench-contract) and [commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench). |
+| 2026-10-11; V1 [1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efc), V2 [050d9ab](https://github.com/mingguangZhou/f1tenth_dev/commit/050d9ab) | **Race-day selection.** V1 is now committed at [1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efc); this corrects its earlier “uncommitted” label without changing the experiment date. V2 adds GUI-default/fresh sessions, readable tuning and explicit validated/experimental manifests. 57 centerline and 78 bringup tests plus targeted build PASS; IFAC selection runs 10 s/14.57 m and records exact evidence with clean shutdown. IFAC output matches V1 SHA; Tempo remains exhausted, with experimental export only. Subsequent human UX review adds zoom, preset-number visibility, eight typed/dragged controls, confirmed new-profile limit edits, prior-export preview and Finish/Exit; 66 centerline tests PASS. Interactive Tk smoke is not human usability or hardware validation. See [selection contract](../centerline_tools/README.md#selection-and-downstream-handoff). |
 
 ### 2026-10-11 — selected Tempo experimental low-speed simulation
 
-**Simulation/runtime validated, uncommitted:** explicit map/CSV selection, opt-in
+**Recorded simulation/runtime validation, committed at [050d9ab](https://github.com/mingguangZhou/f1tenth_dev/commit/050d9ab):** explicit map/CSV selection, opt-in
 0.5–2.0 m/s shared command range and ±2.0 m/s final cap, one-shot PF initialization,
 GT-isolated full PnC, recording and offline analysis. Two 30 s straight-start runs
 (headless and RViz) passed: 29.62 / 29.45 m travelled, no observed collisions or
@@ -115,6 +133,18 @@ proof of arbitrary-start reliability. The selected CSV still exceeds production
 curvature limits; no hardware qualification. The pinned onboard PF launch's early
 map selection also prevents assuming a custom config selects a new map. These
 are unresolved observations, not automatically assigned work.
+
+### 2026-10-11 — documentation status correction and operator handoff
+
+Documentation assessment at `050d9ab` corrects stale “uncommitted” labels for
+`d28f615`, V1 `1308efc` and V2/simulation `050d9ab`; supported experiment dates and
+validation boundaries are retained. The earlier Tempo “experiment 10-02” label
+was the scan date; exact experiment creation time is not established. Local reports are numbered/indexed in ignored
+`temporary_reports/`; the canonical guide now exposes the human-confirmed
+simulation → qualified onboard recording → offline comparison activity, with
+blocked prerequisites explicit. Link, report-integrity, command-interface and
+Markdown/scope checks apply; no fresh ROS build, driving or hardware validation.
+This documentation update itself is uncommitted.
 
 ## 3. Engineering decisions and implementation rationale
 

@@ -8,7 +8,9 @@ the links below avoid duplicating commands and metric definitions.
 
 Begin with the [project record](PROJECT_RECORD.md) for factual status, milestones,
 implementation rationale and evidence gaps. It provides context for a human-defined
-task, not an approved roadmap. Commands and technical contracts remain below.
+task, not an approved roadmap. **Current hands-on activity:** use the
+[simulation → onboard recording → comparison entry point](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+It labels executable, conditional and blocked steps before giving commands.
 
 ## 2. Document map
 
@@ -35,7 +37,7 @@ These artifact classes have different lifetimes:
 | Permanent documentation | Source-controlled files under `docs/`; supported environment, commands, contracts, and interpretation guidance |
 | Permanent engineering record | `PROJECT_RECORD.md`; factual assessed state, milestones, decision provenance and open gaps; human direction is distinguished from implementation evidence |
 | Preserved run artifacts | Git-ignored `oudtra_driver_bringup/runs/<descriptive-run-id>/`; raw bag, metadata, generated scorecard, JSON, plots, logs, and copied configuration |
-| Temporary engineering handoff | Repository-root `PHASE*_CODEX_REPORT.md`; task evidence that remains uncommitted unless explicitly promoted |
+| Temporary engineering handoff | Local Git-ignored `temporary_reports/NNN_<subject>.md`, indexed in `temporary_reports/INDEX.md`; detailed evidence, not permanent history or commands. Ordinals indicate chronology, not priority; not available in every clone. |
 
 The current local simulation example is
 `oudtra_driver_bringup/runs/ifac_pf_closed_loop_smoothness_baseline_20260922T175959Z/`.

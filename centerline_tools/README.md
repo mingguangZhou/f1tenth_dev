@@ -18,6 +18,35 @@ Copyable fixture/manual commands and output-discovery instructions live in the
 The later sections document retained legacy generators and the ROS publisher;
 legacy preview/export filenames alone do not establish production acceptance.
 
+**Quick links:** [workbench flow](#flow-and-result-states) · [GUI/actions](#race-day-interface) ·
+[tuning versus hard limits](#search-settings-versus-hard-constraints) ·
+[common validator/manual fallback](#one-production-validator-and-manual-fallback) ·
+[outputs](#outputs-and-ownership) · [downstream selection](#selection-and-downstream-handoff) ·
+[legacy optimizer](#6-global-raceline-optimization) · [ROS publisher](#9-basic-ros-run-publish-final-smoothed-raceline) ·
+[CSV schema](#16-csv-format-consumed-by-ros-publisher).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. Summary and document map](#1-summary-and-document-map)
+- [2. Workbench contract](#2-workbench-contract)
+- [3. Legacy generator outputs](#3-legacy-generator-outputs)
+- [4. Package placement](#4-package-placement)
+- [5. Legacy offline generation](#5-legacy-offline-generation)
+- [6. Global raceline optimization](#6-global-raceline-optimization)
+- [7. Reproducible obstacle maps](#7-reproducible-obstacle-maps)
+- [8. Build](#8-build)
+- [9. Basic ROS run: publish final smoothed raceline](#9-basic-ros-run-publish-final-smoothed-raceline)
+- [10. Run directly from source-tree CSV](#10-run-directly-from-source-tree-csv)
+- [11. Publish the centerline instead, if needed](#11-publish-the-centerline-instead-if-needed)
+- [12. Reverse the published direction](#12-reverse-the-published-direction)
+- [13. RViz2 setup](#13-rviz2-setup)
+- [14. Useful launch parameters](#14-useful-launch-parameters)
+- [15. Useful checks](#15-useful-checks)
+- [16. CSV format consumed by ROS publisher](#16-csv-format-consumed-by-ros-publisher)
+- [17. Notes](#17-notes)
+<!-- table-of-contents:end -->
+
 ## 2. Workbench contract
 
 ### Flow and result states

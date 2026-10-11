@@ -13,6 +13,29 @@ owns copyable workflows; the [engineering workflow](ENGINEERING_WORKFLOW.md) own
 development and completion policy; [localization simulation and evaluation](LOCALIZATION_SIMULATION.md)
 owns readiness, recording, metric, and evidence contracts.
 
+**Start here:** confirm [host checkout](#2-host-repository),
+[container](#3-localization-ready-simulation-environment), then [build/source](#6-building-packages).
+**Quick links:** [container helper](#4-container-helper) · [package discovery](#5-ros-package-discovery) ·
+[sourcing](#7-entering-a-built-ros-environment) · [canonical workflows](#8-canonical-simulation-environment-and-workflows) ·
+[Git policy](#10-git-workflow) · [documentation/handoff](#12-documentation-and-deliverable-maintenance).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. How to use this document](#1-how-to-use-this-document)
+- [2. Host repository](#2-host-repository)
+- [3. Localization-ready simulation environment](#3-localization-ready-simulation-environment)
+- [4. Container helper](#4-container-helper)
+- [5. ROS package discovery](#5-ros-package-discovery)
+- [6. Building packages](#6-building-packages)
+- [7. Entering a built ROS environment](#7-entering-a-built-ros-environment)
+- [8. Canonical simulation environment and workflows](#8-canonical-simulation-environment-and-workflows)
+- [9. Codex CLI](#9-codex-cli)
+- [10. Git workflow](#10-git-workflow)
+- [11. Baseline](#11-baseline)
+- [12. Documentation and deliverable maintenance](#12-documentation-and-deliverable-maintenance)
+<!-- table-of-contents:end -->
+
 ## 2. Host repository
 
 Primary repository:
@@ -319,6 +342,9 @@ operating commands in the same change. Check commands against the current
 implementation and validate affected commands when practical; state any unverified
 steps. Keep guidance concise and organized by user action, not by development
 phase or temporary report. Temporary reports are not the operating manual.
+For a changed runtime/experiment procedure, include the
+[operator handoff](ENGINEERING_WORKFLOW.md#7-operator-handoff): what is executable
+now, conditional prerequisites and the human-confirmed next manual activity.
 
 ### Make deliverables easy to find
 
@@ -331,7 +357,9 @@ operational document, and update it when output names or locations change.
 ### Keep human-facing documentation readable
 
 Major permanent documents and generated engineering reports should begin with a
-short purpose/document map and use numbered top-level sections. Generated run
+short purpose/document map and use numbered top-level sections. Include a complete
+clickable Table of contents near the front of substantial guides/reports and keep
+it synchronized with headings; see the workflow navigation standard. Generated run
 reports should explain the platform, scenario, execution flow, initialization,
 closed-loop stack, recorded evidence, producing tools, and reproduction references
 before metric tables. Link to permanent sources of truth instead of copying long
@@ -339,7 +367,7 @@ commands or metric definitions into each report.
 
 Keep the distinction visible between source-controlled documentation under `docs/`,
 Git-ignored run artifacts under `oudtra_driver_bringup/runs/`, and temporary
-uncommitted `PHASE*_CODEX_REPORT.md` handoffs. When report formatting changes,
+local `temporary_reports/NNN_<subject>.md` handoffs indexed by `temporary_reports/INDEX.md` (Git-ignored, not guaranteed in another clone). When report formatting changes,
 regenerate maintained examples and verify metric values, applicability, schema,
 and comparison results remain unchanged. A generator-source provenance hash may
 change when its reporting code changes; record that separately from metric changes.

@@ -21,3 +21,6 @@
 
 # Offline workbench sessions are generated evidence, not reviewed track assets
 /centerline_tools/centerline_output/workbench/
+
+# Local detailed engineering handoffs; permanent outcomes belong in docs/
+/temporary_reports/

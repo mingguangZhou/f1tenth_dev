@@ -10,6 +10,28 @@ and relevant checks, not a separate design document or approval ceremony.
 the [operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md)
 owns maintained commands.
 
+**Start here:** follow the [task workflow](#2-standard-workflow), then use
+[operator handoff](#7-operator-handoff) at completion when usage changes.
+**Quick links:** [readability](#3-readability-and-explicit-data-flow) · [validation](#4-tests-and-validation) ·
+[artifact triage](#5-validation-artifact-triage) · [reporting/documents](#6-documentation-and-diagrams) ·
+[project record](#persistent-engineering-records) · [completion](#8-completion).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. How to use this document](#1-how-to-use-this-document)
+- [2. Standard workflow](#2-standard-workflow)
+- [3. Readability and explicit data flow](#3-readability-and-explicit-data-flow)
+- [4. Tests and validation](#4-tests-and-validation)
+- [5. Validation artifact triage](#5-validation-artifact-triage)
+  - [Reusable end-of-task Codex prompt](#reusable-end-of-task-codex-prompt)
+- [6. Documentation and diagrams](#6-documentation-and-diagrams)
+  - [Technical report standard](#technical-report-standard)
+  - [Persistent engineering records](#persistent-engineering-records)
+- [7. Operator handoff](#7-operator-handoff)
+- [8. Completion](#8-completion)
+<!-- table-of-contents:end -->
+
 ## 2. Standard workflow
 
 1. **Inspect.** Read applicable instructions, check branch/HEAD and working-tree
@@ -82,8 +104,8 @@ A useful result does not require retaining every artifact that produced it.
 Logs and reports usually supply evidence to summarize; promote the reusable check,
 test, or lasting conclusion instead. Retain raw data or a report permanently only
 when there is an explicit need and an agreed home. Keep permanent documentation
-organized around outcomes, contracts, and operating procedures rather than an
-ever-growing chronology of `PHASE*_CODEX_REPORT` files.
+organized around outcomes, contracts, and operating procedures rather than a
+collection of detailed local task reports.
 
 Recommend promotions and their scope before making them; follow existing task
 authorization and do not silently expand the work. Reports remain uncommitted by
@@ -120,6 +142,18 @@ Use numbered top-level sections for substantial permanent human documentation an
 generated engineering reports. Near the start, include a short document map or
 experiment explanation that tells readers what the document answers and where the
 source-of-truth commands, environment, contracts, and artifacts live.
+For substantial human-facing guides and technical reports, include an explicit
+clickable **Table of contents** near the front, after the short purpose/summary and
+before the main detail. List every major section in document order; add a compact
+second level for useful subsections in long guides. A few quick links or a narrative
+document map do not replace the whole-document contents list. Keep existing heading
+names/anchors stable where practical. Update contents in the same change as heading
+additions, removals or renames, including generated-report templates/renderers when
+in scope. Use ordinary Markdown anchor links compatible with GitHub and VS Code;
+ignore code/comment headings and account for duplicate heading suffixes. Check
+contents coverage and links before handoff. Short indexes or simple notes may omit
+the list when it would add no navigational value.
+
 For debugging or fixes, include the symptom, evidenced root cause(s), the steps
 used to isolate them, what changed, and why validation supports resolution. Separate
 direct causes from contributing defects and unrelated improvements; state when
@@ -167,6 +201,14 @@ Engineering reports capture task-specific evidence, temporary observations, and
 handoff context. They are **temporary and uncommitted by default**, unless explicitly
 requested otherwise. Use the [report template](templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md)
 when a report is useful or requested; omit optional sections that add no value.
+Store reports in Git-ignored repository-root `temporary_reports/`, using the next
+unused ordinal plus a meaningful topic (`NNN_<subject>.md`) and updating local
+`INDEX.md`. Ordinals describe chronology, not engineering phase or priority.
+Reserve a distinct filename; never overwrite an earlier report. The index records
+original names/date evidence and uncertainty for reorganized historical reports.
+Relative links in reports start from that directory, for example `../docs/...`.
+Keep reports accessible locally, but do not promise them through permanent links
+as if every clone contains them. Commit/push requires explicit authorization.
 Promote stable lessons into the appropriate permanent document rather than preserving
 every report, transcript, or generated log. Keep temporary artifacts out of commits.
 
@@ -216,7 +258,33 @@ Mermaid shape syntax. Avoid renderer-specific features and HTML labels unless
 needed and verified. Check parsing/rendering with an available Mermaid renderer
 before handoff; state explicitly when the target preview was not verified.
 
-## 7. Completion
+## 7. Operator handoff
+
+For changes to runtime workflows, CLI/launch/config contracts, validation procedures
+or experiment setup, include a brief handoff alongside the engineering report:
+
+| Area | Required information |
+| --- | --- |
+| Implemented | What changed, what was tested and what remains unverified |
+| Operator readiness | Exact operational-guide entry, executable versus conditional/blocked steps, selected paths/profiles and runtime prerequisites |
+| Human direction | The next manual activity already stated by the engineer, and essential unresolved choices/approvals |
+
+Keep procedures in the operational guide, organized as **Goal → Preconditions →
+Terminal commands → Expected output → Stop/cleanup → Troubleshooting → Evidence
+to retain**. Identify host, simulation container and onboard terminals; do not make
+the engineer reconstruct a sequence from historical reports. Update verified,
+authorized instructions during the task; trivial documentation edits do not need
+another approval conversation. Preserve conditional steps when prerequisites are
+unresolved, and wait for human direction before presenting them as ready to run.
+
+If the next manual activity is unknown, ask conversationally: “Which manual workflow
+would you like to perform next, so I can prepare the exact terminal instructions?”
+If it is already known, do not ask again: raise only essential missing parameters
+or approval choices. In noninteractive work, report those questions/prerequisites
+in the final handoff; do not claim a popup or confirmation occurred. An unanswered question
+does not grant approval. This step supports human-owned activity, not an AI-generated roadmap.
+
+## 8. Completion
 
 The objective is met within its non-goals; the diff is focused and reviewed; relevant
 validation supports the stated outcome; changed contracts or usage are documented;

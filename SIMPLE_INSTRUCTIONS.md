@@ -1,8 +1,41 @@
 # SIMPLE_INSTRUCTIONS.md
 
+**Purpose:** retained daily-use/package reference from the earlier development setup.
+**Start here for current PF/PnC simulation and recording:** the
+[canonical operator entry point](docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+The canonical localization-ready container/environment takes precedence over older
+image/lifecycle examples below; this guide is not the current Tempo/onboard handoff.
+**Quick links:** [atomic commands](#recommended-atomic-workflow) · [container setup](#1-start-and-enter-the-docker-container) ·
+[ROS basics](#2-basic-ros-2-commands-inside-the-container) · [reference following](#3-current-main-flow-raceline-path-following-with-rviz2-simulator) ·
+[launch order](#4-recommended-launch-order) · [offline tools](#5-offline-tools-inside-the-container) ·
+[cleanup/reference](#6-useful-cleanup-and-rebuild-commands).
+
 Last Edit: 2026.08.17
 
 These are the simple daily-use instructions for the current RoboRacer/F1TENTH development setup.
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+  - [Recommended atomic workflow](#recommended-atomic-workflow)
+- [1. Start and enter the Docker container](#1-start-and-enter-the-docker-container)
+  - [1.1 Docker Compose way, without NVIDIA GPU support](#11-docker-compose-way-without-nvidia-gpu-support)
+  - [1.2 Rocker way, with NVIDIA GPU and X11 support](#12-rocker-way-with-nvidia-gpu-and-x11-support)
+- [2. Basic ROS 2 commands inside the container](#2-basic-ros-2-commands-inside-the-container)
+- [3. Current main flow: Raceline Path Following with RViz2 simulator](#3-current-main-flow-raceline-path-following-with-rviz2-simulator)
+  - [3.1 Build and start the RViz2 simulator, true-location-known version](#31-build-and-start-the-rviz2-simulator-true-location-known-version)
+  - [3.2 Build and start centerline_tools, global raceline publisher](#32-build-and-start-centerline_tools-global-raceline-publisher)
+  - [3.3 Build and start path_following_v2](#33-build-and-start-path_following_v2)
+  - [3.4 Speed mode in path_following_v2](#34-speed-mode-in-path_following_v2)
+  - [3.5 Build and start rl_speed_inference, optional RL speed residual](#35-build-and-start-rl_speed_inference-optional-rl-speed-residual)
+- [4. Recommended launch order](#4-recommended-launch-order)
+- [5. Offline tools inside the container](#5-offline-tools-inside-the-container)
+  - [5.1 Centerline and raceline generation](#51-centerline-and-raceline-generation)
+  - [5.2 RL training and validation](#52-rl-training-and-validation)
+  - [5.3 Obstacle map creation](#53-obstacle-map-creation)
+- [6. Useful cleanup and rebuild commands](#6-useful-cleanup-and-rebuild-commands)
+- [7. Current important packages](#7-current-important-packages)
+<!-- table-of-contents:end -->
 
 ## Recommended atomic workflow
 

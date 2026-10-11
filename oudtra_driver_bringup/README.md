@@ -2,6 +2,23 @@
 
 Master launch package for the integrated raceline-to-Reactive V2 stack.
 
+**Start here for current operation:** [simulation → onboard recording → comparison](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+This package reference explains launch composition; the operational guide owns the
+maintained terminal sequences and qualification boundaries.
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [Reference build and launch commands](#reference-build-and-launch-commands)
+- [Onboard launch and deployment](#onboard-launch-and-deployment)
+- [Perfect-localization simulator](#perfect-localization-simulator)
+- [Configuration ownership and direction](#configuration-ownership-and-direction)
+- [Launched nodes and PF startup](#launched-nodes-and-pf-startup)
+- [Terminal logging](#terminal-logging)
+<!-- table-of-contents:end -->
+
+## Reference build and launch commands
+
 With the atomic development commands, start/enter Docker from the repository
 root and launch the stack inside the container:
 
@@ -33,6 +50,8 @@ f1 auto \
 This changes both the driven path and the local planner's Frenet reference. The
 published racing line is the single reference, with its nominal/rejoin target at
 `d=0`; the planner does not load a separate centerline CSV.
+
+## Onboard launch and deployment
 
 Onboard:
 
@@ -69,11 +88,15 @@ colcon build --packages-select \
 source /f1tenth_ws/install/setup.bash
 ```
 
+## Perfect-localization simulator
+
 Simulator (no particle filter and no `/pf/health` requirement):
 
 ```bash
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
+
+## Configuration ownership and direction
 
 Both compatibility launches include the same `full_stack_launch.py`. The
 non-`_sim` component YAML files are the canonical production behavior profile.
@@ -100,6 +123,8 @@ ros2 launch oudtra_driver_bringup full_stack_sim_launch.py \
   raceline_direction:=reverse
 ```
 
+## Launched nodes and PF startup
+
 The launches start the raceline publisher, raw local-raceline generator,
 persistent local trajectory planner, path follower, Reactive V2 upper
 controller, final-trajectory guard, drive arbitrator, and Reactive V2 lower
@@ -117,6 +142,8 @@ ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
 
 For the optional old single-command behavior, use
 `start_particle_filter:=true` on the onboard master launch.
+
+## Terminal logging
 
 By default the shared terminal shows the local-planner startup summary plus
 drive-arbitrator and lower-safety state transitions. The path

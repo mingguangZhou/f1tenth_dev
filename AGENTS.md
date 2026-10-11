@@ -151,7 +151,24 @@ Do not invent performance improvements or claim success without supporting evide
 
 Keep this file focused on persistent repository-wide rules.
 
-Engineering reports are temporary and uncommitted by default unless explicitly requested otherwise. Use the [report template](docs/templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md) when a report is needed.
+Substantial human-facing guides and engineering reports must include a clickable
+**Table of contents** near the front, covering all major sections. Update it when
+headings change and verify GitHub/VS Code anchors; follow the workflow's navigation
+standard. Short documents may omit it when their structure is already obvious.
+
+Put new detailed task reports in Git-ignored `temporary_reports/`, using the next
+available ordinal and a meaningful name (`NNN_<subject>.md`); update its local
+`INDEX.md`. Numbers describe chronology, not phase or priority. Reports remain
+uncommitted unless explicitly authorized; promote lasting conclusions into the
+project record or owning technical guide, without permanent links promising
+local-only reports. Use the [report template](docs/templates/CODEX_ENGINEERING_REPORT_TEMPLATE.md).
+
+For changes to runtime workflows, interfaces or experiments, finish with an
+operator handoff: implemented/tested/unverified behavior, the exact supported
+command and prerequisites, and human-confirmed next activity or unresolved choices.
+Maintain the operational guide within scope. If the next manual activity is unknown,
+ask briefly; if known, ask only essential unresolved questions. Never treat an
+unanswered choice or AI suggestion as approval or a new project objective.
 
 Put detailed architecture, operating procedures, simulator instructions, scenario definitions, evaluation methodology, and subsystem-specific information in dedicated documentation or scripts rather than continuously expanding this file.
 

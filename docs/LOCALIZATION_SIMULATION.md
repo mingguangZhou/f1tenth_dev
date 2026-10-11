@@ -9,6 +9,36 @@ copyable commands and [development environment](DEVELOPMENT_ENVIRONMENT.md) for
 container/workspace setup. Start with the workflow below, then use sections 3–5
 for recording, artifacts, and evaluation semantics.
 
+**Start here:** [current operator commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow)
+for doing a run; this guide explains why it works and what its results mean.
+**Quick links:** [startup/readiness](#2-closed-loop-localization-workflow) ·
+[recording](#3-recording-a-simulation-evaluation-run) · [deliverables](#4-preserved-run-artifacts-and-deliverables) ·
+[metric definitions](#53-scorecard-definitions) · [comparison](#54-compare-completed-runs) ·
+[onboard evidence](#55-onboard-recording-contract) · [plots/examples](#56-plots-and-validation-artifacts).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. How to use this document](#1-how-to-use-this-document)
+- [2. Closed-loop localization workflow](#2-closed-loop-localization-workflow)
+  - [2.1 Reproduction](#21-reproduction)
+  - [2.2 Readiness and acceptance](#22-readiness-and-acceptance)
+  - [2.3 Interfaces and evaluation profile](#23-interfaces-and-evaluation-profile)
+  - [2.4 Adding a simulation track](#24-adding-a-simulation-track)
+  - [2.5 Headless execution and timing evidence](#25-headless-execution-and-timing-evidence)
+- [3. Recording a simulation evaluation run](#3-recording-a-simulation-evaluation-run)
+  - [3.1 Recording purpose and lifecycle](#31-recording-purpose-and-lifecycle)
+- [4. Preserved run artifacts and deliverables](#4-preserved-run-artifacts-and-deliverables)
+  - [4.1 Recorded signal contract](#41-recorded-signal-contract)
+- [5. Shared simulation/onboard evaluation](#5-shared-simulationonboard-evaluation)
+  - [5.1 Purpose and evidence model](#51-purpose-and-evidence-model)
+  - [5.2 Input and output contract](#52-input-and-output-contract)
+  - [5.3 Scorecard definitions](#53-scorecard-definitions)
+  - [5.4 Compare completed runs](#54-compare-completed-runs)
+  - [5.5 Onboard recording contract](#55-onboard-recording-contract)
+  - [5.6 Plots and validation artifacts](#56-plots-and-validation-artifacts)
+<!-- table-of-contents:end -->
+
 ## 2. Closed-loop localization workflow
 
 The opt-in localization evaluation workflow starts the existing Gym simulator, PF,
@@ -232,10 +262,10 @@ find /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs -maxdepth 3 \
   \( -name report.md -o -name metrics.json -o -name '*.png' \) -print
 ```
 
-The temporary engineering handoff reports are separate files at the repository
-root. Their descriptive filenames preserve the phase order, for example
-`PHASE1_STEP3_2A_RECORDED_LOCALIZATION_BASELINE_REPORT.md`; they are not generated
-run deliverables and remain uncommitted by default.
+Detailed task handoffs live locally in Git-ignored `temporary_reports/NNN_<subject>.md`;
+use its `INDEX.md` for chronology, original names and uncertainty. They are separate
+from generated run deliverables and are not available in every clone. Lasting
+outcomes belong in the project record or owning guide, not a committed report archive.
 
 ### 4.1 Recorded signal contract
 

@@ -13,6 +13,13 @@ The package contains:
 Only `reactive_control_v2/lower_safety_controller` should publish the final
 `/drive` topic. See `DESIGN.md` for interfaces and exact trigger definitions.
 
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [Persistent local-planner integration](#persistent-local-planner-integration)
+- [Ultimate chosen local trajectory (visualization only)](#ultimate-chosen-local-trajectory-visualization-only)
+<!-- table-of-contents:end -->
+
 ## Persistent local-planner integration
 
 `path_following_v2/local_trajectory_planner` handles both an ordinary obstacle

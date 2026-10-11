@@ -1,5 +1,33 @@
 # Raceline to Reactive V2 integration design
 
+## How to use this design
+
+**Purpose:** explain ownership and the actual transition rules between primary,
+reactive and stopped control. **Start here:** [responsibilities](#1-responsibility-split)
+and [modes](#2-modes-and-command-ownership). Use the
+[operator guide](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow)
+for current full-stack commands.
+**Quick links:** [fallback predicate](#3-exact-fallback-expression) · [unavailable primary](#4-raceline_unavailable-in-detail) ·
+[persistent replanning](#5-persistent-local-replanning-and-raceline_blocked) · [PF policy](#6-localization-policy) ·
+[STOP behavior](#7-reactive-chain-availability-and-stop-behavior) ·
+[launch contracts](#8-master-launches) · [integration checks](#10-first-integration-checks).
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [How to use this design](#how-to-use-this-design)
+- [1. Responsibility split](#1-responsibility-split)
+- [2. Modes and command ownership](#2-modes-and-command-ownership)
+- [3. Exact fallback expression](#3-exact-fallback-expression)
+- [4. RACELINE_UNAVAILABLE in detail](#4-raceline_unavailable-in-detail)
+- [5. Persistent local replanning and RACELINE_BLOCKED](#5-persistent-local-replanning-and-raceline_blocked)
+- [6. Localization policy](#6-localization-policy)
+- [7. Reactive-chain availability and STOP behavior](#7-reactive-chain-availability-and-stop-behavior)
+- [8. Master launches](#8-master-launches)
+- [9. Terminal logging through the master launch](#9-terminal-logging-through-the-master-launch)
+- [10. First integration checks](#10-first-integration-checks)
+<!-- table-of-contents:end -->
+
 ## 1. Responsibility split
 
 The integration keeps control generation, supervision, and final safety in

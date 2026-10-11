@@ -1,6 +1,11 @@
 # Engineering report: <task>
 
-<!-- Task reports are temporary/uncommitted unless explicitly requested otherwise.
+<!-- Save as temporary_reports/NNN_<meaningful_subject>.md using the next unused
+     ordinal and updating local INDEX.md. Chronology is not phase or priority.
+     Task reports are Git-ignored/uncommitted unless explicitly authorized.
+     Rebase source-template relative links for the report location (../docs/...).
+     Keep the clickable Table of contents after the summary; update it after
+     omitting/renaming sections and verify all anchors before handoff.
      Scale detail to the task; remove these instructions and optional sections
      that add no value. Do not paste large logs or unrelated diffs.
 
@@ -14,6 +19,24 @@
 
 <Concise overview: objective, outcome, key decisions, and material limits. For fixes,
 state the symptom, evidenced root cause, correction, and verified completion status.>
+
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. Summary](#1-summary)
+- [2. Objective and non-goals](#2-objective-and-non-goals)
+- [3. System / experiment and evidence flow](#3-system--experiment-and-evidence-flow)
+- [4. Existing behavior / observations](#4-existing-behavior--observations)
+- [5. Engineering decision / mechanism](#5-engineering-decision--mechanism)
+- [6. Debugging and fix closure (when applicable)](#6-debugging-and-fix-closure-when-applicable)
+- [7. Files changed](#7-files-changed)
+- [8. Expected behavior](#8-expected-behavior)
+- [9. Diagram / data flow (optional; omit if covered above)](#9-diagram--data-flow-optional-omit-if-covered-above)
+- [10. Detailed evidence and validation](#10-detailed-evidence-and-validation)
+- [11. Limitations / follow-up](#11-limitations--follow-up)
+- [12. Validation artifact triage](#12-validation-artifact-triage)
+- [13. Git state](#13-git-state)
+<!-- table-of-contents:end -->
 
 ## 2. Objective and non-goals
 
@@ -89,9 +112,21 @@ are not approved priorities or tasks; do not invent a next strategic plan. Track
 suggestions permanently only if explicitly requested, labelled "AI suggestion —
 not approved".>
 
+### Operator handoff (when runtime/CLI/validation/setup changes)
+
+| Area | Handoff |
+| --- | --- |
+| Implemented | <changed behavior, tests, unverified portions> |
+| Operator readiness | <canonical command-guide section, prerequisites, executable/conditional/blocked status, outputs and stop/cleanup> |
+| Human direction | <already stated next manual activity; essential unresolved map/raceline/profile/approval question, if any> |
+
+<Ask about the next manual activity only if unknown; do not invent a goal. Unanswered
+choices remain conditional. Noninteractive handoffs state questions without claiming
+human confirmation occurred.>
+
 ## 12. Validation artifact triage
 
-<Apply [the promotion rule](../ENGINEERING_WORKFLOW.md#5-validation-artifact-triage):
+<Apply the promotion rule in `docs/ENGINEERING_WORKFLOW.md`, section 5:
 "Will we care about this result again after today?" List temporary artifacts,
 including /tmp probes/logs and this report, or state that none were created.
 Recommend promotions before implementing them.>
