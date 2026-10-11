@@ -90,7 +90,7 @@ def test_baseline_pass_and_gui_creation(tmp_path, monkeypatch):
     from centerline_tools.raceline_workbench_view import create_workbench_figure
     import matplotlib.pyplot as plt
     fig = create_workbench_figure(bench)
-    assert fig.workbench_controls["buttons"]["Save Validated"].active
+    assert fig.workbench_controls["buttons"]["Select / Export Validated"].active
     plt.close(fig)
 
 

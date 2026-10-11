@@ -5,6 +5,25 @@ centerline:
   minimum_loop_coverage_ratio: 0.98
 vehicle_profile: {}  # Advanced explicit overrides only: safety_margin_m,
                      # maximum_curvature_inv_m, validation_step_m.
+# Deliberate offline profile edits: confirmation creates a NEW session. These
+# ranges are UI input bounds, not evidence that the physical car can use them.
+advanced_vehicle_limits:
+  safety_margin_m: [0.05, 1.00]
+  maximum_curvature_inv_m: [0.25, 2.00]
+# UI presets only change SEARCH fields. Balanced means this session's baseline.
+tuning_presets:
+  Corner Cutting:
+    Less: {path_length_weight: 0.03}
+    Balanced: {}
+    More: {path_length_weight: 0.25}
+  Steering Smoothness:
+    Less: {curvature_rate_weight: 0.005, offset_slope_weight: 0.001}
+    Balanced: {}
+    More: {curvature_rate_weight: 0.08, offset_slope_weight: 0.03}
+  Optimization Detail:
+    Coarse: {optimization_spacing_m: 0.20}
+    Balanced: {}
+    Fine: {optimization_spacing_m: 0.05}
 search:
   maximum_candidates: 16  # Additional attempts after baseline, stop at first PASS.
   ranges:

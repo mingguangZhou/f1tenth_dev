@@ -5,23 +5,34 @@
 The repository implements short IFAC PF-localized closed-loop simulation,
 recording and offline evaluation, with historical run artifacts supporting that
 workflow. A passive onboard recorder exists; its physical-car validation is not
-established. Tempo Coffee's committed track assets remain the map pair, without a validated
-raceline or maintained simulation workflow. The offline workbench now records quantified
-Tempo search failure without promoting an invalid candidate.
+established. Tempo Coffee has no production-validated raceline. An explicit experimental
+low-speed simulation workflow now has two recorded 30 s passes from a straight
+start; the first-row start failed with erroneous PF heading and reverse recovery.
+The offline workbench records quantified
+Tempo search failure, supports deliberate experimental selection, and never labels
+that export production-valid. IFAC V2 selection passed a fresh bounded simulation.
 
-**Assessment:** 2026-10-10, `mingguangZhou/f1tenth_dev`, branch
+**Assessment:** 2026-10-11, `mingguangZhou/f1tenth_dev`, branch
 `mingguang_localization_robustness_ai_workspace`, revision
-[d28f615](https://github.com/mingguangZhou/f1tenth_dev/commit/d28f6159fb514be35679e27f3177144d1578360a)
-plus the uncommitted offline-workbench changes described below.
+[1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efcdc6b1211dbe93ed00a7d468a9b410d05d)
+plus the uncommitted V2 UX/selection and low-speed simulation changes below.
 Pinned PF: [dfd07cb](https://github.com/mingguangZhou/particle_filter/commit/dfd07cb895e854a7a5ca872339a0f567e24fa5ba).
-Current workbench evidence includes a targeted Foxy package build, offline
-regression tests and fresh IFAC/Tempo generation. No new vehicle simulation or
-hardware test was run. Historical research was reconstructed on 2026-10-09 and
-consolidated on 2026-10-10; prior artifacts do not certify current installed binaries.
+Current evidence: targeted Foxy build, 66 centerline/workbench tests, 82 bringup
+regression tests, fresh IFAC/Tempo offline generation, Tk window/event-loop smoke including map-only latest-export preview and Finish/Exit,
+and a 10 s recorded IFAC selected-raceline run (PASS, 14.57 m displacement, clean
+stack shutdown), followed by two 30 s Tempo low-speed runs with recording/analysis
+PASS and no observed collisions or emergency stops. No hardware or human race-day
+usability validation was performed.
+Earlier historical evidence retains its original qualification.
 
-**Human-confirmed current objective:** implement the offline raceline workbench:
-Charlie baseline → bounded tuning → existing manual editor → common production
-validator. No PF/PnC/vehicle tuning or automatic simulation launch. **Subsequent
+**Human-confirmed current objective:** run the operator-selected Tempo experimental
+CSV through PF + PnC at a nominal 0.5–2.0 m/s command range, preserve evidence and
+repeatable simulator/comparison guidance. The preceding task established V2 race-day workbench UX, explicit truthful
+validated/experimental export and auditable downstream selection; the human review
+adds wheel zoom, exact preset values, typed/dragged fields, deliberate new-profile
+limit edits and saved-output/exit clarity. Only the requested opt-in command-speed
+limits changed; no optimizer/PF algorithms, steering limits, vehicle dynamics or
+automatic execution from the workbench changed. **Subsequent
 objective, strategic priorities and development sequence: Not specified / awaiting
 human direction.** Open issues below are observations, not assigned work.
 
@@ -30,7 +41,7 @@ human direction.** Open issues below are observations, not assigned work.
 | Foxy / localization-ready Rocker environment | Implemented host-source/mount conventions inspected; past container builds/runtime checks **Reported**, not rerun. |
 | Normal and PF Gym bridges | Explicit config selection and shared simulator-truth diagnostic contract **Verified in source/tests**; past message-flow checks **Reported**. |
 | IFAC geometry / V2 PnC | Stored IFAC validation hashes/flags corroborate assets; bounded closed-loop bags corroborate historical **Simulation/runtime validation**. Five-lap performance is **Reported**; full recovery coverage and hardware results **Unknown**. |
-| Offline raceline workbench | **Build/test and offline fixture validated:** common automatic/manual gates, hash-qualified outputs, deterministic baseline/search, Matplotlib construction. Fresh explicit IFAC profile PASS; Tempo baseline + 16 trials exhausted with no validated CSV. Interactive race-day editing not yet human-validated. |
+| Offline raceline workbench | **Build/test, offline fixture and IFAC handoff simulation validated:** shared gates and unchanged IFAC CSV, fresh sessions/reopen, three-step GUI, explicit export/manifest/resolver. Tempo still fails production validation after 16 trials; experimental export is not track acceptance. Subsequent recorded low-speed simulation passed from row 270, not the failed first-row start. Tk construction/event loop tested; operator/manual interaction not human-validated. |
 | PF initialization / closed-loop integration | Readiness, one-shot pose and health gating implemented; historical short IFAC motion corroborated. No reset acknowledgement or accuracy guarantee. |
 | Recording / shared offline scorecard | Simulation and synthetic no-GT artifacts inspected; regression success **Reported**. Synthetic onboard fixtures are not hardware results or sim/onboard equivalence. |
 | Passive onboard recorder | Passivity verified in source; **Build/test and mock/runtime validation Reported**. Hardware validation not established; measured speed/IMU adapter remains missing. |
@@ -85,6 +96,25 @@ changes and failures rather than every commit.
 | Reconstruction 2026-10-09; commit 10-10 | **Persistent engineering history.** [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b) records source/Git/report inspection, bag counts and IFAC manifest/hash corroboration. Documentation checks reported passing; no new ROS/hardware validation. The prior entry's “uncommitted” status is corrected by this commit evidence. |
 | 2026-10-10; this uncommitted task | **Human-led consolidated record.** Explicit human request replaces the three-record layout with this record, removes AI-assigned priorities and distinguishes implementation from approval. Documentation/reference/scope checks are the applicable validation; no functional change or ROS validation. |
 | 2026-10-10; uncommitted workbench task | **Offline raceline workflow.** [Workbench](../centerline_tools/raceline_workbench.py) reuses Charlie and E/A/X, with shared production gates, isolated/hash-qualified outputs and 16 deterministic retries. Fresh IFAC fixture AUTO_PASS (max 0.699 1/m); Tempo AUTO_SEARCH_EXHAUSTED (best corridor-safe candidate 1.460 > 1.082 1/m). Tests/targeted Foxy build passed; no runtime/hardware acceptance inferred. See [contract](../centerline_tools/README.md#2-workbench-contract) and [commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench). |
+| 2026-10-11; V1 commit / V2 working tree | **Race-day selection.** V1 is now committed at [1308efc](https://github.com/mingguangZhou/f1tenth_dev/commit/1308efc); this corrects its earlier “uncommitted” label without changing the experiment date. V2 adds GUI-default/fresh sessions, readable tuning and explicit validated/experimental manifests. 57 centerline and 78 bringup tests plus targeted build PASS; IFAC selection runs 10 s/14.57 m and records exact evidence with clean shutdown. IFAC output matches V1 SHA; Tempo remains exhausted, with experimental export only. Subsequent human UX review adds zoom, preset-number visibility, eight typed/dragged controls, confirmed new-profile limit edits, prior-export preview and Finish/Exit; 66 centerline tests PASS. Interactive Tk smoke is not human usability or hardware validation. See [selection contract](../centerline_tools/README.md#selection-and-downstream-handoff). |
+
+### 2026-10-11 — selected Tempo experimental low-speed simulation
+
+**Simulation/runtime validated, uncommitted:** explicit map/CSV selection, opt-in
+0.5–2.0 m/s shared command range and ±2.0 m/s final cap, one-shot PF initialization,
+GT-isolated full PnC, recording and offline analysis. Two 30 s straight-start runs
+(headless and RViz) passed: 29.62 / 29.45 m travelled, no observed collisions or
+emergency-stop entries, clean shutdown. Live PF map-server YAML/grid and PnC CSV
+were checked; the grid hash matches the supplied map thresholds/image. Bringup
+regressions passed (82 tests). See [maintained commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison).
+
+The first-row start failed: usable-health initialization did not establish correct
+heading, wrong-way reverse recovery followed, and simulator yaw became extreme.
+A different starting pose is a documented scenario adjustment, not a PF fix or
+proof of arbitrary-start reliability. The selected CSV still exceeds production
+curvature limits; no hardware qualification. The pinned onboard PF launch's early
+map selection also prevents assuming a custom config selects a new map. These
+are unresolved observations, not automatically assigned work.
 
 ## 3. Engineering decisions and implementation rationale
 
@@ -109,18 +139,24 @@ limited to inspected code/docs; no undocumented rejected alternative is invented
 | **DEC-011** · reconstructed 2026-10-09, committed 10-10 · Historical / superseded | Three-document progress layout recorded by [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b). Its useful historical/evidence content is retained here; “accepted” labels did not establish human approval. Superseded by DEC-012 through this task's explicit human request. |
 | **DEC-012** · 2026-10-10 · Human-confirmed decision | This task explicitly requires one factual project record and human ownership of objectives/priorities/major choices. Codex plans authorized tasks and maintains evidence; earlier entries are context, not authorization. AI proposals remain temporary unless explicitly requested for tracking, labelled **AI suggestion — not approved**. Meaningful updates only; no automatic commit/push. See [workflow](ENGINEERING_WORKFLOW.md#persistent-engineering-records). |
 | **DEC-013** · 2026-10-10 · Human-confirmed workbench requirement | This task explicitly requires Charlie as preferred backend, one production validator for automatic/manual candidates, hard envelope never auto-relaxed, bounded deterministic search and no invalid promotion. Implemented using existing backend geometry/smoothness checks, with diagnostics retained on failure. Search exhaustion is not physical infeasibility; GUI preview cannot override final gates. See [workbench contract](../centerline_tools/README.md#2-workbench-contract). |
+| **DEC-014** · 2026-10-11 · Human-confirmed V2 requirement | Explicit per-session selection, distinct experimental filename/evidence, no hidden latest/fallback, and experimental simulation acknowledgment. One shared resolver feeds existing CSV/direction APIs at the runner boundary; it preserves caller-map preflight and recorded selection provenance. No controller changes or automated onboard deployment. Trying a new candidate leaves active selection unchanged. Human-requested limit edits create a new declared offline profile/session; prior checks are not inherited. Matching-map latest exports are visible previews, not hidden active selections. See [handoff contract](../centerline_tools/README.md#selection-and-downstream-handoff). |
 
 ## 4. Open issues and validation gaps
 
 These are unordered observations. Resolution, development sequence and major
 alternatives require human direction; listing an issue does not authorize work.
 
-- **Tempo geometry/workflow unresolved:** map files exist, but no validated optimized
-  raceline/config survives rollback. The new offline default baseline fails clearance
+- **Tempo production geometry unresolved:** no validated optimized raceline exists.
+  A separate experimental simulator config and two bounded motion passes now exist. The new offline default baseline fails clearance
   and curvature; 16 retries find no valid line. Best corridor-safe candidate has
   0.381 m clearance versus 0.285 m required, but curvature 1.460 > 1.082 1/m.
   Search exhaustion and earlier short motion are not track acceptance or physical
   infeasibility. Manual fallback exists; no alternative vehicle envelope is selected.
+- **Initialization/reverse defect unresolved:** first-row Tempo initialization produced
+  wrong PF heading before motion; wrong-way reverse then produced extreme simulator
+  yaw. Straight-start passes do not fix this mechanism. The onboard PF launch also
+  resolves its map from installed default config before custom config resolution;
+  explicit new-track onboard startup is not established.
 - **Hardware evidence absent:** onboard topic/type/frame preflight and passive
   recording need real-car verification. Split VESC forward-speed / measured IMU
   yaw adapter is missing; model-derived odometry yaw must not be presented as
@@ -132,13 +168,13 @@ alternatives require human direction; listing an issue does not authorize work.
   factor or physical derivative timing. PF pose publication stamp and input-stamped
   TF differ; message age is not isolated PF compute time. Interrupted runs can lack
   scan observer summaries, and some unsubscribed marker work persists.
-- **Workbench evidence limits:** GUI construction is tested, not race-day operator
-  interaction. IFAC needs its explicit reviewed solver/coverage profile; generic
+- **Workbench evidence limits:** GUI construction and an interactive Tk event loop are tested, not race-day
+  operator interaction. Experimental paths remain unsuitable for recommended onboard use. IFAC needs its explicit reviewed solver/coverage profile; generic
   strict solver can reach iteration limit. Phase 9 rejects rotated origins/negated
   maps; synchronous solves can pause the GUI. No changed profile auto-relaxes gates.
 - **Test gaps:** historical broad Gym checks report missing `f1` CLI and lint
-  failures. Targeted passing tests do not erase those failures; no suites were
-  rerun for this assessment.
+  failures. Targeted centerline/bringup passes do not erase those broader failures;
+  Gym/PF algorithm suites were not rerun for this UX/selection task.
 - **Evaluation scope:** no real matched sim/onboard run, section alignment, lap/sector
   contract, absolute-accuracy acceptance thresholds or composite score established.
   Short-run PASS does not prove collision freedom or long-run robustness.

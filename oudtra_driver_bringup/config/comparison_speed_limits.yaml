@@ -1,0 +1,10 @@
+# Opt-in low-speed comparison profile; no map/frame or controller changes.
+# Ordinary forward demand: 0.5--2.0 m/s. Safety stops/slower caps and reverse
+# remain possible. Final output is bounded to +/-2.0 m/s; measured speed may lag.
+/**:
+  ros__parameters:
+    command_speed_min_mps: 0.5
+    command_speed_max_mps: 2.0
+lower_safety_controller:
+  ros__parameters:
+    absolute_speed_limit_mps: 2.0

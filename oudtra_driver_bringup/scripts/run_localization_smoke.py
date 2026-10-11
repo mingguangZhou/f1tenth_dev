@@ -112,6 +112,59 @@ def pnc_launch_arguments(raceline_csv, raceline_direction, overlay):
     return arguments
 
 
+def resolve_raceline_input(manifest, csv_path, direction, map_yaml, allow_experimental=False):
+    """Selection is resolved at orchestration only; controllers keep their API."""
+    if manifest:
+        if csv_path:
+            raise ValueError('Use either a selected manifest or an explicit CSV, not both')
+        from centerline_tools.raceline_selection import resolve_selection
+        selection = resolve_selection(manifest, allow_experimental, map_yaml)
+        if direction is not None and direction != selection['direction']:
+            raise ValueError('Explicit direction disagrees with selected manifest')
+        return selection['raceline_csv'], selection['direction'], selection
+    if allow_experimental:
+        raise ValueError('--allow-experimental requires --selected-raceline')
+    if not csv_path or direction is None:
+        raise ValueError('Explicit CSV requires --raceline-direction')
+    return csv_path, direction, None
+
+
+def preserve_raceline_selection(recording, selection):
+    """Snapshot selected evidence; offline inspection does not require the session."""
+    recording.metadata['selected_raceline'] = selection
+    (recording.root / 'selected_raceline.yaml').write_bytes(Path(selection['manifest']).read_bytes())
+    (recording.root / 'selected_raceline_validation.yaml').write_bytes(Path(selection['validation_report']).read_bytes())
+    recording.save()
+
+
+def speed_profile_overlay(evaluation_overlay, speed_profile):
+    """Merge explicit speed limits without changing frames, health or GT isolation."""
+    base = yaml.safe_load(Path(evaluation_overlay).read_text())
+    profile = yaml.safe_load(Path(speed_profile).read_text())
+    expected = {'/**': {'command_speed_min_mps', 'command_speed_max_mps'},
+                'lower_safety_controller': {'absolute_speed_limit_mps'}}
+    if not isinstance(profile, dict) or set(profile) != set(expected):
+        raise ValueError('Speed profile requires shared command limits and lower-safety cap')
+    for node, keys in expected.items():
+        block = profile[node]
+        if not isinstance(block, dict) or set(block) != {'ros__parameters'}:
+            raise ValueError('Invalid speed profile node: ' + node)
+        params = block['ros__parameters']
+        if not isinstance(params, dict) or set(params) != keys:
+            raise ValueError('Speed profile may contain only declared speed limits')
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or
+               not math.isfinite(v) for v in params.values()):
+            raise ValueError('Speed limits must be finite numbers')
+    limits = profile['/**']['ros__parameters']
+    cap = profile['lower_safety_controller']['ros__parameters']['absolute_speed_limit_mps']
+    if not 0 < limits['command_speed_min_mps'] <= limits['command_speed_max_mps'] == cap:
+        raise ValueError('Require positive min <= max and identical final speed cap')
+    for node, block in profile.items():
+        base.setdefault(node, {'ros__parameters': {}})['ros__parameters'].update(
+            block['ros__parameters'])
+    return base
+
+
 def initial_pose(config, offsets):
     values = [float(config[key]) + offset for key, offset in
               zip(('sx', 'sy', 'stheta'), offsets)]
@@ -152,10 +205,14 @@ def main():
     parser.add_argument('--scenario-id', required=True)
     parser.add_argument('--sim-config', required=True)
     parser.add_argument('--pf-map-yaml', required=True)
-    parser.add_argument('--raceline-csv', required=True)
-    parser.add_argument('--raceline-direction', required=True,
+    raceline = parser.add_mutually_exclusive_group(required=True)
+    raceline.add_argument('--raceline-csv')
+    raceline.add_argument('--selected-raceline', help='Verified workbench session manifest; map remains explicit')
+    parser.add_argument('--allow-experimental', action='store_true', help='Acknowledge failed production gates for explicit simulation experimentation')
+    parser.add_argument('--raceline-direction',
                         choices=('csv', 'normal', 'reverse'))
     parser.add_argument('--localize-config', required=True)
+    parser.add_argument('--speed-profile', help='Optional explicit shared command range and final safety cap YAML')
     parser.add_argument('--run-duration-sec', type=float, default=15)
     parser.add_argument('--with-rviz', action='store_true',
                         help='Start interactive RViz; automated runs are headless by default')
@@ -171,6 +228,12 @@ def main():
     parser.add_argument('--pf-revision', default='')
     parser.add_argument('--source-state', choices=('clean', 'dirty', 'unknown'), default='unknown')
     args = parser.parse_args()
+    try:
+        args.raceline_csv, args.raceline_direction, selection = resolve_raceline_input(
+            args.selected_raceline, args.raceline_csv, args.raceline_direction,
+            args.pf_map_yaml, args.allow_experimental)
+    except ValueError as error:
+        parser.error(str(error))
     for value in (args.run_duration_sec, args.startup_timeout_sec, args.motion_timeout_sec):
         if not math.isfinite(value) or value <= 0:
             parser.error('Durations must be finite and positive')
@@ -195,6 +258,15 @@ def main():
     pose = initial_pose(config, (args.x_offset_m, args.y_offset_m, args.yaw_offset_rad))
     overlay = str(Path(get_package_share_directory('oudtra_driver_bringup')) /
                   'config/localization_eval_sim.yaml')
+    overlay_workspace = None
+    speed_profile = None
+    base_overlay = overlay
+    if args.speed_profile:
+        speed_profile = Path(args.speed_profile).expanduser().resolve()
+        merged = speed_profile_overlay(base_overlay, speed_profile)
+        overlay_workspace = tempfile.TemporaryDirectory(prefix='localization_speed_profile_')
+        overlay = str(Path(overlay_workspace.name) / 'evaluation_with_speed_limits.yaml')
+        Path(overlay).write_text(yaml.safe_dump(merged, sort_keys=False))
     recording = None
     if args.record_dir:
         from localization_recording import RunRecording
@@ -208,6 +280,9 @@ def main():
                    'map_yaml': track['assets']['simulator_map_yaml']['path'],
                    'map_image': track['assets']['simulator_map_image']['path'],
                    'reference_csv': args.raceline_csv}
+        if speed_profile:
+            configs['speed_profile'] = speed_profile
+            configs['evaluation_sim_base'] = base_overlay
         for package, filename in [('path_following_v2', 'path_following_v2.yaml'),
                                   ('reactive_control_v2', 'reactive_control_v2.yaml'),
                                   ('drive_arbitration_v2', 'drive_arbitration_v2.yaml'),
@@ -226,12 +301,16 @@ def main():
             'reference_sha256': track['assets']['raceline_csv']['sha256'],
             'algorithm_id': 'particle_filter',
             'algorithm_config_sha256': track['assets']['localize_config']['sha256']}
+        if selection:
+            preserve_raceline_selection(recording, selection)
     logdir = recording.root / 'logs' if recording else Path(tempfile.mkdtemp(prefix='localization_smoke_'))
     result = {'result': 'FAIL', 'log_directory': str(logdir), 'states': [], 'commands': [],
               'visualization_mode': 'rviz' if args.with_rviz else 'headless',
               'track': {'scenario_id': track['scenario_id'],
                         'raceline_direction': track['raceline_direction'],
                         'assets': track['assets']}}
+    if selection:
+        result['selected_raceline'] = selection
     processes = {}
     last, received, counts = {}, {}, {}
     timing_samples = {}
@@ -240,7 +319,7 @@ def main():
     rclpy.init()
     node = rclpy.create_node('localization_smoke')
     buffer = Buffer()
-    listener = TransformListener(buffer, node)
+    listener = TransformListener(buffer, node)  # noqa: F841 - retain TF subscriptions for the run
     subscriptions = []
     parameter_clients = []  # Keep service endpoints alive through Foxy response handling.
     def receive(topic, message):
@@ -369,6 +448,10 @@ def main():
         launch('pf', 'particle_filter', 'localize_sim_launch.py',
                pf_launch_arguments(args.localize_config, args.pf_map_yaml, overlay))
         wait('WAIT_PF', lambda: fresh('/pf/pose/odom') and initpub.get_subscription_count() > 0)
+        loaded_map = parameters('map_server', ['yaml_filename'])[0].string_value
+        if Path(loaded_map).resolve() != Path(args.pf_map_yaml).expanduser().resolve():
+            raise RuntimeError('PF map server did not load the explicitly selected map')
+        result['runtime_pf_map_yaml'] = loaded_map
         if recording:
             wait('WAIT_RECORDING_INPUTS', lambda: recording.ready(
                 ['estimated_pose', 'source_pose', 'health', 'truth', 'raw_odometry']))
@@ -402,6 +485,19 @@ def main():
         result['effective_parameters'] = {
             'enable_sim_reverse_swept_gate': values[0].bool_value,
             'lower_odom_topic': values[1].string_value, 'require_pf_health': True}
+        if speed_profile:
+            expected_limits = yaml.safe_load(speed_profile.read_text())['/**']['ros__parameters']
+            result['effective_parameters']['speed_limits'] = {}
+            for target in ('path_generator', 'local_trajectory_planner', 'path_following_v2'):
+                actual = parameters(target, ['command_speed_min_mps', 'command_speed_max_mps'])
+                values = [value.double_value for value in actual]
+                if values != [expected_limits['command_speed_min_mps'], expected_limits['command_speed_max_mps']]:
+                    raise RuntimeError('Speed profile not applied to ' + target)
+                result['effective_parameters']['speed_limits'][target] = values
+            cap = parameters('lower_safety_controller', ['absolute_speed_limit_mps'])[0].double_value
+            if cap != expected_limits['command_speed_max_mps']:
+                raise RuntimeError('Final command speed cap not applied')
+            result['effective_parameters']['absolute_speed_limit_mps'] = cap
         allowed_gt_readers = {node.get_name()}
         if recording:
             recording.check()
@@ -511,6 +607,8 @@ def main():
         node.destroy_node()
         rclpy.shutdown()
         Path(args.result_json).write_text(json.dumps(result, indent=2) + '\n')
+        if overlay_workspace:
+            overlay_workspace.cleanup()
         print(json.dumps(result, indent=2), flush=True)
     return 0 if result['result'] == 'PASS' and result.get('recording_passed', True) else 1
 

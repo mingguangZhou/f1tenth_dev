@@ -5,11 +5,14 @@
 Generate and validate a raceline offline with the existing Phase-9 centerline
 pipeline and Charlie's deterministic global optimizer. No simulator or vehicle
 stack is launched. The workbench offers baseline → bounded tuning → manual E/A/X
-fallback; every promoted candidate passes the same production validator.
+fallback; every validated candidate passes the same production validator. An explicit
+experimental export keeps failed checks visible and cannot become production-valid.
 
 **Race-day quick start:** open the canonical container and run
 `python3 raceline_workbench.py <map_image> <map.yaml>` from this package.
-Add `--auto-search` for automatic retries or `--gui` for the Matplotlib controls.
+A working display opens the GUI automatically. Use `--headless --auto-search` for
+bounded automated retries without a window. Each invocation creates a fresh session;
+`--open-session` safely resumes one.
 Copyable fixture/manual commands and output-discovery instructions live in the
 [operational reference](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench).
 The later sections document retained legacy generators and the ROS publisher;
@@ -41,15 +44,50 @@ flowchart LR
 | `MANUAL_PASS` | Explicit manual candidate passed the identical production gates. |
 | `NO_VALIDATED_RACELINE` | Manual validation or input/centerline/workflow failed; no current promoted output. |
 
-Headless is the default. Exit `0` means a validated output exists, `1` means no
-validated result, and `2` means input/configuration/ownership preflight failed.
-A failed centerline stage prevents optimization; its detailed log is retained.
-The GUI displays the map, eroded corridor, centerline/candidate, unsafe dense
-samples, high-curvature regions and curvature-versus-station plot. Actions run
-baseline, bounded search, a slider-selected trial, named candidate preview, manual
-editor, revalidation and validated save. Save is disabled for a failed candidate
-and rechecks the on-disk CSV before promotion. Solves are bounded but synchronous;
-the GUI can pause during a solve. Interactive operator usability still needs review.
+### Race-day interface
+
+The GUI has three steps: **Generate automatically → Review and adjust → Select /
+export**. Run the deterministic baseline with **Generate Raceline**, then **Try
+More Settings** if it fails. Browse candidates with Previous/Next/Best and compare
+the baseline overlay. **Try My Settings** applies the three readable presets;
+**Edit Path Manually** reuses E/A/X. Solves are synchronous: RUNNING is shown and
+action buttons are disabled until completion. This may pause window interaction;
+a responsive background solver is not implemented.
+
+| Main control | Meaning |
+| --- | --- |
+| Corner Cutting | More favors a shorter cornering line; peak curvature can increase. |
+| Steering Smoothness | More penalizes rapid curvature and lateral transitions. |
+| Optimization Detail | Fine reduces optimizer spacing, adding freedom and computation. |
+
+Balanced resets the control's parameters to the session baseline. **Preset Values**
+shows every choice's exact backend numbers (including session-specific Balanced
+values), plus the current trial settings. Presets live in
+[workbench YAML](config/raceline_workbench.yaml), affect only explicit trials and
+never change automatic search or vehicle limits. Effects interact and are not
+monotonic. **Advanced Tuning / Diagnostics** exposes all six parameters with units,
+ranges, effect explanations, baseline reset, candidate-ID preview and revalidation.
+Every numerical field supports both dragging and typed input; invalid/nonfinite or
+out-of-range input retains the previous value. Draft edits take effect only with
+**Apply Settings & Close**; Cancel discards them. The candidate actions are separate:
+**Show Candidate** changes the preview only; **Check File** reruns the validator.
+Neither action solves, exports or selects downstream.
+Mouse-wheel zoom is centred on the map cursor (same factors as E/A/X); toolbar
+pan/zoom remains available. Viewport is retained when status/candidates refresh;
+**Fit Map** restores the complete path view. The main screen shows corridor/steering
+failures, achieved versus required clearance,
+peak curvature and equivalent turning radius; offending map/curvature samples are
+highlighted. It also displays the exact active CSV, separately from the previewed trial.
+**Finish / Exit** shows saved files and selection status; **Save Validated & Exit**
+rechecks/exports/selects a passing candidate before closing. **Exit — keep saved
+files** preserves all existing artifacts; it cannot promote a failed candidate.
+
+GUI selection is default when the existing Tk/Matplotlib display probe succeeds.
+Without a working display, the CLI runs headless and states that fact; `--gui`
+requires a display. Exit `0` means a validated output **or an explicitly exported
+experimental selection** exists, not that every candidate is production-valid.
+Exit `1` means no usable export; `2` means preflight/action failure. Always inspect
+selection status. A failed centerline stage prevents optimization and retains its log.
 
 ### Search settings versus HARD constraints
 
@@ -72,14 +110,22 @@ Phase A has eight named spacing/search-cap trials. Phase B has eight named
 soft-objective trials at 0.10 m spacing / 1.50 m cap. There is no random or Cartesian
 sweep. Duplicate profiles are skipped; at most `search.maximum_candidates` trials
 (default 16 **in addition to baseline**) run, stopping at first PASS. Repeated
-Auto Search button presses do not extend that session's budget. GUI slider trials
+Auto Search button presses do not extend that session's budget. Preset/advanced trials
 are explicit human trials, not part of the automatic budget.
 
 **HARD envelope:** baseline `safety_margin_m=0.25 m`,
 `maximum_curvature_inv_m=1.082 1/m`, `validation_step_m=0.005 m`.
 The curvature limit represents the existing 20.6-degree / 0.33 m / 0.95 envelope;
 automatic search never changes these values. Advanced `vehicle_profile` overrides
-are explicit, recorded and only appropriate for an intentionally changed envelope.
+are explicit and recorded. The Advanced window now exposes wall margin and hard
+curvature as separate drag/text fields; `advanced_vehicle_limits` in YAML defines
+input bounds (0.05–1.00 m margin, 0.25–2.00 1/m curvature), **not hardware-qualified
+safe limits**. Applying changed limits requires confirmation and creates a fresh
+session with a saved `session_profile.yaml`, no candidates and no active selection.
+Generate/validate again under that declared profile; original exports retain their
+original validation. Auto-search never changes these values. Custom-profile
+validation is labelled explicitly and does not establish actual steering ability
+or onboard suitability. Dense validation spacing remains fixed in this GUI.
 For each map, effective erosion is margin + resolution/√2 (0.285355 m for
 0.25 m margin at 0.05 m/pixel); reports compute it rather than hardcoding it.
 
@@ -121,28 +167,71 @@ legacy commands retain their behavior and are not the workbench acceptance path.
 
 ### Outputs and ownership
 
-Default home: `centerline_output/workbench/<map-stem>-<input-hash>/`.
-Use a fresh descriptive `--output-dir` for a separate session/profile. Owner/input,
-generator/settings and Phase-9 artifact hashes are checked before reuse. Unqualified
-legacy Phase-9 exports, changed inputs or changed session profiles are rejected;
-the workbench never silently consumes the shared legacy directory. Map files are
-never overwritten. Current Phase 9 requires zero origin yaw and `negate: 0`.
+Default home: `centerline_output/workbench/<map-stem>-<UTC>-<input-hash>-<unique-id>/`.
+A new invocation never silently reuses another session. It does show the most
+recent verified export with matching YAML/image hashes as a **previous-export
+preview**, including status and source profile, even before new centerline generation.
+**Open Previous Session** explicitly resumes it. Discovery scans session folders;
+there is no hidden global latest file or automatic downstream selection. A broken
+latest export is reported rather than silently replaced by an older one. Different
+map hashes cannot share the preview. A supplied `--output-dir`
+must be new/empty; **`--open-session <directory>`** restores candidates/settings
+and the active selection. Without a directory value, `--open-session` offers a
+simple existing Tk file picker for the saved report. Reopening checks map identity,
+Phase-9 generation/settings/artifact hashes, stored candidate/output hashes and
+selected evidence; stale/changed inputs fail. V1 sessions can be reopened if the
+solver/centerline profile still matches; adding UI presets alone is not a solver
+change. Earlier reports are archived before updated provenance is written.
+Current Phase 9 requires zero origin yaw and `negate: 0`. Map inputs are not overwritten.
 
 | Artifact | Purpose |
 | --- | --- |
 | `centerline_points_smooth.csv`, `drivable_region.npy`, `centerline_metadata.yaml` | Centerline/reference inputs and map hashes |
 | `workbench_inputs.yaml`, `phase9_provenance.yaml` | Ownership and exact qualified reuse contract |
 | `candidate/<id>/candidate.csv`, `diagnostics.yaml`, `preview.png` | Unpromoted candidates, solver stages, gate/gap evidence and overlay |
-| `raceline_points_optimized.csv`, `raceline_validation.yaml` | **Current validated pair only**; failed trials cannot write it |
+| `raceline_points_optimized.csv`, `raceline_validation.yaml` | Validated pair; a generation PASS does not itself select it downstream |
+| `raceline_points_experimental.csv`, `experimental_validation.yaml` | Explicit failed-candidate export with limitations; never validated |
+| `session_profile.yaml` (explicit limit-edit session only) | Resolved settings for the deliberately changed offline envelope |
+| `selected_raceline.yaml` | Intentional per-session selection, exact asset/evidence hashes and direction |
 | `raceline_workbench_report.yaml` | Stable result, resolved settings/hashes, attempted/best candidate, final validation, environment and output hashes |
 | `preview.png`, `centerline_generation.log`, `manual_editor.log`, `manual/` | Latest visual diagnostics, detailed logs and resumable unvalidated edits |
-| `diagnostics/previous_report_<hash>.yaml`, `candidate/previous_validated_<hash>/` | Earlier invocation report/validated pair retained when rerunning |
+| `diagnostics/previous_report_<hash>.yaml`, `candidate/previous_validated_<hash>/` | Earlier report/output history; trials leave an active selection unchanged |
 
 Generated workbench sessions are Git-ignored and excluded from package installation.
 Reviewed durable assets still require explicit approval. The original two-argument
 `run_centerline_and_optimized_raceline.py` now delegates to this same isolated
 workbench; extra workbench options are accepted. Other legacy commands below
 continue to use their shared output location.
+
+### Selection and downstream handoff
+
+**Select / Export Validated** rechecks all common gates against the on-disk geometry.
+**Export Experimental** requires a confirmation displaying failed checks, copies
+exact candidate bytes into its distinct filename and records parameters, source,
+map/envelope hashes and limitations. Reference-only previews cannot be exported
+as optimizer results. Experimental output is for deliberate inspection/simulation;
+it never launches or enables control and is not validated for onboard deployment.
+
+Both GUI and CLI write the same session-owned `selected_raceline.yaml` (format 1).
+Its `selection` contains candidate ID, generator, `validated`/`experimental` status,
+absolute CSV and validation-report paths/hashes, map YAML/image paths/hashes,
+vehicle-constraint values/hash, custom-profile flag, and direction. Direction is `csv`: manual reversal is
+already present in exported coordinates; `candidate_direction` preserves that history.
+No hidden global latest file exists. Trying another candidate leaves the selection
+unchanged until another explicit selection action.
+
+[Selection resolver](centerline_tools/raceline_selection.py) verifies assets/schema,
+evidence consistency and optional caller-map identity without ROS side effects.
+Missing/changed files fail rather than fall back. Experimental input requires
+`--allow-experimental`. The source-tree helper prints summary/JSON or shell-quoted
+arguments for the existing runner, full-stack or standalone-publisher APIs.
+The simulation runner also accepts `--selected-raceline` instead of its existing
+CSV/direction inputs, retains explicit scenario/map preflight and snapshots the
+manifest/validation into a recorded run. It does not infer a simulator configuration
+from the manifest. Recommended onboard operation accepts **validated** selections
+only, via existing explicit paths; no actuator/deployment workflow is added.
+See the [operational reference](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench)
+for all copyable commands and exact artifact access.
 
 ## 3. Legacy generator outputs
 

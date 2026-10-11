@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Offline baseline → bounded search → E/A/X workflow; fail-closed promotion."""
+"""Offline raceline generation with strict validation and explicit session selection."""
 
 import argparse
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -10,12 +11,14 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import uuid
 
 import numpy as np
 import scipy
 import yaml
 
 from centerline_tools import global_raceline_optimizer as opt
+from centerline_tools.raceline_selection import resolve_selection
 
 ROOT = Path(__file__).resolve().parent
 SEARCH_KEYS = (
@@ -83,7 +86,7 @@ def _load_settings(path):
     if "baseline_optimizer_config" in raw:
         settings["baseline_optimizer_config"] = str(
             (path.parent / raw["baseline_optimizer_config"]).resolve())
-    unknown = set(settings) - {"baseline_optimizer_config", "centerline", "vehicle_profile", "search"}
+    unknown = set(settings) - {"baseline_optimizer_config", "centerline", "vehicle_profile", "search", "tuning_presets", "advanced_vehicle_limits"}
     if unknown:
         raise ValueError(f"unknown workbench settings: {sorted(unknown)}")
     advanced = settings.get("vehicle_profile", {})
@@ -105,6 +108,13 @@ def _load_settings(path):
     # Validate the whole schedule even when the budget truncates it.
     for changes in search["geometry_candidates"] + [search["objective_geometry"]] + search["objective_candidates"]:
         search_profile(config, changes, search["ranges"])
+    for choices in settings.get("tuning_presets", {}).values():
+        for changes in choices.values():
+            search_profile(config, changes, search["ranges"])
+    for key, bounds in settings.get("advanced_vehicle_limits", {}).items():
+        if (key not in ("safety_margin_m", "maximum_curvature_inv_m") or len(bounds) != 2 or
+                not all(np.isfinite(bounds)) or not 0 < bounds[0] <= bounds[1]):
+            raise ValueError("invalid advanced vehicle-limit range: " + key)
     return settings, config
 
 
@@ -155,7 +165,8 @@ def input_identity(image, map_yaml):
 
 def default_output(image, identity):
     digest = profile_hash({k: v for k, v in identity.items() if k.endswith("sha256")})[:12]
-    return ROOT / "centerline_output" / "workbench" / (Path(image).stem + "-" + digest)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return ROOT / "centerline_output" / "workbench" / f"{Path(image).stem}-{stamp}-{digest}-{uuid.uuid4().hex[:6]}"
 
 
 def check_phase9(directory, identity):
@@ -168,6 +179,54 @@ def check_phase9(directory, identity):
     for name in ("centerline_points_smooth.csv", "drivable_region.npy"):
         if not (directory / name).is_file():
             raise ValueError("missing Phase-9 artifact: " + name)
+
+
+def latest_export(identity, roots, exclude=None):
+    """Discover by map hashes, read-only. Never silently activate/fallback selection."""
+    matches = []
+    for root in set(Path(p).resolve() for p in roots):
+        if not root.is_dir():
+            continue
+        for folder in root.iterdir():
+            if not folder.is_dir() or folder == exclude:
+                continue
+            try:
+                owner = yaml.safe_load((folder / "workbench_inputs.yaml").read_text())
+                if any(owner.get(k) != identity[k] for k in ("map_yaml_sha256", "map_image_sha256")):
+                    continue
+                manifest = folder / "selected_raceline.yaml"
+                path = manifest if manifest.exists() else folder / "raceline_points_optimized.csv"
+                if path.exists():
+                    matches.append((path.stat().st_mtime_ns, str(folder), path))
+            except (OSError, TypeError, AttributeError, yaml.YAMLError):
+                continue
+    if not matches:
+        return None
+    _, name, path = max(matches)
+    result = {"source_session": name, "candidate_kind": "previous_export"}
+    try:
+        report = yaml.safe_load((Path(name) / "raceline_workbench_report.yaml").read_text())
+        if path.name == "selected_raceline.yaml":
+            selected = resolve_selection(path, True, identity["map_yaml"])
+            csv_path = Path(selected["raceline_csv"])
+            evidence = yaml.safe_load(Path(selected["validation_report"]).read_text())
+            result.update(status=selected["status"], id=selected["candidate_id"], manifest=str(path))
+        else:
+            evidence = yaml.safe_load((Path(name) / "raceline_validation.yaml").read_text())
+            csv_path = path
+            if not evidence["valid"] or evidence["raceline_sha256"] != opt.file_sha256(path):
+                raise ValueError("previous validated export changed or failed its declared checks")
+            result.update(status="validated", id=evidence["candidate_id"], manifest=None)
+        check_phase9(name, identity)
+        provenance = yaml.safe_load((Path(name) / "phase9_provenance.yaml").read_text())
+        for asset, digest in provenance["outputs"].items():
+            if opt.file_sha256(Path(name) / asset) != digest:
+                raise ValueError("previous centerline artifact changed: " + asset)
+        result.update(path=str(csv_path), path_sha256=opt.file_sha256(csv_path),
+                      validation=evidence, baseline_profile=report["baseline_profile"])
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:
+        result["error"] = str(error)  # Most recent broken export is shown, not replaced by an older one.
+    return result
 
 
 def candidate_rank(candidate):
@@ -196,9 +255,11 @@ class Workbench:
         self.settings, self.baseline = load_settings(self.settings_path)
         self.output = Path(output_dir or default_output(image, self.identity)).resolve()
         # Do not claim arbitrary shared legacy directories or place inputs under outputs.
-        if any(self.output == p or self.output in p.parents for p in
-               (Path(self.identity["map_image"]), Path(self.identity["map_yaml"]), self.settings_path,
-                Path(self.settings["baseline_optimizer_config"]))):
+        guarded = [Path(self.identity["map_image"]), Path(self.identity["map_yaml"]),
+                   Path(self.settings["baseline_optimizer_config"])]
+        if self.settings_path != self.output / "session_profile.yaml":
+            guarded.append(self.settings_path)
+        if any(self.output == p or self.output in p.parents for p in guarded):
             raise ValueError("output directory must not contain/overwrite any supplied input")
         owner = self.output / "workbench_inputs.yaml"
         if self.output.exists() and any(self.output.iterdir()):
@@ -207,7 +268,11 @@ class Workbench:
         previous_report = self.output / "raceline_workbench_report.yaml"
         if previous_report.exists():
             previous = yaml.safe_load(previous_report.read_text())
-            if (previous["configuration"]["resolved_sha256"] != profile_hash(self.settings) or
+            # UI-only preset additions do not invalidate V1 solver/Phase-9 sessions.
+            ui_keys = ("tuning_presets", "advanced_vehicle_limits")
+            old_settings = {k: v for k, v in previous["configuration"]["resolved"].items() if k not in ui_keys}
+            new_settings = {k: v for k, v in self.settings.items() if k not in ui_keys}
+            if (profile_hash(old_settings) != profile_hash(new_settings) or
                     previous["baseline_profile_sha256"] != profile_hash(asdict(self.baseline))):
                 raise ValueError("session profile changed; use a new --output-dir")
             archive = self.output / "diagnostics" / ("previous_report_" + opt.file_sha256(previous_report)[:16] + ".yaml")
@@ -216,6 +281,7 @@ class Workbench:
         self.output.mkdir(parents=True, exist_ok=True)
         save_yaml(self.identity, owner)
         self.metadata = opt.MapMetadata.from_yaml(self.identity["map_yaml"])
+        self.required = self.baseline.safety_margin_m + self.metadata.resolution_m / np.sqrt(2)
         self.candidates = []
         self.state = "NO_VALIDATED_RACELINE"
         self.centerline_status = "NOT_RUN"
@@ -223,11 +289,66 @@ class Workbench:
         self.centerline = None
         self.selected = None
         self.outputs = {}
+        self.active_selection = None
+        self.latest_export = latest_export(self.identity, (self.output.parent, ROOT / "centerline_output/workbench"), self.output)
         self.source_hashes = {str(p.relative_to(ROOT)): opt.file_sha256(p) for p in
                               (ROOT / "raceline_workbench.py", ROOT / "centerline_reference_generator.py",
                                ROOT / "centerline_tools/global_raceline_optimizer.py",
                                ROOT / "manual_raceline_generator.py",
                                ROOT / "centerline_tools/raceline_workbench_view.py")}
+
+    def with_vehicle_limits(self, changes, confirmed=False):
+        """Explicit profile change creates a new session; previous validation stays historical."""
+        if not confirmed:
+            raise ValueError("Vehicle/safety limit changes require explicit confirmation")
+        ranges = self.settings["advanced_vehicle_limits"]
+        if set(changes) - set(ranges):
+            raise ValueError("Only declared advanced vehicle limits may be edited")
+        for key, value in changes.items():
+            if not np.isfinite(value) or not ranges[key][0] <= value <= ranges[key][1]:
+                raise ValueError(key + " outside advanced profile range")
+        config = replace(self.baseline, **changes)
+        config.validate()
+        if config == self.baseline:
+            return self
+        folder = default_output(self.identity["map_image"], self.identity)
+        folder.mkdir(parents=True, exist_ok=False)
+        settings = dict(self.settings)
+        settings["vehicle_profile"] = {k: getattr(config, k) for k in HARD_KEYS}
+        profile = folder / "session_profile.yaml"
+        save_yaml(settings, profile)
+        save_yaml(self.identity, folder / "workbench_inputs.yaml")
+        new = Workbench(self.identity["map_image"], self.identity["map_yaml"], folder, profile)
+        new.save_report()
+        return new
+
+    @classmethod
+    def reopen(cls, directory):
+        """Explicitly restore a session, qualifying inputs/Phase 9 before reuse."""
+        directory = Path(directory).expanduser().resolve()
+        previous = yaml.safe_load((directory / "raceline_workbench_report.yaml").read_text())
+        identity = previous["inputs"]
+        bench = cls(identity["map_image"], identity["map_yaml"], directory,
+                    previous["configuration"]["path"])
+        bench.candidates = previous["attempted_candidates"]
+        for candidate in bench.candidates:
+            candidate.setdefault("tool_source_sha256", previous["source_sha256"])
+        bench.selected = next((c for c in bench.candidates if c["id"] == previous["selected_candidate_id"]), None)
+        bench.state = previous["result"]
+        bench.outputs = previous["outputs"]
+        if bench.outputs and opt.file_sha256(bench.outputs["raceline"]) != bench.outputs["raceline_sha256"]:
+            raise ValueError("Session validated output changed")
+        for candidate in bench.candidates:
+            if candidate.get("path"):
+                path = Path(candidate["path"])
+                if not path.is_file() or (candidate.get("path_sha256") and opt.file_sha256(path) != candidate["path_sha256"]):
+                    raise ValueError("Session candidate changed/missing: " + candidate["id"])
+        manifest = directory / "selected_raceline.yaml"
+        if manifest.exists():
+            bench.active_selection = resolve_selection(manifest, allow_experimental=True)
+        bench.prepare()
+        bench.save_report()
+        return bench
 
     def prepare(self):
         """Reuse only hash-qualified own exports; otherwise invoke existing Phase 9."""
@@ -272,6 +393,10 @@ class Workbench:
 
     def invalidate_promotion(self):
         """Retain a prior valid output as history, never leave it as current output."""
+        # Trying another candidate must never silently change an operator selection.
+        if (self.output / "selected_raceline.yaml").exists():
+            self.active_selection = resolve_selection(self.output / "selected_raceline.yaml", True)
+            return
         csv_path = self.output / "raceline_points_optimized.csv"
         if csv_path.exists():
             history = self.output / "candidate" / ("previous_validated_" + opt.file_sha256(csv_path)[:12])
@@ -318,9 +443,11 @@ class Workbench:
         converged = len(stages) == 3 and all(v["success"] for v in stages) and error is None
         validation = self.validate(points, config, solver_converged=converged)
         candidate = {"id": candidate_id, "phase": phase, "parameters": asdict(config),
+                     "tool_source_sha256": self.source_hashes,
                      "parameter_sha256": profile_hash(asdict(config)), "solver_stages": stages,
                      "error": error, "candidate_kind": "optimizer_output" if error is None else "reference_preview",
-                     "path": str(folder / "candidate.csv") if (folder / "candidate.csv").exists() else None,
+                     "path": str(folder / "candidate.csv") if error is None else None,
+                     "path_sha256": opt.file_sha256(folder / "candidate.csv") if error is None else None,
                      "direction": "normal", "validation": validation,
                      "failure_classification": failure_classification(validation),
                      "result_state": ("AUTO_PASS" if phase == "baseline" else "AUTO_TUNED_PASS")
@@ -336,7 +463,7 @@ class Workbench:
         if self.centerline is None:
             self.prepare()
         candidate = self.attempt(self.baseline)
-        if candidate["validation"]["valid"]:
+        if candidate["validation"]["valid"] and not self.active_selection:
             self.promote(candidate)
         self.preview(candidate)
         return candidate
@@ -354,7 +481,8 @@ class Workbench:
             self.preview(candidate)
             print(f"SEARCH {candidate['id']}: " + ("PASS" if candidate["validation"]["valid"] else "FAIL"), flush=True)
             if candidate["validation"]["valid"]:
-                self.promote(candidate)
+                if not self.active_selection:
+                    self.promote(candidate)
                 return
         self.state = "AUTO_SEARCH_EXHAUSTED"
         self.selected = self.best_candidate()
@@ -380,23 +508,47 @@ class Workbench:
         points = opt.load_path_csv(folder / "candidate.csv")
         validation = self.validate(points, self.baseline, solver_converged=None, direction=direction)
         candidate = {"id": candidate_id, "phase": "manual", "parameters": asdict(self.baseline),
+                     "tool_source_sha256": self.source_hashes,
                      "parameter_sha256": profile_hash(asdict(self.baseline)), "solver_stages": [],
                      "error": None, "candidate_kind": "manual_candidate", "direction": direction,
                      "source": str(Path(path).resolve()), "source_sha256": opt.file_sha256(path),
                      "path": str(folder / "candidate.csv"), "validation": validation,
+                     "path_sha256": opt.file_sha256(folder / "candidate.csv"),
                      "failure_classification": failure_classification(validation),
                      "result_state": "MANUAL_PASS" if validation["valid"] else "NO_VALIDATED_RACELINE"}
         self.candidates.append(candidate)
         self.selected = candidate
         self.state = "MANUAL_PASS" if validation["valid"] else "NO_VALIDATED_RACELINE"
         save_yaml(candidate, folder / "diagnostics.yaml")
-        if validation["valid"]:
+        if validation["valid"] and not self.active_selection:
             self.promote(candidate)
         self.save_report()
         self.preview(candidate)
         return candidate
 
-    def promote(self, candidate=None):
+    def check_candidate(self, candidate):
+        if not candidate or candidate.get("candidate_kind") == "reference_preview" or not candidate.get("path"):
+            raise ValueError("Reference-only preview is not an optimized/manual path and cannot be exported")
+        if input_identity(self.identity["map_image"], self.identity["map_yaml"]) != self.identity:
+            raise ValueError("map inputs changed since preflight")
+        for name, digest in self.phase9_hashes.items():
+            if opt.file_sha256(self.output / name) != digest:
+                raise ValueError("qualified Phase-9 artifact changed: " + name)
+        config = opt.OptimizerConfig(**candidate["parameters"])
+        if any(getattr(config, k) != getattr(self.baseline, k) for k in HARD_KEYS):
+            raise ValueError("candidate HARD constraints differ from this session")
+        points = opt.load_path_csv(candidate["path"])
+        if candidate.get("path_sha256") and opt.file_sha256(candidate["path"]) != candidate["path_sha256"]:
+            raise ValueError("candidate changed; revalidation/export requires a newly imported candidate")
+        validation = self.validate(points, config, candidate["validation"]["solver_converged"], candidate["direction"])
+        if not validation["finite_nondegenerate"]:
+            raise ValueError("Cannot export nonfinite/degenerate candidate geometry")
+        candidate["validation"] = validation
+        return points, config, validation
+
+    def promote(self, candidate=None, selection_action=False):
+        if (self.output / "selected_raceline.yaml").exists() and not selection_action:
+            raise ValueError("An active selection exists; use Select / Export Validated to change it")
         candidate = candidate or self.selected
         if not candidate or not candidate.get("path") or not candidate["validation"]["valid"]:
             raise ValueError("candidate failed common validation; promotion is disabled")
@@ -424,6 +576,7 @@ class Workbench:
         output = self.output / "raceline_points_optimized.csv"
         report = dict(validation, candidate_id=candidate["id"], direction=candidate["direction"],
                       parameters=asdict(config), inputs=self.identity,
+                      status="validated", vehicle_constraints={k: getattr(config, k) for k in HARD_KEYS},
                       raceline_sha256=hashlib.sha256(text.encode()).hexdigest())
         opt._write_output_pair(output, text, self.output / "raceline_validation.yaml",
                                yaml.safe_dump(report, sort_keys=False))
@@ -435,6 +588,58 @@ class Workbench:
         self.outputs = {"candidate_id": candidate["id"], "raceline": str(output), "raceline_sha256": report["raceline_sha256"],
                         "validation": str(self.output / "raceline_validation.yaml")}
         self.save_report()
+
+    def select_export(self, candidate=None, experimental=False, confirmed=False):
+        """One intentional selection action for CLI and GUI; no launch/control."""
+        candidate = candidate or self.selected
+        if experimental and not confirmed:
+            raise ValueError("Experimental export requires explicit confirmation of failed checks")
+        points, config, validation = self.check_candidate(candidate)
+        if experimental and validation["valid"]:
+            raise ValueError("This candidate passes; use Select / Export Validated")
+        if not experimental and not validation["valid"]:
+            raise ValueError("candidate failed common validation; promotion is disabled")
+        if not experimental:
+            self.promote(candidate, selection_action=True)
+            output = self.output / "raceline_points_optimized.csv"
+            evidence_path = self.output / "raceline_validation.yaml"
+        else:
+            output = self.output / "raceline_points_experimental.csv"
+            evidence_path = self.output / "experimental_validation.yaml"
+            # Copy exact candidate bytes: no smoothing/resampling during export.
+            text = Path(candidate["path"]).read_text()
+            evidence = dict(validation, status="experimental", candidate_id=candidate["id"],
+                            source_candidate=candidate["path"], source_sha256=opt.file_sha256(candidate["path"]),
+                            parameters=asdict(config), inputs=self.identity, direction="csv",
+                            vehicle_constraints={k: getattr(config, k) for k in HARD_KEYS},
+                            raceline_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                            limitations="Failed production validation. Explicit simulation experimentation only; not onboard validated.")
+            opt._write_output_pair(output, text, evidence_path, yaml.safe_dump(evidence, sort_keys=False))
+            output.chmod(0o644)
+            evidence_path.chmod(0o644)
+        # Candidate geometry already contains its intended direction (including manual flip).
+        evidence = yaml.safe_load(evidence_path.read_text())
+        evidence.update(direction="csv", source_candidate=candidate["path"],
+                        source_sha256=opt.file_sha256(candidate["path"]))
+        save_yaml(evidence, evidence_path)
+        selection = {"candidate_id": candidate["id"], "status": "experimental" if experimental else "validated",
+                     "generator": "manual_editor" if candidate["phase"] == "manual" else "global_optimizer",
+                     "direction": "csv", "candidate_direction": candidate["direction"],
+                     "raceline_csv": str(output), "raceline_csv_sha256": opt.file_sha256(output),
+                     "validation_report": str(evidence_path), "validation_report_sha256": opt.file_sha256(evidence_path),
+                     "map_yaml": self.identity["map_yaml"], "map_yaml_sha256": self.identity["map_yaml_sha256"],
+                     "map_image": self.identity["map_image"], "map_image_sha256": self.identity["map_image_sha256"],
+                     "vehicle_constraints": {k: getattr(config, k) for k in HARD_KEYS},
+                     "custom_vehicle_profile": any(getattr(config, k) != getattr(opt.load_optimizer_config(
+                         self.settings["baseline_optimizer_config"]), k) for k in HARD_KEYS),
+                     "vehicle_profile_sha256": profile_hash({k: getattr(config, k) for k in HARD_KEYS})}
+        manifest = self.output / "selected_raceline.yaml"
+        save_yaml({"format_version": 1, "selection": selection}, manifest)
+        self.active_selection = resolve_selection(manifest, True)
+        self.selected = candidate
+        self.save_report()
+        self.preview(candidate)
+        return self.active_selection
 
     def save_report(self):
         report = {
@@ -456,6 +661,8 @@ class Workbench:
             "final_validation": next((c["validation"] for c in self.candidates
                                       if c["id"] == self.outputs.get("candidate_id")), None),
             "outputs": self.outputs,
+            "active_selection": self.active_selection,
+            "latest_export_preview": self.latest_export,
             "next_available_action": "use_validated_raceline" if self.outputs else
                 ("inspect_centerline_generation_log" if self.centerline_status != "PASS" else
                  "auto_search" if self.state == "AUTO_TUNING_REQUIRED" else "manual_editor"),
@@ -508,60 +715,149 @@ class Workbench:
                          f"curvature excess {excess_text}")
         lines.append("VALIDATED RACELINE: " + self.outputs.get("raceline", "NONE"))
         lines.append("REPORT: " + str(self.output / "raceline_workbench_report.yaml"))
+        if self.latest_export and not self.active_selection:
+            previous = self.latest_export
+            lines.append("PREVIOUS EXPORT PREVIEW: " + (previous.get("error") or
+                         previous["status"].upper() + " — " + previous["path"]))
+            lines.append("Previous export is not automatically selected in this session.")
+        if self.active_selection:
+            s = self.active_selection
+            lines.extend(["SELECTED RACELINE", "Track: " + Path(self.identity["map_image"]).stem,
+                          "Status: " + s["status"].upper(), "CSV: " + s["raceline_csv"],
+                          "Direction: " + s["direction"], "Manifest: " + s["manifest"],
+                          "Ready for explicit simulation selection." if s["status"] == "validated" else
+                          "Experimental simulation only; not validated for onboard use."])
+            if s["status"] == "experimental":
+                evidence = yaml.safe_load(Path(s["validation_report"]).read_text())
+                lines.append("Failed checks: " + "; ".join(evidence["failure_reasons"]))
         if not self.outputs:
             next_action = "--manual (E/A/X editor) or --manual-candidate <CSV> (saved edit)"
             if self.state == "AUTO_TUNING_REQUIRED":
                 next_action = "--auto-search; if exhausted, " + next_action
-            lines.append("NEXT: inspect centerline_generation.log" if self.centerline_status != "PASS" else
+            lines.append("NEXT: Generate Raceline or Open Previous Session in the GUI" if self.centerline_status == "NOT_RUN" else
+                         "NEXT: inspect centerline_generation.log" if self.centerline_status != "PASS" else
                          "NEXT: " + next_action)
         if self.error:
             lines.append("ERROR: " + self.error)
         return "\n".join(lines)
 
 
+def interactive_display_available():
+    """Probe the existing Matplotlib/Tk display, not merely the DISPLAY string."""
+    if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    try:
+        import tkinter
+    except ImportError:
+        return False
+    try:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.update_idletasks()
+        root.destroy()
+        return True
+    except (RuntimeError, tkinter.TclError):
+        return False
+
+
+def use_gui(headless=False, explicit_gui=False):
+    if headless:
+        return False
+    available = interactive_display_available()
+    if explicit_gui and not available:
+        raise RuntimeError("No working display; use --headless and preview.png")
+    return available
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("map_image")
-    parser.add_argument("map_yaml")
+    parser.add_argument("map_image", nargs="?")
+    parser.add_argument("map_yaml", nargs="?")
     parser.add_argument("--config", help="workbench YAML; default config/raceline_workbench.yaml")
     parser.add_argument("--output-dir")
+    parser.add_argument("--open-session", nargs="?", const="__choose_session__",
+                        help="Reopen a directory; omit its value to choose a saved report in a GUI dialog")
     parser.add_argument("--auto-search", action="store_true", help="bounded deterministic search after baseline failure")
-    parser.add_argument("--gui", action="store_true", help="Matplotlib controls after baseline")
-    parser.add_argument("--headless", action="store_true", help="no window (default)")
+    parser.add_argument("--gui", action="store_true", help="Require GUI (normally selected automatically with a working display)")
+    parser.add_argument("--headless", action="store_true", help="Explicitly suppress GUI")
     parser.add_argument("--manual", action="store_true", help="open existing E/A/X editor after baseline/search")
     parser.add_argument("--manual-candidate", help="validate a saved manual CSV after baseline")
     parser.add_argument("--manual-direction", choices=("normal", "reverse"), default="normal")
+    export = parser.add_mutually_exclusive_group()
+    export.add_argument("--select-validated", nargs="?", const="best", help="Intentionally select/export best or candidate ID")
+    export.add_argument("--export-experimental", metavar="CANDIDATE_ID", help="Explicit acknowledgment: export this failed candidate for experimentation")
     args = parser.parse_args(argv)
     if args.headless and (args.gui or args.manual):
         parser.error("--headless cannot open --gui/--manual; use --manual-candidate for saved edits")
-    if not args.gui:
-        import matplotlib
-        matplotlib.use("Agg")
+    if args.open_session == "__choose_session__":
+        if args.headless or not interactive_display_available():
+            parser.error("Without a display, --open-session requires an explicit directory")
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        chosen = filedialog.askopenfilename(parent=root, title="Open workbench session report",
+                                            initialdir=str(ROOT / "centerline_output/workbench"),
+                                            filetypes=[("Workbench report", "raceline_workbench_report.yaml")])
+        root.destroy()
+        if not chosen:
+            print("Open session cancelled.")
+            return 0
+        args.open_session = str(Path(chosen).parent)
+    if args.open_session:
+        if args.map_image or args.map_yaml or args.config or args.output_dir:
+            parser.error("--open-session owns maps/config/output; do not combine these arguments")
+    elif not args.map_image or not args.map_yaml:
+        parser.error("Supply a map image and YAML, or --open-session DIRECTORY")
     bench = None
     try:
-        bench = Workbench(args.map_image, args.map_yaml, args.output_dir, args.config)
-        bench.run_baseline()
+        gui = use_gui(args.headless, args.gui or args.manual)
+        import matplotlib
+        matplotlib.use("TkAgg" if gui else "Agg")
+        if not gui and not args.headless:
+            print("No working interactive display; using headless mode and preview.png.", flush=True)
+        if args.open_session:
+            bench = Workbench.reopen(args.open_session)
+        else:
+            if args.output_dir and Path(args.output_dir).exists() and any(Path(args.output_dir).iterdir()):
+                raise ValueError("Existing session: use --open-session DIRECTORY; no implicit reuse")
+            bench = Workbench(args.map_image, args.map_yaml, args.output_dir, args.config)
+        print("SESSION: " + str(bench.output), flush=True)
+        if not bench.candidates and (not gui or args.auto_search or args.manual or args.manual_candidate or
+                                     args.select_validated or args.export_experimental):
+            print("Generating centerline and baseline; please wait.", flush=True)
+            bench.run_baseline()
+        elif bench.centerline is None and not gui:
+            print("Preparing centerline; please wait.", flush=True)
+            bench.prepare()
         if args.auto_search:
             bench.auto_search()
         if args.manual_candidate:
             bench.import_manual(args.manual_candidate, args.manual_direction)
         elif args.manual:
             bench.manual_editor()
-        if args.gui:
+        if args.select_validated or args.export_experimental:
+            name = args.select_validated or args.export_experimental
+            candidate = bench.best_candidate() if name == "best" else next((c for c in bench.candidates if c["id"] == name), None)
+            if candidate is None:
+                raise ValueError("Unknown candidate ID: " + name)
+            bench.select_export(candidate, experimental=bool(args.export_experimental), confirmed=bool(args.export_experimental))
+        if gui:
             from centerline_tools.raceline_workbench_view import show_workbench
-            show_workbench(bench)
-    except (ValueError, OSError, RuntimeError, yaml.YAMLError, subprocess.CalledProcessError) as error:
+            bench.save_report()
+            bench = show_workbench(bench)
+    except (ValueError, OSError, RuntimeError, KeyError, TypeError, yaml.YAMLError, subprocess.CalledProcessError) as error:
         if bench is None:
             print("NO_VALIDATED_RACELINE: " + str(error), file=sys.stderr)
             return 2
-        bench.invalidate_promotion()
-        bench.state = "NO_VALIDATED_RACELINE"
         bench.error = str(error)
         if bench.centerline is None:
             bench.centerline_status = "FAIL"
         bench.save_report()
     print(bench.summary())
-    return 0 if bench.state in SUCCESS_STATES and bench.outputs else 1
+    if bench.error:
+        return 2
+    return 0 if bench.active_selection or (bench.state in SUCCESS_STATES and bench.outputs) else 1
 
 
 if __name__ == "__main__":

@@ -132,3 +132,33 @@ def test_passive_timing_summary_reports_rate_jitter_and_age():
     assert summary['interarrival_ms'] == {'p50': 15, 'p95': 19.5, 'max': 20}
     assert summary['source_to_observer_age_ms'] == {'p50': 3, 'p95': 3.9, 'max': 4}
     assert SMOKE.summarize_observer_timing([], 1)['interarrival_ms'] is None
+
+
+def test_opt_in_speed_profile_preserves_localization_contract(tmp_path):
+    base = ROOT / 'config/localization_eval_sim.yaml'
+    original = yaml.safe_load(base.read_text())
+    merged = SMOKE.speed_profile_overlay(base, ROOT / 'config/comparison_speed_limits.yaml')
+    assert merged['/**']['ros__parameters'] == {
+        'command_speed_min_mps': .5, 'command_speed_max_mps': 2.0}
+    assert merged['lower_safety_controller']['ros__parameters']['absolute_speed_limit_mps'] == 2.0
+    for node, block in original.items():
+        for key, value in block['ros__parameters'].items():
+            assert merged[node]['ros__parameters'][key] == value
+    assert merged == SMOKE.speed_profile_overlay(base, ROOT / 'config/comparison_speed_limits.yaml')
+    assert '/**' not in original
+
+
+@pytest.mark.parametrize('change', ['unsafe_parameter', 'mismatched_cap', 'nonfinite'])
+def test_invalid_speed_profile_rejected_before_launch(tmp_path, change):
+    profile = yaml.safe_load((ROOT / 'config/comparison_speed_limits.yaml').read_text())
+    lower = profile['lower_safety_controller']['ros__parameters']
+    if change == 'unsafe_parameter':
+        lower['enable_sim_reverse_swept_gate'] = True
+    elif change == 'mismatched_cap':
+        lower['absolute_speed_limit_mps'] = 3.0
+    else:
+        profile['/**']['ros__parameters']['command_speed_max_mps'] = math.nan
+    path = tmp_path / 'invalid.yaml'
+    path.write_text(yaml.safe_dump(profile))
+    with pytest.raises(ValueError):
+        SMOKE.speed_profile_overlay(ROOT / 'config/localization_eval_sim.yaml', path)

@@ -1,0 +1,25 @@
+# Experimental Tempo Coffee fixture. Start = selected 008_geometry row 270.
+# Straight-section start avoids the initial +/-pi heading seam; this is not a PF fix.
+# Bridge/sensor/vehicle settings otherwise match the IFAC fixture.
+bridge:
+  ros__parameters:
+    ego_namespace: ego_racecar
+    ego_scan_topic: scan
+    ego_odom_topic: odom
+    ego_opp_odom_topic: opp_odom
+    ego_drive_topic: drive
+    opp_namespace: opp_racecar
+    opp_scan_topic: opp_scan
+    opp_odom_topic: odom
+    opp_ego_odom_topic: opp_odom
+    opp_drive_topic: opp_drive
+    scan_distance_to_base_link: 0.27
+    scan_fov: 4.7
+    scan_beams: 1080
+    map_path: /sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00
+    map_img_ext: .pgm
+    num_agent: 1
+    sx: 2.66927602204947
+    sy: 1.14374263398612
+    stheta: 0.131970518672264
+    kb_teleop: true

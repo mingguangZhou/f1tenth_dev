@@ -386,92 +386,287 @@ simulation and **synthetic no-GT validation** artifacts are listed in the
 
 ## 11. Offline raceline workbench
 
-This is offline generation/validation only: it does not launch simulation or
-change PF/PnC. Use the existing canonical container and source-tree dependencies;
-no ROS build is needed just to generate a CSV. Start with the default profile:
+**Race-day:** open the existing container ([section 2](#2-open-the-canonical-container)),
+then run the map pair. A working display opens the GUI; no special GUI flag is needed.
+The workbench only generates/selects files: it never launches a simulator or vehicle.
+[Package contract](../centerline_tools/README.md#2-workbench-contract) owns methods/limits.
 
-```bash
-cd /sim_ws/src/centerline_tools
-python3 raceline_workbench.py <map_image.pgm-or-png> <map.yaml> --auto-search
-```
-
-Without `--auto-search`, baseline failure reports `AUTO_TUNING_REQUIRED` and offers
-search. Add `--gui` for map/curvature panels, tuning sliders and action buttons.
-The YAML [workbench contract](../centerline_tools/README.md#2-workbench-contract)
-defines searchable settings, hard envelope, result states and validation.
-
-Current IFAC success fixture (explicit reviewed profile, stricter 0.30 m margin):
+### Open GUI and generate
 
 ```bash
 cd /sim_ws/src/centerline_tools
 python3 raceline_workbench.py \
-  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.png \
-  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml \
-  --config config/raceline_workbench_ifac.yaml --auto-search --gui
+  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml
 ```
 
-Tempo difficult/failure fixture, using the generic unchanged envelope:
+Each invocation creates a fresh, descriptive session and shows the most recent
+verified export for the same map hashes as a labelled preview. **Open Previous
+Session** resumes it explicitly; preview alone never changes downstream selection.
+Wheel-zoom at the map cursor; toolbar pan/zoom and **Fit Map** are available.
+Click **Generate Raceline**,
+then **Try More Settings** if needed; review candidates, try presets/advanced values
+or **Edit Path Manually**. **Preset Values** shows exact settings for every choice.
+Advanced numerical controls support dragging and typed values; **Apply Settings
+& Close** stages trial settings, Cancel discards the draft. **Show Candidate** is
+preview only; **Check File** validates without exporting. Explicit clearance/curvature
+edits require confirmation and create a new session/profile with no inherited
+validation or selection; generate/validate again. Auto-search never changes limits.
+Custom-profile PASS does not establish real vehicle steering or onboard suitability.
+Use **Finish / Exit** for saved-file/status confirmation; **Save Validated & Exit**
+exports/selects a passing candidate and closes, or exit preserving current files.
+Tempo is a difficult failure fixture, not an accepted track. For the known successful
+IFAC fixture use its explicitly reviewed profile:
 
 ```bash
-cd /sim_ws/src/centerline_tools
+python3 raceline_workbench.py \
+  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.png \
+  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml \
+  --config config/raceline_workbench_ifac.yaml
+```
+
+### Reopen a session
+
+Use the exact SESSION directory printed by the console/displayed in the GUI.
+A bare `--open-session` opens a file picker at the session home; choose its report.
+For explicit reopening (also works headless):
+
+```bash
+WORKBENCH_DIR='/absolute/session/directory/printed/by/the/workbench'
+python3 raceline_workbench.py --open-session "$WORKBENCH_DIR"
+```
+
+Maps/config are recovered and hash-checked; do not resupply them. A changed solver
+profile or stale map/centerline requires a new session. Existing compatible saved
+manual E/A/X edits remain resumable. Closing the editor without Save cannot select
+an old edit or substitute the centerline.
+
+### Headless generation and explicit export
+
+```bash
 python3 raceline_workbench.py \
   tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
   --headless --auto-search
 ```
 
-Exit `0`: validated CSV exists. Exit `1`: no validated result; inspect the YAML/
-preview and follow its next action. Exit `2`: input/config/ownership preflight error.
-Search exhaustion does not prove physical infeasibility. For a different session,
-add `--output-dir centerline_output/workbench/<descriptive-session-id>`; changing
-profile or qualified centerline inputs requires a new directory.
+Exit `0` means a validated output or deliberate experimental export exists; it is
+**not** a production-validity verdict. Exit `1` means no usable export, `2` an input/
+action error. Search exhaustion means no valid candidate in the bounded schedule,
+not physical infeasibility. Read the YAML/status and preview before selection.
 
-For manual fallback on Tempo, open the same default map-isolated session:
-
-```bash
-python3 raceline_workbench.py \
-  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
-  --manual
-```
-
-Baseline runs first. The existing E/A/X editor resumes compatible saved edits;
-its Candidate button saves only under `manual/`. Closing it with a saved candidate
-triggers the same production validator; cancel does not promote an old edit or
-centerline. Direct editor invocation is also available, then explicitly validate:
+In the GUI use **Select / Export Validated**, or **Export Experimental** followed by
+its failed-check confirmation. Headless selection is equally explicit:
 
 ```bash
-WORKBENCH_DIR='/absolute/session/directory/printed/by/the/workbench'
-python3 manual_raceline_generator.py \
-  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
-  --workbench-dir "$WORKBENCH_DIR"
-python3 raceline_workbench.py \
-  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
-  --output-dir "$WORKBENCH_DIR" \
-  --manual-candidate "$WORKBENCH_DIR/manual/raceline_points_smooth.csv"
+python3 raceline_workbench.py --open-session "$WORKBENCH_DIR" \
+  --headless --select-validated best
+# Only after reviewing that specific failed candidate's diagnostic report:
+python3 raceline_workbench.py --open-session "$WORKBENCH_DIR" \
+  --headless --export-experimental 008_geometry
 ```
 
-If the editor's selected direction is reverse, add `--manual-direction reverse`
-to the last command. Reuse the same `--config` for sessions with an explicit profile.
-A manually saved CSV or legacy preview PASS is never sufficient acceptance.
+Replace the example ID with the intended candidate. `--export-experimental` itself
+is the explicit CLI acknowledgment. It writes exact candidate geometry and failed
+checks to experimental files; it cannot create a validated output. Reference-only
+previews are rejected. Export never starts or enables vehicle control.
 
-**Open deliverables:** the console prints the exact directory. Default container
-home is `/sim_ws/src/centerline_tools/centerline_output/workbench/`; host home is
-`/home/mzhou/f1tenth_dev/centerline_tools/centerline_output/workbench/`. Open
-`raceline_workbench_report.yaml` for all attempts/gaps, `preview.png` for the map
-and curvature panels, and `raceline_validation.yaml` beside a promoted CSV. Never
-select `candidate/` or `manual/` CSVs as a validated reference. Detailed failures
-are in `centerline_generation.log` / candidate diagnostic YAMLs.
+### Verify selection and hand off to existing interfaces
 
-This task's locally preserved examples are `ifac_workbench_validation_final_20261010`
-and `tempo_coffee_workbench_validation_final_20261010` beneath that home. They are
-Git-ignored validation data, not guaranteed files in another checkout. The IFAC
-example is generation/validation evidence only; it is not a new simulation test.
+```bash
+SELECTED="$WORKBENCH_DIR/selected_raceline.yaml"
+python3 resolve_selected_raceline.py "$SELECTED"
+# For deliberate experimental simulation only:
+python3 resolve_selected_raceline.py "$SELECTED" --allow-experimental
+```
 
-Essential offline regression check in the container:
+The helper prints the absolute CSV, status, candidate, direction and manifest.
+Missing/changed CSV, map or validation evidence fails. Add `--map-yaml "$MAP_YAML"`
+to verify caller-map identity. `--format json` is machine-readable; `--format pnc`
+prints the existing `raceline_csv_path:=... raceline_direction:=...` arguments;
+`--format publisher` prints `csv_path:=... direction:=...`. These print arguments
+without launching anything. Use the **validated-only** resolver (no acknowledgment)
+for the recommended onboard handoff to the existing [Terminal 3](#5-onboard-stack-and-passive-measurement).
+Do not use an experimental path as an onboard reference. A custom offline vehicle
+profile also needs independent physical-envelope review; changing an analysis
+limit does not change hardware or authorize onboard use.
+
+For simulation, build/source the affected packages first. Use the same explicit
+scenario/simulator/map/PF variables from [section 7](#7-closed-loop-localization-smoke-check)
+or [section 8](#8-record-and-analyze-an-evaluation-run). Substitute the manifest
+for the CSV/direction pair; the runner still performs map/scenario preflight:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select centerline_tools oudtra_driver_bringup
+source install/local_setup.bash
+ros2 run oudtra_driver_bringup run_localization_smoke.py \
+  --scenario-id "$SCENARIO_ID" --sim-config "$SIM_CONFIG" \
+  --pf-map-yaml "$MAP_YAML" --localize-config "$LOCALIZE_CONFIG" \
+  --selected-raceline "$SELECTED" \
+  --run-duration-sec 15 --result-json /tmp/selected_raceline_smoke.json
+```
+
+Add `--allow-experimental` **only** for an intentionally selected experimental
+simulation. The tool will reject it otherwise. Never change the explicit map to
+silence a mismatch. Add the recording/provenance arguments from section 8 to
+preserve a run; metadata retains the manifest hash, validation status and resolved
+CSV/hash, and copies `selected_raceline.yaml` / `selected_raceline_validation.yaml`.
+The existing config snapshot retains the actual reference CSV.
+
+**Which CSV is active?** The resolver shows selection before launch; the runner's
+result JSON records `selected_raceline` and `track.assets.raceline_csv`, and full-stack
+startup logs print the path/direction. Inspect the running publisher if needed:
+
+```bash
+ros2 param get /raceline_publisher csv_path
+ros2 param get /raceline_publisher direction
+```
+
+### Deliverables and essential checks
+
+Container session home: `/sim_ws/src/centerline_tools/centerline_output/workbench/`.
+Host home: `/home/mzhou/f1tenth_dev/centerline_tools/centerline_output/workbench/`.
+The console prints the exact session directory. Open `preview.png` for map/curvature,
+`raceline_workbench_report.yaml` for attempts/limits, and `selected_raceline.yaml`
+for the active handoff. Validated files are `raceline_points_optimized.csv` and
+`raceline_validation.yaml`; experimental files are `raceline_points_experimental.csv`
+and `experimental_validation.yaml`. Raw candidate/manual files are never implicitly
+selected. Detailed generation/manual logs and candidate diagnostics stay in session.
+
+Local V2 examples are `ifac_race_day_v2_validated_20261011` and
+`tempo_coffee_race_day_v2_search_20261011`. They are ignored offline validation data,
+not guaranteed downloadable assets. The IFAC selection also passed a 10 s recorded
+closed-loop handoff in `oudtra_driver_bringup/runs/ifac_selected_raceline_v2_handoff_20261011/`;
+open its `report.md`, `smoke_result.json`, `metadata.yaml`, `selected_raceline.yaml`,
+`selected_raceline_validation.yaml`, `config/reference_csv.csv` and `plots/`. Tempo
+experimental export was not driven. Previous V1 examples remain intact. All source paths in manifests must be reachable in the
+consuming environment; container paths refer to the host bind mounts.
 
 ```bash
 cd /sim_ws/src/centerline_tools
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest test/ -q -p no:cacheprovider
 ```
 
-Use `PYTHONDONTWRITEBYTECODE=1` to avoid changing retained legacy tracked bytecode.
-The normal GUI requires a working interactive display; headless operation needs none.
+Use `PYTHONDONTWRITEBYTECODE=1` to avoid modifying retained tracked bytecode.
+GUI usability still needs human operator review; display-free operation uses
+`--headless` and saved previews.
+
+
+## 12. Tempo Coffee experimental PF/PnC and low-speed comparison
+
+The selected Tempo Coffee `008_geometry` CSV is **experimental**, not production
+validated: peak curvature exceeds 1.082 1/m. A straight-section start (CSV row 270)
+was used for the bounded simulation; the first-row start failed during initialization
+and wrong-way recovery. Short-run simulation success does not qualify onboard use.
+The workbench does not launch this workflow automatically.
+
+### Repeat the complete simulator workflow, optionally with RViz
+
+Open the existing container from the host as in [section 8](#8-record-and-analyze-an-evaluation-run)
+to pass `ROBORACER_MAIN_REV` and `ROBORACER_PF_REV`. Inside it:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select f1tenth_gym_ros centerline_tools oudtra_driver_bringup
+source install/local_setup.bash
+SCENARIO_ID=tempo_coffee_scanned_20261002_00
+SIM_CONFIG=/sim_ws/src/f1tenth_gym_ros/config/sim_tempo_coffee.yaml
+MAP_YAML=/sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00.yaml
+SELECTED=/sim_ws/src/centerline_tools/centerline_output/workbench/tempo_coffee_scanned_20261002_00-20261011T194408Z-e62d290a5af6-a91105/selected_raceline.yaml
+LOCALIZE_CONFIG=/sim_ws/src/particle_filter/config/localize_sim.yaml
+SPEED_PROFILE=/sim_ws/src/oudtra_driver_bringup/config/comparison_speed_limits.yaml
+RUN_DIR="/sim_ws/src/oudtra_driver_bringup/runs/tempo_coffee_experimental_pf_pnc_low_speed_$(date -u +%Y%m%dT%H%M%SZ)"
+python3 /sim_ws/src/centerline_tools/resolve_selected_raceline.py \
+  "$SELECTED" --allow-experimental --map-yaml "$MAP_YAML"
+ros2 run oudtra_driver_bringup run_localization_smoke.py \
+  --scenario-id "$SCENARIO_ID" --sim-config "$SIM_CONFIG" \
+  --pf-map-yaml "$MAP_YAML" --localize-config "$LOCALIZE_CONFIG" \
+  --selected-raceline "$SELECTED" --allow-experimental \
+  --speed-profile "$SPEED_PROFILE" --with-rviz \
+  --run-duration-sec 30 --ros-domain-id 95 \
+  --record-dir "$RUN_DIR" --result-json /tmp/tempo_coffee_low_speed_smoke.json \
+  --source-revision "${ROBORACER_MAIN_REV:-}" \
+  --pf-revision "${ROBORACER_PF_REV:-}" --source-state unknown
+ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN_DIR"
+```
+
+The exact session above is local/Git-ignored; substitute your explicitly saved
+manifest if it is unavailable. There is no hidden latest-path fallback. The runner
+owns simulator → PF → one-shot initialization → full PnC → bounded motion → stop.
+Do not launch duplicate stacks in this ROS domain or reset PF during the run.
+Omit `--with-rviz` for the headless repeat. Ctrl-C requests stopped cleanup; an
+interrupted run is incomplete, not PASS. Read the smoke result before interpreting
+the analyzer: analysis PASS validates recorded evidence, not driving success.
+
+The opt-in speed profile sets the shared path generator/planner/follower command
+range to **0.5–2.0 m/s** and lower safety's final command cap to **±2.0 m/s**.
+Safety stops, slower safety/trajectory caps and reverse recovery remain possible;
+measured speed is not forced into the command interval. It changes no default
+profiles, PF tuning, steering envelope or vehicle dynamics. The runner merges only
+these limits into its localization integration overlay, verifies effective values,
+and snapshots both the source profile and resolved overlay in the recorded run.
+
+For a live check in a second sourced terminal:
+
+```bash
+export ROS_DOMAIN_ID=95
+ros2 param get /map_server yaml_filename
+ros2 param get /raceline_publisher csv_path
+ros2 param get /raceline_publisher direction
+ros2 param get /path_generator command_speed_max_mps
+ros2 param get /path_following_v2 command_speed_max_mps
+ros2 param get /lower_safety_controller absolute_speed_limit_mps
+```
+
+Simulator and PF use the same explicit Tempo YAML/PGM; the planner subscribes to
+that map server's `/map`, while PnC reference geometry comes from the selected CSV.
+The legacy `map: ifac_roboracer` in the PF base config is overridden by `map_yaml`.
+`smoke_result.json` retains the runtime map parameter, selected CSV and effective
+limits. Open the run's `report.md`, `metrics.json`, `plots/` and `config/` on the host
+under `/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<run-id>/`.
+
+### Onboard comparison preparation — not a validated Tempo driving procedure
+
+Use the existing [onboard Terminal 1–4 workflow](#5-onboard-stack-and-passive-measurement)
+and passive recorder. **Do not deploy this experimental CSV through the recommended
+onboard workflow.** A human-reviewed, physically qualified reference is required;
+this simulation does not establish that qualification. No car was driven here.
+
+There is also a pinned-launch limitation: `localize_onboard_rviz_launch.py` includes
+`localize_launch.py`, which selects the map from the installed default `localize.yaml`
+before resolving `localize_config`. Passing a custom config alone therefore does
+**not** select Tempo. Confirm `/map_server yaml_filename` and the actual `/map`
+against the intended YAML/image before enabling autonomy; mismatched map evidence
+invalidates the comparison. A reliable explicit new-track onboard PF startup is
+not established by this task.
+
+For an already verified onboard map and human-qualified CSV, the existing Terminal 3
+interface can apply the same speed limits without simulator frames/GT adapters:
+
+```bash
+SPEED_PROFILE=/f1tenth_ws/src/f1tenth_dev/oudtra_driver_bringup/config/comparison_speed_limits.yaml
+# Set this to the reviewed CSV available on the car, not an experimental export.
+RACELINE=/absolute/onboard/path/to/reviewed_raceline.csv
+ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py \
+  raceline_csv_path:="$RACELINE" raceline_direction:=csv \
+  path_platform_config:="$SPEED_PROFILE" \
+  reactive_platform_config:="$SPEED_PROFILE" \
+  integration_platform_config:="$SPEED_PROFILE"
+```
+
+This command replaces Terminal 3, not an additional stack. Do not overlay the
+simulator localization config onboard. Verify the three path nodes' shared range
+and lower-safety cap with the parameter checks above (using the onboard ROS domain).
+Record the actual map YAML/image, exact CSV and `--config speed="$SPEED_PROFILE"`
+with Terminal 4's existing asset/config arguments; begin evaluation only after
+manual PF initialization and readiness. Copy the entire dataset and analyze as in
+section 5, then use [section 10](#10-compare-two-analyzed-runs).
+
+For meaningful comparison, retain matching map-image/YAML and CSV hashes, direction,
+speed profile, algorithm configuration and evaluation context. Different local paths
+are fine; different asset bytes are not the same scenario. The generic comparison
+can report differences without matched-section alignment or asserting equivalence.
+Onboard absolute localization accuracy remains unavailable without qualified GT.
+The measured IMU yaw-rate adapter is still an analysis limitation; preserving the
+raw evidence does not make unsupported metrics available.
