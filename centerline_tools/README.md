@@ -1,14 +1,150 @@
-# centerline_tools ROS 2 Foxy package
+# centerline_tools: offline raceline workbench and ROS publisher
 
-This package contains three parts:
+## 1. Summary and document map
 
-1. an offline Python generator, `generate_centerline.py`, which extracts a smoothed centerline and then generates a final smoothed raceline;
-2. a headless global optimizer, `optimize_global_raceline.py`, which generates a map-bounded minimum-curvature raceline without corner keypoints;
-3. a ROS 2 Foxy publisher, `raceline_publisher`, which loads and publishes the selected raceline.
+Generate and validate a raceline offline with the existing Phase-9 centerline
+pipeline and Charlie's deterministic global optimizer. No simulator or vehicle
+stack is launched. The workbench offers baseline → bounded tuning → manual E/A/X
+fallback; every promoted candidate passes the same production validator.
 
-The package name is still `centerline_tools` because the offline pipeline still contains both centerline and raceline generation. The ROS-facing API now uses `raceline` names for the active published output.
+**Race-day quick start:** open the canonical container and run
+`python3 raceline_workbench.py <map_image> <map.yaml>` from this package.
+Add `--auto-search` for automatic retries or `--gui` for the Matplotlib controls.
+Copyable fixture/manual commands and output-discovery instructions live in the
+[operational reference](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench).
+The later sections document retained legacy generators and the ROS publisher;
+legacy preview/export filenames alone do not establish production acceptance.
 
-## Main outputs
+## 2. Workbench contract
+
+### Flow and result states
+
+```mermaid
+flowchart LR
+    MAP["Map image + YAML"] --> CL["Phase-9 centerline"]
+    CL --> BASE["Charlie baseline"]
+    BASE -->|"Pass"| VALID["Validated raceline"]
+    BASE -->|"Fail"| SEARCH["Bounded search"]
+    SEARCH -->|"Pass"| VALID
+    SEARCH -->|"Exhausted"| EDIT["Existing E/A/X editor"]
+    EDIT --> CHECK["Same production validator"]
+    CHECK -->|"Pass"| VALID
+    CHECK -->|"Fail"| NONE["No validated raceline"]
+```
+
+| Result | Meaning / next action |
+| --- | --- |
+| `AUTO_PASS` | Baseline satisfies every gate; use the validated output. |
+| `AUTO_TUNING_REQUIRED` | Baseline failed; inspect quantitative reasons and run/offer search. |
+| `AUTO_TUNED_PASS` | First fully validated search/tuned candidate; use the validated output. |
+| `AUTO_SEARCH_EXHAUSTED` | No valid candidate in the bounded schedule; manual editing remains available. This is **not proof of physical infeasibility**. |
+| `MANUAL_PASS` | Explicit manual candidate passed the identical production gates. |
+| `NO_VALIDATED_RACELINE` | Manual validation or input/centerline/workflow failed; no current promoted output. |
+
+Headless is the default. Exit `0` means a validated output exists, `1` means no
+validated result, and `2` means input/configuration/ownership preflight failed.
+A failed centerline stage prevents optimization; its detailed log is retained.
+The GUI displays the map, eroded corridor, centerline/candidate, unsafe dense
+samples, high-curvature regions and curvature-versus-station plot. Actions run
+baseline, bounded search, a slider-selected trial, named candidate preview, manual
+editor, revalidation and validated save. Save is disabled for a failed candidate
+and rechecks the on-disk CSV before promotion. Solves are bounded but synchronous;
+the GUI can pause during a solve. Interactive operator usability still needs review.
+
+### Search settings versus HARD constraints
+
+The initial profile is the unchanged
+[Charlie configuration](config/global_raceline_optimizer.yaml).
+[Workbench YAML](config/raceline_workbench.yaml) owns editable ranges and an ordered
+schedule, not new optimizer mathematics. All candidates start from the resolved
+baseline; solver tolerances and non-search fields stay fixed.
+
+| SEARCH setting | Meaning | Default editable range |
+| --- | --- | --- |
+| `optimization_spacing_m` | Station spacing; finer adds freedom/computation | 0.05–0.20 m |
+| `maximum_lateral_offset_m` | Search cap; actual bounds remain clipped by safe corridor | 0.15–1.50 m |
+| `path_length_weight` | Preference for a shorter/corner-cutting line | 0.03–0.25 |
+| `curvature_rate_weight` | Penalize rapid curvature change | 0.005–0.08 |
+| `offset_slope_weight` | Penalize rapid lateral transitions | 0.001–0.03 |
+| `comfortable_curvature_inv_m` | Soft curvature objective, **not** steering limit | 0.70–1.00 1/m |
+
+Phase A has eight named spacing/search-cap trials. Phase B has eight named
+soft-objective trials at 0.10 m spacing / 1.50 m cap. There is no random or Cartesian
+sweep. Duplicate profiles are skipped; at most `search.maximum_candidates` trials
+(default 16 **in addition to baseline**) run, stopping at first PASS. Repeated
+Auto Search button presses do not extend that session's budget. GUI slider trials
+are explicit human trials, not part of the automatic budget.
+
+**HARD envelope:** baseline `safety_margin_m=0.25 m`,
+`maximum_curvature_inv_m=1.082 1/m`, `validation_step_m=0.005 m`.
+The curvature limit represents the existing 20.6-degree / 0.33 m / 0.95 envelope;
+automatic search never changes these values. Advanced `vehicle_profile` overrides
+are explicit, recorded and only appropriate for an intentionally changed envelope.
+For each map, effective erosion is margin + resolution/√2 (0.285355 m for
+0.25 m margin at 0.05 m/pixel); reports compute it rather than hardcoding it.
+
+The explicit [IFAC workbench fixture](config/raceline_workbench_ifac.yaml) retains
+the existing reviewed IFAC optimizer profile (0.30 m margin and its solver
+settings) plus recorded 0.94 centerline coverage threshold. It does not relax
+curvature or dense-validation limits. The generic strict optimizer can hit its
+iteration limit on IFAC; the generic 0.98 traversal threshold can reject its
+branched skeleton. The tool does not silently identify maps and switch profiles.
+
+### One production validator and manual fallback
+
+`diagnose_production_path` in
+[Charlie's backend](centerline_tools/global_raceline_optimizer.py) checks finite,
+nondegenerate geometry; the entire exported polyline including seam at the dense
+step inside the same eroded corridor; no self-intersection; intended direction;
+**absolute maximum** curvature; and curvature/curvature-rate RMS no worse than the
+centerline at common spacing `max(output_spacing_m, 0.05 m)` with the existing
+`1e-6` relative numerical tolerance for RMS. The hard curvature gate has no
+excess tolerance. Automatic candidates additionally require all three solver
+stages to converge. Clearance is conservative nearest-grid-cell evidence, not
+exact distance to the continuous wall.
+
+Nonconverged/invalid candidates retain diagnostics and previews only. Ranking
+prefers fully valid, corridor-safe/curvature-invalid, curvature-safe/corridor-invalid,
+multiple-gate failure, then solver/topology failure; gaps break ties. Ranking never
+changes validity. A diagnostic reference preview after an early search failure is
+explicitly labelled, never promoted as an optimized result.
+
+The workbench reuses the existing manual editor's E/A/X groups, longitudinal
+indices, signed lateral offsets, direction flip and saved sessions. In workbench
+mode, it uses the production corridor/max-curvature preview and labels Save as a
+**candidate export**. The legacy 24-degree/p99 indication is not authoritative.
+Zero-corner Save is blocked in workbench mode, preventing silent centerline fallback.
+After Save, the workbench reloads the CSV and runs all common gates; explicit reverse
+direction is recorded and checked against the reversed reference. A saved external
+manual CSV can be checked with `--manual-candidate` without a display. Standalone
+legacy commands retain their behavior and are not the workbench acceptance path.
+
+### Outputs and ownership
+
+Default home: `centerline_output/workbench/<map-stem>-<input-hash>/`.
+Use a fresh descriptive `--output-dir` for a separate session/profile. Owner/input,
+generator/settings and Phase-9 artifact hashes are checked before reuse. Unqualified
+legacy Phase-9 exports, changed inputs or changed session profiles are rejected;
+the workbench never silently consumes the shared legacy directory. Map files are
+never overwritten. Current Phase 9 requires zero origin yaw and `negate: 0`.
+
+| Artifact | Purpose |
+| --- | --- |
+| `centerline_points_smooth.csv`, `drivable_region.npy`, `centerline_metadata.yaml` | Centerline/reference inputs and map hashes |
+| `workbench_inputs.yaml`, `phase9_provenance.yaml` | Ownership and exact qualified reuse contract |
+| `candidate/<id>/candidate.csv`, `diagnostics.yaml`, `preview.png` | Unpromoted candidates, solver stages, gate/gap evidence and overlay |
+| `raceline_points_optimized.csv`, `raceline_validation.yaml` | **Current validated pair only**; failed trials cannot write it |
+| `raceline_workbench_report.yaml` | Stable result, resolved settings/hashes, attempted/best candidate, final validation, environment and output hashes |
+| `preview.png`, `centerline_generation.log`, `manual_editor.log`, `manual/` | Latest visual diagnostics, detailed logs and resumable unvalidated edits |
+| `diagnostics/previous_report_<hash>.yaml`, `candidate/previous_validated_<hash>/` | Earlier invocation report/validated pair retained when rerunning |
+
+Generated workbench sessions are Git-ignored and excluded from package installation.
+Reviewed durable assets still require explicit approval. The original two-argument
+`run_centerline_and_optimized_raceline.py` now delegates to this same isolated
+workbench; extra workbench options are accepted. Other legacy commands below
+continue to use their shared output location.
+
+## 3. Legacy generator outputs
 
 After running the offline generator, the important files are in `centerline_output/`:
 
@@ -24,7 +160,7 @@ Both `centerline_points_smooth.csv` and `raceline_points_smooth.csv` use this fo
 index,x,y,yaw,curvature,curvature_abs
 ```
 
-## Package placement
+## 4. Package placement
 
 Recommended simulator workspace location:
 
@@ -32,7 +168,7 @@ Recommended simulator workspace location:
 /sim_ws/src/centerline_tools
 ```
 
-## Offline generation
+## 5. Legacy offline generation
 
 From the package root:
 
@@ -65,7 +201,7 @@ The header should be:
 index,x,y,yaw,curvature,curvature_abs
 ```
 
-## Global raceline optimization
+## 6. Global raceline optimization
 
 The global optimizer consumes the Phase-9 centerline, selected drivable-region
 mask, and ROS map metadata. It optimizes one lateral offset at each uniformly
@@ -109,7 +245,7 @@ with `rosdep` and add:
 The default output name is `raceline_points_optimized.csv`. The optimizer never
 replaces its source centerline or a comparison raceline. The reviewed Spielberg
 artifact under `output_backup/V0_reward_ppo_speed_spielberg_1000k_20260612/`
-is checked in and selected by the simulator autonomy launch; files generated at
+is retained for explicit selection; IFAC is the current default; files generated at
 other paths remain inactive until selected explicitly.
 
 Generate a fresh centerline and optimized raceline in one command:
@@ -159,7 +295,7 @@ The current Phase-9 centerline generator assumes a zero map-origin yaw. The
 optimizer's coordinate conversion supports rotated maps, but a rotated-map
 centerline must come from a generator that applies the same origin rotation.
 
-## Reproducible obstacle maps
+## 7. Reproducible obstacle maps
 
 `obstacle_creation_tool.py` supports both its graphical editor and a batch
 workflow. Batch mode applies the same track-boundary, obstacle-size, raster,
@@ -189,7 +325,7 @@ envelope.
 To place obstacles manually, omit `--batch-spec` and `--raceline`; the existing
 graphical workflow opens and the original input map remains unchanged.
 
-## Build
+## 8. Build
 
 ```bash
 cd /sim_ws
@@ -198,9 +334,9 @@ colcon build --packages-select centerline_tools
 source install/setup.bash
 ```
 
-Because `centerline_output/*` is installed into the package share directory, rebuild after regenerating the offline raceline if you want the installed launch default to use the newest CSV.
+Because legacy files directly under `centerline_output/` are installed into the package share directory, rebuild after regenerating the offline raceline if you want the installed launch default to use the newest CSV.
 
-## Basic ROS run: publish final smoothed raceline
+## 9. Basic ROS run: publish final smoothed raceline
 
 Recommended launch command:
 
@@ -234,7 +370,7 @@ Published outputs:
 - `visualization_msgs/MarkerArray` on `/raceline_markers`
 - `std_msgs/Float64MultiArray` on `/raceline_waypoints`
 
-## Run directly from source-tree CSV
+## 10. Run directly from source-tree CSV
 
 Use this if you regenerated the CSV in the source tree but have not rebuilt yet:
 
@@ -245,7 +381,7 @@ ros2 launch centerline_tools raceline_publisher.launch.py \
   use_sim_time:=true
 ```
 
-## Publish the centerline instead, if needed
+## 11. Publish the centerline instead, if needed
 
 The same publisher can still publish the centerline CSV when explicitly requested:
 
@@ -256,7 +392,7 @@ ros2 launch centerline_tools raceline_publisher.launch.py \
 
 If you do this, the topic names still remain `/raceline_*` unless you override them manually.
 
-## Reverse the published direction
+## 12. Reverse the published direction
 
 If the arrows point opposite to the desired driving direction:
 
@@ -272,7 +408,7 @@ Valid direction values:
 
 The node recomputes yaw and curvature after the final direction choice, so the Path orientation, direction arrows, and waypoint rows stay consistent.
 
-## RViz2 setup
+## 13. RViz2 setup
 
 In RViz2:
 
@@ -293,7 +429,7 @@ Marker meaning:
 - yellow arrows: sampled published direction
 - optional blue spheres: sampled waypoint points, disabled by default
 
-## Useful launch parameters
+## 14. Useful launch parameters
 
 ```bash
 csv_path:=centerline_output/raceline_points_smooth.csv
@@ -327,7 +463,7 @@ ros2 launch centerline_tools raceline_publisher.launch.py \
   publish_direction_arrows:=false
 ```
 
-## Useful checks
+## 15. Useful checks
 
 ```bash
 ros2 node list | grep raceline
@@ -348,7 +484,7 @@ Expected active ROS API:
 /raceline_waypoints
 ```
 
-## CSV format consumed by ROS publisher
+## 16. CSV format consumed by ROS publisher
 
 Required columns:
 
@@ -364,7 +500,7 @@ Recommended geometry columns:
 
 The publisher accepts missing geometry columns, but it recomputes `yaw`, `curvature`, and `curvature_abs` at startup anyway. This keeps the published Path orientation and waypoint rows consistent with the selected `direction` parameter.
 
-## Notes
+## 17. Notes
 
 - The node loads the CSV once at startup, then republishes the static data at a low wall-time rate.
 - Transient-local QoS is used so RViz can still receive markers if it starts after the publisher.

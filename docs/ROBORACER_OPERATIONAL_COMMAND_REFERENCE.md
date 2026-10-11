@@ -383,3 +383,95 @@ Comparison writes `report.md` and `comparison.json` in its separate output direc
 Host equivalents replace `/sim_ws/src/` with `/home/mzhou/f1tenth_dev/`. Current
 simulation and **synthetic no-GT validation** artifacts are listed in the
 [deliverables section](LOCALIZATION_SIMULATION.md#56-plots-and-validation-artifacts).
+
+## 11. Offline raceline workbench
+
+This is offline generation/validation only: it does not launch simulation or
+change PF/PnC. Use the existing canonical container and source-tree dependencies;
+no ROS build is needed just to generate a CSV. Start with the default profile:
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 raceline_workbench.py <map_image.pgm-or-png> <map.yaml> --auto-search
+```
+
+Without `--auto-search`, baseline failure reports `AUTO_TUNING_REQUIRED` and offers
+search. Add `--gui` for map/curvature panels, tuning sliders and action buttons.
+The YAML [workbench contract](../centerline_tools/README.md#2-workbench-contract)
+defines searchable settings, hard envelope, result states and validation.
+
+Current IFAC success fixture (explicit reviewed profile, stricter 0.30 m margin):
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 raceline_workbench.py \
+  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.png \
+  /sim_ws/src/f1tenth_gym_ros/maps/ifac_roboracer.yaml \
+  --config config/raceline_workbench_ifac.yaml --auto-search --gui
+```
+
+Tempo difficult/failure fixture, using the generic unchanged envelope:
+
+```bash
+cd /sim_ws/src/centerline_tools
+python3 raceline_workbench.py \
+  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
+  --headless --auto-search
+```
+
+Exit `0`: validated CSV exists. Exit `1`: no validated result; inspect the YAML/
+preview and follow its next action. Exit `2`: input/config/ownership preflight error.
+Search exhaustion does not prove physical infeasibility. For a different session,
+add `--output-dir centerline_output/workbench/<descriptive-session-id>`; changing
+profile or qualified centerline inputs requires a new directory.
+
+For manual fallback on Tempo, open the same default map-isolated session:
+
+```bash
+python3 raceline_workbench.py \
+  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
+  --manual
+```
+
+Baseline runs first. The existing E/A/X editor resumes compatible saved edits;
+its Candidate button saves only under `manual/`. Closing it with a saved candidate
+triggers the same production validator; cancel does not promote an old edit or
+centerline. Direct editor invocation is also available, then explicitly validate:
+
+```bash
+WORKBENCH_DIR='/absolute/session/directory/printed/by/the/workbench'
+python3 manual_raceline_generator.py \
+  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
+  --workbench-dir "$WORKBENCH_DIR"
+python3 raceline_workbench.py \
+  tempo_coffee_scanned_20261002_00.pgm tempo_coffee_scanned_20261002_00.yaml \
+  --output-dir "$WORKBENCH_DIR" \
+  --manual-candidate "$WORKBENCH_DIR/manual/raceline_points_smooth.csv"
+```
+
+If the editor's selected direction is reverse, add `--manual-direction reverse`
+to the last command. Reuse the same `--config` for sessions with an explicit profile.
+A manually saved CSV or legacy preview PASS is never sufficient acceptance.
+
+**Open deliverables:** the console prints the exact directory. Default container
+home is `/sim_ws/src/centerline_tools/centerline_output/workbench/`; host home is
+`/home/mzhou/f1tenth_dev/centerline_tools/centerline_output/workbench/`. Open
+`raceline_workbench_report.yaml` for all attempts/gaps, `preview.png` for the map
+and curvature panels, and `raceline_validation.yaml` beside a promoted CSV. Never
+select `candidate/` or `manual/` CSVs as a validated reference. Detailed failures
+are in `centerline_generation.log` / candidate diagnostic YAMLs.
+
+This task's locally preserved examples are `ifac_workbench_validation_final_20261010`
+and `tempo_coffee_workbench_validation_final_20261010` beneath that home. They are
+Git-ignored validation data, not guaranteed files in another checkout. The IFAC
+example is generation/validation evidence only; it is not a new simulation test.
+
+Essential offline regression check in the container:
+
+```bash
+cd /sim_ws/src/centerline_tools
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest test/ -q -p no:cacheprovider
+```
+
+Use `PYTHONDONTWRITEBYTECODE=1` to avoid changing retained legacy tracked bytecode.
+The normal GUI requires a working interactive display; headless operation needs none.

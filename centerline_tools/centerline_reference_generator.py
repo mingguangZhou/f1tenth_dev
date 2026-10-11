@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import sys
+import argparse
+import hashlib
 import os
 import csv
 import yaml
@@ -1082,6 +1084,11 @@ def save_centerline_npy(centerline_rows, npy_path):
     np.save(npy_path, rows_to_numpy(centerline_rows))
 
 
+def source_sha256(path):
+    with open(path, "rb") as stream:
+        return hashlib.sha256(stream.read()).hexdigest()
+
+
 def save_metadata_yaml(
     metadata_path,
     map_path,
@@ -1104,6 +1111,8 @@ def save_metadata_yaml(
         "source_files": {
             "map_image": map_path,
             "map_yaml": yaml_path,
+            "map_image_sha256": source_sha256(map_path),
+            "map_yaml_sha256": source_sha256(yaml_path),
         },
         "map_metadata": {
             "resolution": float(map_meta["resolution"]),
@@ -1254,11 +1263,19 @@ def overlay_world_paths(img, yaml_data, raw_pts, resampled_pts, smoothed_pts, pa
 # MAIN PIPELINE
 # =========================
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python3 generate_centerline.py <map_image> <map.yaml>")
-        return
-
-    map_path, yaml_path = sys.argv[1], sys.argv[2]
+    global OUTPUT_DIR, MIN_ORDERED_LOOP_COVERAGE_RATIO
+    parser = argparse.ArgumentParser(description="Generate Phase-9 centerline assets")
+    parser.add_argument("map_image")
+    parser.add_argument("map_yaml")
+    parser.add_argument("--output-dir", default=OUTPUT_DIR)
+    parser.add_argument("--minimum-loop-coverage", type=float,
+                        default=MIN_ORDERED_LOOP_COVERAGE_RATIO)
+    args = parser.parse_args()
+    if not 0.0 < args.minimum_loop_coverage <= 1.0:
+        parser.error("minimum loop coverage must be in (0, 1]")
+    OUTPUT_DIR = args.output_dir
+    MIN_ORDERED_LOOP_COVERAGE_RATIO = args.minimum_loop_coverage
+    map_path, yaml_path = args.map_image, args.map_yaml
     ensure_output_dir(OUTPUT_DIR)
 
     img, meta = load_map(map_path, yaml_path)

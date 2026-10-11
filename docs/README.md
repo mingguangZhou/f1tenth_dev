@@ -15,6 +15,7 @@ task, not an approved roadmap. Commands and technical contracts remain below.
 | Question | Source of truth |
 | --- | --- |
 | What is demonstrated, how did it evolve, which choices apply, and what is uncertain? | [Project record](PROJECT_RECORD.md) — status, milestones, rationale and open gaps |
+| How do I generate a validated offline raceline or diagnose failure? | [Workbench contract](../centerline_tools/README.md#2-workbench-contract) and [race-day commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench) |
 | Which host, container, ROS distribution, and workspace should I use? | [Development environment](DEVELOPMENT_ENVIRONMENT.md) |
 | What engineering process and validation standard applies? | [Engineering workflow](ENGINEERING_WORKFLOW.md) |
 | Which commands run the simulator, PF/full stack, tests, recording, and offline analysis? | [Operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) |

@@ -25,6 +25,10 @@ If no manual corner points are added, the saved raceline is the centerline.
 """
 
 import csv
+import argparse
+from pathlib import Path
+
+from centerline_tools import global_raceline_optimizer as production
 import os
 import sys
 
@@ -533,6 +537,18 @@ def load_manual_session_if_available(
         print(f"Manual UI resume: loaded existing raceline preview: {raceline_path}")
     return active_centerline_rows, corners, preview, selected_direction
 
+def production_validation(context, points, direction="normal"):
+    """Authoritative workbench check, independent of permissive legacy preview."""
+    reference = context["reference"]
+    if direction == "reverse":
+        reference = reference[::-1]
+    safe, _, _ = production.build_safe_mask(
+        context["mask"], context["metadata"], context["config"].safety_margin_m)
+    return production.diagnose_production_path(
+        points, safe, context["clearance"], context["metadata"], context["config"],
+        production.signed_area(reference), centerline=reference, solver_converged=None)
+
+
 def show_manual_raceline_editor(
     img,
     yaml_data,
@@ -542,6 +558,7 @@ def show_manual_raceline_editor(
     initial_corners=None,
     initial_preview=None,
     initial_direction="normal",
+    production_context=None,
 ):
     """
     Manual E/A/X raceline editor with explicit editing modes.
@@ -557,11 +574,13 @@ def show_manual_raceline_editor(
     """
     interactive_ok = rg.try_enable_interactive_matplotlib_backend()
     res = float(yaml_data["resolution"])
-    safety_mask, safety_radius_px = rg.build_safety_region_mask(
-        drivable_mask,
-        res,
-        rg.RACELINE_SAFETY_REGION_MARGIN_M,
-    )
+    if production_context:
+        safety_mask, _, _ = production.build_safe_mask(
+            drivable_mask, production_context["metadata"],
+            production_context["config"].safety_margin_m)
+    else:
+        safety_mask, safety_radius_px = rg.build_safety_region_mask(
+            drivable_mask, res, rg.RACELINE_SAFETY_REGION_MARGIN_M)
 
     MODE_NORMAL = "NORMAL"
     MODE_ADD = "ADD CORNER"
@@ -688,9 +707,22 @@ def show_manual_raceline_editor(
                 f"  kappa p99: {cs['p_abs_curvature']:.3f} 1/m",
                 f"  kappa max: {cs['max_abs_curvature']:.3f} 1/m",
                 f"  limit: {p['curvature_limit']:.3f} 1/m",
-                f"  accepted: {p['curvature_ok']}",
+                f"  legacy preview only: {p['curvature_ok']}",
                 "",
             ]
+
+        if production_context:
+            lines += ["PRODUCTION validation (authoritative):"]
+            if p is not None:
+                validation = production_validation(
+                    production_context, p["points"], state["selected_direction"])
+                lines += ["  " + ("PASS" if validation["valid"] else "FAIL"),
+                          *validation["failure_reasons"],
+                          "Save exports a candidate only; workbench revalidates."]
+            else:
+                lines += ["  Preview required; no validated output."]
+            # Remove permissive legacy acceptance from the workbench UI.
+            lines = [line for line in lines if "legacy preview only" not in line or not production_context]
 
         lines += ["Current-mode controls:"]
         if state["mode"] == MODE_NORMAL:
@@ -1180,7 +1212,7 @@ def show_manual_raceline_editor(
             f"inside={p['inside_ratio']:.3f}, outside={p['outside_count']}, "
             f"kappa_p99={cs['p_abs_curvature']:.3f}, "
             f"kappa_max={cs['max_abs_curvature']:.3f}, "
-            f"limit={p['curvature_limit']:.3f}, accepted={p['curvature_ok']}"
+            f"legacy_preview_limit={p['curvature_limit']:.3f}; NOT production acceptance"
         )
         draw()
 
@@ -1188,6 +1220,9 @@ def show_manual_raceline_editor(
         set_mode(MODE_NORMAL, keep_selection=True)
         if state["preview"] is None or state["preview_dirty"]:
             preview_raceline()
+        if production_context and not state["corners"]:
+            print("Workbench manual: add/edit E/A/X corners; zero-corner centerline fallback is not a raceline.")
+            return
         save_manual_outputs(
             output_dir,
             centerline_rows,
@@ -1253,7 +1288,9 @@ def show_manual_raceline_editor(
     b_lateral = Button(ax_lateral, "Lateral Move")
     b_reset = Button(ax_reset, "Reset Lateral")
     b_preview = Button(ax_preview, "Preview Raceline")
-    b_save = Button(ax_save, "Save")
+    b_save = Button(ax_save, "Candidate" if production_context else "Save")
+    if production_context:
+        b_save.label.set_fontsize(8)
     b_cancel = Button(ax_cancel, "Cancel")
 
     b_add.on_clicked(lambda event: toggle_add())
@@ -1274,7 +1311,12 @@ def show_manual_raceline_editor(
 
     print("Manual raceline editor")
     print(f"  Centerline points:       {len(centerline_rows)}")
-    print(f"  Raceline safety margin:  {rg.RACELINE_SAFETY_REGION_MARGIN_M:.3f} m ({safety_radius_px} px erosion)")
+    if production_context:
+        margin = production_context["config"].safety_margin_m
+        effective = margin + res / np.sqrt(2.0)
+        print(f"  Production margin: {margin:.3f} m; effective erosion {effective:.3f} m")
+    else:
+        print(f"  Raceline safety margin: {rg.RACELINE_SAFETY_REGION_MARGIN_M:.3f} m ({safety_radius_px} px erosion)")
     print(f"  Driving direction:       {state['selected_direction'].upper()} (relative to centerline CSV order)")
     print("  Flip Direction reverses the in-memory centerline; the Phase 9 CSV is unchanged.")
     print("  NORMAL: click E/A/X to select only; no accidental point movement.")
@@ -1284,7 +1326,8 @@ def show_manual_raceline_editor(
     print("  Mouse wheel zooms around the cursor; Matplotlib toolbar pan/zoom/home remains available.")
     print("  Preview Raceline uses the current raceline_generator.py backend.")
     print("  Save writes standard raceline outputs and exits.")
-    print("  With zero corners, saved raceline equals the centerline.")
+    print("  Workbench: zero-corner Save is blocked; exports are candidates only." if production_context else
+          "  With zero corners, saved raceline equals the centerline.")
 
     draw()
 
@@ -1307,76 +1350,63 @@ def show_manual_raceline_editor(
     return bool(state["saved"])
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python3 manual_raceline_generator.py <map_image> <map.yaml> [--fresh]")
-        print("Note: Phase 9 outputs must already exist in centerline_output/.")
-        print("Default standalone behavior: resume the last compatible manual session when available.")
-        return
-
-    map_path, yaml_path = sys.argv[1], sys.argv[2]
-    resume_existing = True
-    for arg in sys.argv[3:]:
-        if arg in ("--fresh", "--no-resume"):
-            resume_existing = False
-        elif arg == "--resume":
-            resume_existing = True
-        else:
-            raise RuntimeError(f"Unknown optional argument: {arg}")
-
-    rg.ensure_output_dir(rg.OUTPUT_DIR)
-    paths = rg.resolve_centerline_output_paths(rg.OUTPUT_DIR)
+    parser = argparse.ArgumentParser(description="Existing E/A/X manual editor")
+    parser.add_argument("map_image")
+    parser.add_argument("map_yaml")
+    parser.add_argument("--fresh", "--no-resume", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--workbench-dir", help="hash-qualified workbench session; exports candidates only")
+    args = parser.parse_args()
+    map_path, yaml_path = args.map_image, args.map_yaml
+    output_dir = rg.OUTPUT_DIR
+    phase9_dir = output_dir
+    context = None
+    if args.workbench_dir:
+        from raceline_workbench import check_phase9, input_identity
+        root = Path(args.workbench_dir).resolve()
+        identity = input_identity(map_path, yaml_path)
+        check_phase9(root, identity)
+        report = yaml.safe_load((root / "raceline_workbench_report.yaml").read_text())
+        if report["inputs"] != identity:
+            raise ValueError("manual workbench inputs mismatch")
+        for name, digest in report["centerline_artifacts"].items():
+            if production.file_sha256(root / name) != digest:
+                raise ValueError("manual Phase-9 hash mismatch: " + name)
+        config = production.OptimizerConfig(**report["baseline_profile"])
+        output_dir = str(root / "manual")
+        phase9_dir = str(root)
+        metadata = production.MapMetadata.from_yaml(yaml_path)
+        mask = np.load(root / "drivable_region.npy", allow_pickle=False)
+        _, clearance, _ = production.build_safe_mask(mask, metadata, config.safety_margin_m)
+        context = {"config": config, "metadata": metadata, "clearance": clearance, "mask": mask,
+                   "reference": production.load_path_csv(root / "centerline_points_smooth.csv")}
+        # Generation mechanics remain legacy; this preliminary curvature gate now
+        # uses the production maximum (not p99/24 degrees). Final acceptance also
+        # checks dense clearance, topology, direction and both smoothness gates.
+        rg.raceline_max_allowed_curvature = lambda: config.maximum_curvature_inv_m
+        rg.RACELINE_CURVATURE_CHECK_PERCENTILE = 100.0
+    rg.ensure_output_dir(output_dir)
+    paths = rg.resolve_centerline_output_paths(phase9_dir)
     rg.ensure_required_phase9_outputs(paths)
-
     img, meta = rg.load_map(map_path, yaml_path)
     centerline_rows = rg.load_centerline_geometry_csv(paths["centerline_csv"])
     drivable_mask = np.load(paths["drivable_mask"]).astype(np.uint8)
-    res = float(meta["resolution"])
-    safety_mask, _ = rg.build_safety_region_mask(
-        drivable_mask,
-        res,
-        rg.RACELINE_SAFETY_REGION_MARGIN_M,
-    )
-
-    print("Loaded Phase 9 reference data for manual raceline generation")
-    print(f"  Centerline CSV:       {paths['centerline_csv']}")
-    print(f"  Centerline points:    {len(centerline_rows)}")
-    print(f"  Drivable mask:        {paths['drivable_mask']}")
-    print(f"  Map shape:            {img.shape}, resolution={res:.3f} m/pixel")
-
-    initial_corners = []
-    initial_preview = None
-    initial_direction = "normal"
-    if resume_existing:
-        resumed = load_manual_session_if_available(
-            rg.OUTPUT_DIR,
-            paths["centerline_csv"],
-            centerline_rows,
-            drivable_mask,
-            safety_mask,
-            meta,
-        )
+    if context:
+        safety_mask, _, _ = production.build_safe_mask(drivable_mask, context["metadata"], context["config"].safety_margin_m)
+    else:
+        safety_mask, _ = rg.build_safety_region_mask(drivable_mask, float(meta["resolution"]), rg.RACELINE_SAFETY_REGION_MARGIN_M)
+    corners, preview, direction = [], None, "normal"
+    if not args.fresh:
+        resumed = load_manual_session_if_available(output_dir, paths["centerline_csv"], centerline_rows,
+                                                  drivable_mask, safety_mask, meta)
         if resumed is not None:
-            centerline_rows, initial_corners, initial_preview, initial_direction = resumed
-        else:
-            print("Manual UI resume: no compatible recent manual session found; starting fresh.")
-    else:
-        print("Manual UI: --fresh selected; starting with no manual corners.")
-
-    saved = show_manual_raceline_editor(
-        img,
-        meta,
-        centerline_rows,
-        drivable_mask,
-        rg.OUTPUT_DIR,
-        initial_corners=initial_corners,
-        initial_preview=initial_preview,
-        initial_direction=initial_direction,
-    )
-
-    if saved:
-        print("Manual raceline generation completed successfully.")
-    else:
-        print("Manual raceline generator closed without Save.")
+            centerline_rows, corners, preview, direction = resumed
+    saved = show_manual_raceline_editor(img, meta, centerline_rows, drivable_mask, output_dir,
+                                       initial_corners=corners, initial_preview=preview,
+                                       initial_direction=direction, production_context=context)
+    print("Manual candidate saved; workbench validation required." if saved and context else
+          "Manual raceline saved." if saved else "Manual editor closed without Save.")
+    return 0 if saved or not args.workbench_dir else 3
 
 
 if __name__ == "__main__":

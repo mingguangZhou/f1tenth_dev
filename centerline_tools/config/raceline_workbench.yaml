@@ -1,0 +1,38 @@
+# Baseline is Charlie's unchanged general optimizer profile. Search cannot
+# override vehicle constraints, solver tolerances, or other non-search fields.
+baseline_optimizer_config: global_raceline_optimizer.yaml
+centerline:
+  minimum_loop_coverage_ratio: 0.98
+vehicle_profile: {}  # Advanced explicit overrides only: safety_margin_m,
+                     # maximum_curvature_inv_m, validation_step_m.
+search:
+  maximum_candidates: 16  # Additional attempts after baseline, stop at first PASS.
+  ranges:
+    optimization_spacing_m: [0.05, 0.20]
+    maximum_lateral_offset_m: [0.15, 1.50]
+    path_length_weight: [0.03, 0.25]
+    curvature_rate_weight: [0.005, 0.08]
+    offset_slope_weight: [0.001, 0.03]
+    comfortable_curvature_inv_m: [0.70, 1.00]
+  # Phase A: each candidate starts from baseline, no Cartesian product.
+  geometry_candidates:
+    - {optimization_spacing_m: 0.20, maximum_lateral_offset_m: 1.50}
+    - {optimization_spacing_m: 0.10, maximum_lateral_offset_m: 1.50}
+    - {optimization_spacing_m: 0.08, maximum_lateral_offset_m: 1.50}
+    - {optimization_spacing_m: 0.05, maximum_lateral_offset_m: 1.50}
+    - {optimization_spacing_m: 0.15, maximum_lateral_offset_m: 0.75}
+    - {optimization_spacing_m: 0.10, maximum_lateral_offset_m: 0.75}
+    - {optimization_spacing_m: 0.10, maximum_lateral_offset_m: 0.40}
+    - {optimization_spacing_m: 0.10, maximum_lateral_offset_m: 0.15}
+  # Phase B: fixed spacing/cap, soft objectives only. Unspecified fields retain
+  # baseline values. Edit these named candidates/ranges rather than Python.
+  objective_geometry: {optimization_spacing_m: 0.10, maximum_lateral_offset_m: 1.50}
+  objective_candidates:
+    - {path_length_weight: 0.03}
+    - {path_length_weight: 0.25}
+    - {curvature_rate_weight: 0.08, offset_slope_weight: 0.03}
+    - {curvature_rate_weight: 0.005, offset_slope_weight: 0.001}
+    - {comfortable_curvature_inv_m: 0.70, path_length_weight: 0.03}
+    - {comfortable_curvature_inv_m: 1.00, path_length_weight: 0.25}
+    - {path_length_weight: 0.06, curvature_rate_weight: 0.04, offset_slope_weight: 0.01}
+    - {path_length_weight: 0.20, curvature_rate_weight: 0.01, offset_slope_weight: 0.003}

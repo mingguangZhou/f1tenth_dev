@@ -1,0 +1,6 @@
+# Explicit existing IFAC fixture, not automatic map-name special handling.
+# Inherit the same bounded schedule, use the already reviewed IFAC solver/profile.
+extends: raceline_workbench.yaml
+baseline_optimizer_config: global_raceline_optimizer_ifac_roboracer.yaml
+centerline:
+  minimum_loop_coverage_ratio: 0.94

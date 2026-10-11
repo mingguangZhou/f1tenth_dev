@@ -5,19 +5,23 @@
 The repository implements short IFAC PF-localized closed-loop simulation,
 recording and offline evaluation, with historical run artifacts supporting that
 workflow. A passive onboard recorder exists; its physical-car validation is not
-established. Tempo Coffee currently has map assets only, not a validated raceline
-or maintained simulation workflow.
+established. Tempo Coffee's committed track assets remain the map pair, without a validated
+raceline or maintained simulation workflow. The offline workbench now records quantified
+Tempo search failure without promoting an invalid candidate.
 
 **Assessment:** 2026-10-10, `mingguangZhou/f1tenth_dev`, branch
 `mingguang_localization_robustness_ai_workspace`, revision
-[edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009bddd41bd5ad71fd6597aa5b553d5d607ee).
+[d28f615](https://github.com/mingguangZhou/f1tenth_dev/commit/d28f6159fb514be35679e27f3177144d1578360a)
+plus the uncommitted offline-workbench changes described below.
 Pinned PF: [dfd07cb](https://github.com/mingguangZhou/particle_filter/commit/dfd07cb895e854a7a5ca872339a0f567e24fa5ba).
-No new build, runtime or hardware validation was performed for this documentation
-assessment. Historical research was reconstructed on 2026-10-09 and consolidated
-on 2026-10-10; prior artifacts do not certify current installed binaries or HEAD.
+Current workbench evidence includes a targeted Foxy package build, offline
+regression tests and fresh IFAC/Tempo generation. No new vehicle simulation or
+hardware test was run. Historical research was reconstructed on 2026-10-09 and
+consolidated on 2026-10-10; prior artifacts do not certify current installed binaries.
 
-**Human-confirmed current objective:** consolidate engineering records and enforce
-human-led project direction, as explicitly requested for this task. **Next technical
+**Human-confirmed current objective:** implement the offline raceline workbench:
+Charlie baseline → bounded tuning → existing manual editor → common production
+validator. No PF/PnC/vehicle tuning or automatic simulation launch. **Subsequent
 objective, strategic priorities and development sequence: Not specified / awaiting
 human direction.** Open issues below are observations, not assigned work.
 
@@ -26,6 +30,7 @@ human direction.** Open issues below are observations, not assigned work.
 | Foxy / localization-ready Rocker environment | Implemented host-source/mount conventions inspected; past container builds/runtime checks **Reported**, not rerun. |
 | Normal and PF Gym bridges | Explicit config selection and shared simulator-truth diagnostic contract **Verified in source/tests**; past message-flow checks **Reported**. |
 | IFAC geometry / V2 PnC | Stored IFAC validation hashes/flags corroborate assets; bounded closed-loop bags corroborate historical **Simulation/runtime validation**. Five-lap performance is **Reported**; full recovery coverage and hardware results **Unknown**. |
+| Offline raceline workbench | **Build/test and offline fixture validated:** common automatic/manual gates, hash-qualified outputs, deterministic baseline/search, Matplotlib construction. Fresh explicit IFAC profile PASS; Tempo baseline + 16 trials exhausted with no validated CSV. Interactive race-day editing not yet human-validated. |
 | PF initialization / closed-loop integration | Readiness, one-shot pose and health gating implemented; historical short IFAC motion corroborated. No reset acknowledgement or accuracy guarantee. |
 | Recording / shared offline scorecard | Simulation and synthetic no-GT artifacts inspected; regression success **Reported**. Synthetic onboard fixtures are not hardware results or sim/onboard equivalence. |
 | Passive onboard recorder | Passivity verified in source; **Build/test and mock/runtime validation Reported**. Hardware validation not established; measured speed/IMU adapter remains missing. |
@@ -79,6 +84,7 @@ changes and failures rather than every commit.
 | Experiment 2026-10-02; commit 10-07 | **Tempo Coffee unresolved.** [9d4abc0](https://github.com/mingguangZhou/f1tenth_dev/commit/9d4abc0) commits PGM/YAML only. Local handoff reports optimizer corridor/curvature rejection; archived metadata/results corroborate provisional centerline 10 s PASS (14.824 m, no collision, one emergency entry) but a requested 20 s run stops at 7.59 s with collision. Experimental config/generated path/docs were rolled back. No validated optimized raceline; link between optimizer rejection and driving failure is inferred, not isolated. Artifacts/reports are local-only. |
 | Reconstruction 2026-10-09; commit 10-10 | **Persistent engineering history.** [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b) records source/Git/report inspection, bag counts and IFAC manifest/hash corroboration. Documentation checks reported passing; no new ROS/hardware validation. The prior entry's “uncommitted” status is corrected by this commit evidence. |
 | 2026-10-10; this uncommitted task | **Human-led consolidated record.** Explicit human request replaces the three-record layout with this record, removes AI-assigned priorities and distinguishes implementation from approval. Documentation/reference/scope checks are the applicable validation; no functional change or ROS validation. |
+| 2026-10-10; uncommitted workbench task | **Offline raceline workflow.** [Workbench](../centerline_tools/raceline_workbench.py) reuses Charlie and E/A/X, with shared production gates, isolated/hash-qualified outputs and 16 deterministic retries. Fresh IFAC fixture AUTO_PASS (max 0.699 1/m); Tempo AUTO_SEARCH_EXHAUSTED (best corridor-safe candidate 1.460 > 1.082 1/m). Tests/targeted Foxy build passed; no runtime/hardware acceptance inferred. See [contract](../centerline_tools/README.md#2-workbench-contract) and [commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench). |
 
 ## 3. Engineering decisions and implementation rationale
 
@@ -102,6 +108,7 @@ limited to inspected code/docs; no undocumented rejected alternative is invented
 | **DEC-010** · 2026-09-27 · Implemented technical choice | Headless benchmark, optional manual RViz, unchanged wall-time model ([1b9a5f4](https://github.com/mingguangZhou/f1tenth_dev/commit/1b9a5f4)). Gym bridge path has no rendering; no physics/control-rate tuning or `/clock`. Measured ages combine queues/processing/transport; some PnC marker computation persists. See [timing limits](LOCALIZATION_SIMULATION.md#25-headless-execution-and-timing-evidence). |
 | **DEC-011** · reconstructed 2026-10-09, committed 10-10 · Historical / superseded | Three-document progress layout recorded by [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b). Its useful historical/evidence content is retained here; “accepted” labels did not establish human approval. Superseded by DEC-012 through this task's explicit human request. |
 | **DEC-012** · 2026-10-10 · Human-confirmed decision | This task explicitly requires one factual project record and human ownership of objectives/priorities/major choices. Codex plans authorized tasks and maintains evidence; earlier entries are context, not authorization. AI proposals remain temporary unless explicitly requested for tracking, labelled **AI suggestion — not approved**. Meaningful updates only; no automatic commit/push. See [workflow](ENGINEERING_WORKFLOW.md#persistent-engineering-records). |
+| **DEC-013** · 2026-10-10 · Human-confirmed workbench requirement | This task explicitly requires Charlie as preferred backend, one production validator for automatic/manual candidates, hard envelope never auto-relaxed, bounded deterministic search and no invalid promotion. Implemented using existing backend geometry/smoothness checks, with diagnostics retained on failure. Search exhaustion is not physical infeasibility; GUI preview cannot override final gates. See [workbench contract](../centerline_tools/README.md#2-workbench-contract). |
 
 ## 4. Open issues and validation gaps
 
@@ -109,8 +116,11 @@ These are unordered observations. Resolution, development sequence and major
 alternatives require human direction; listing an issue does not authorize work.
 
 - **Tempo geometry/workflow unresolved:** map files exist, but no validated optimized
-  raceline/config survives rollback. Short provisional motion followed by collision
-  is not track acceptance. No architectural alternative is selected here.
+  raceline/config survives rollback. The new offline default baseline fails clearance
+  and curvature; 16 retries find no valid line. Best corridor-safe candidate has
+  0.381 m clearance versus 0.285 m required, but curvature 1.460 > 1.082 1/m.
+  Search exhaustion and earlier short motion are not track acceptance or physical
+  infeasibility. Manual fallback exists; no alternative vehicle envelope is selected.
 - **Hardware evidence absent:** onboard topic/type/frame preflight and passive
   recording need real-car verification. Split VESC forward-speed / measured IMU
   yaw adapter is missing; model-derived odometry yaw must not be presented as
@@ -122,6 +132,10 @@ alternatives require human direction; listing an issue does not authorize work.
   factor or physical derivative timing. PF pose publication stamp and input-stamped
   TF differ; message age is not isolated PF compute time. Interrupted runs can lack
   scan observer summaries, and some unsubscribed marker work persists.
+- **Workbench evidence limits:** GUI construction is tested, not race-day operator
+  interaction. IFAC needs its explicit reviewed solver/coverage profile; generic
+  strict solver can reach iteration limit. Phase 9 rejects rotated origins/negated
+  maps; synchronous solves can pause the GUI. No changed profile auto-relaxes gates.
 - **Test gaps:** historical broad Gym checks report missing `f1` CLI and lint
   failures. Targeted passing tests do not erase those failures; no suites were
   rerun for this assessment.

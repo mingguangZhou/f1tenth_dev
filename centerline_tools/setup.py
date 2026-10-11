@@ -1,4 +1,5 @@
 from glob import glob
+from pathlib import Path
 from setuptools import setup
 
 package_name = 'centerline_tools'
@@ -12,7 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
-        ('share/' + package_name + '/centerline_output', glob('centerline_output/*')),
+        ('share/' + package_name + '/centerline_output', [p for p in glob('centerline_output/*') if Path(p).is_file()]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

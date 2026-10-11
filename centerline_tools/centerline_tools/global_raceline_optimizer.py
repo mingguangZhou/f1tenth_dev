@@ -411,7 +411,9 @@ def smoothness_objective(
     return value, gradient
 
 
-def optimize_global_raceline(reference, lower_bounds, upper_bounds, config):
+def optimize_global_raceline(
+    reference, lower_bounds, upper_bounds, config, retain_failed_candidate=False
+):
     """Run three deterministic bounded continuation stages."""
     config.validate()
     reference = validate_input_path(reference)
@@ -474,6 +476,10 @@ def optimize_global_raceline(reference, lower_bounds, upper_bounds, config):
             "message": str(result.message),
         }
         stages.append(stage)
+        if retain_failed_candidate and np.all(np.isfinite(result.x)):
+            offsets = np.asarray(result.x, dtype=np.float64)
+            if not result.success:
+                break
         if not result.success or not np.all(np.isfinite(result.x)):
             raise RuntimeError(
                 f"optimizer stage {name} failed: {result.message}"
@@ -642,50 +648,117 @@ def first_self_intersection(points):
     return None
 
 
-def validate_optimized_path(
-    points,
-    safe_mask,
-    clearance_grid,
-    metadata,
-    config,
-    input_area_sign,
+def _path_diagnostics(
+    points, safe_mask, clearance_grid, metadata, config, input_area_sign,
+    centerline=None, solver_converged=True,
 ):
-    """Run continuous clearance, topology, direction, and curvature gates."""
-    points = validate_input_path(points)
-    dense = densify_closed_path(points, config.validation_step_m)
-    safe = points_in_mask(dense, safe_mask, metadata)
-    if not np.all(safe):
-        unsafe_count = int(np.sum(~safe))
-        raise RuntimeError(
-            "optimized path leaves the eroded corridor at "
-            f"{unsafe_count} dense samples"
+    """One final contract for automatic/manual paths, retaining failed diagnostics.
+
+    Hard gates use the exported polyline, including its seam, at a bounded dense
+    step. Smoothness uses the original common-spacing comparison and numerical
+    tolerance. No percentile substitutes for the hard maximum curvature gate.
+    """
+    config.validate()
+    required = config.safety_margin_m + metadata.resolution_m / math.sqrt(2.0)
+    report = {
+        "valid": False, "failure_reasons": [],
+        "solver_converged": None if solver_converged is None else bool(solver_converged),
+        "finite_nondegenerate": False,
+        "corridor_valid": False, "curvature_valid": False,
+        "self_intersection": None, "direction_preserved": False,
+        "unsafe_dense_sample_count": None,
+        "minimum_clearance_m": None, "required_clearance_m": required,
+        "effective_clearance_m": required, "clearance_deficit_m": None,
+        "curvature_limit_inv_m": config.maximum_curvature_inv_m,
+        "curvature_abs_max_inv_m": None, "curvature_excess_inv_m": None,
+        "curvature_excess_percent": None,
+        "curvature_rms_before": None, "curvature_rms_after": None,
+        "curvature_rate_rms_before": None, "curvature_rate_rms_after": None,
+        "curvature_rms_not_degraded": False,
+        "curvature_rate_rms_not_degraded": False,
+    }
+    reasons = report["failure_reasons"]
+    if solver_converged is not None and not solver_converged:
+        reasons.append("solver did not converge")
+    try:
+        points = validate_input_path(points)
+        metrics = path_metrics(points)
+        dense = densify_closed_path(points, config.validation_step_m)
+        unsafe = int(np.sum(~points_in_mask(dense, safe_mask, metadata)))
+        minimum = minimum_mask_clearance(dense, clearance_grid, metadata)
+        intersection = first_self_intersection(points)
+        direction = math.copysign(1.0, signed_area(points)) == math.copysign(
+            1.0, input_area_sign
         )
-    intersection = first_self_intersection(points)
-    if intersection is not None:
-        raise RuntimeError(
-            "optimized path self-intersects at segments "
-            f"{intersection[0]} and {intersection[1]}"
-        )
-    if math.copysign(1.0, signed_area(points)) != math.copysign(
-        1.0, input_area_sign
-    ):
-        raise RuntimeError("optimized path reverses the input loop direction")
-    metrics = path_metrics(points)
-    if metrics["curvature_abs_max_inv_m"] > config.maximum_curvature_inv_m:
-        raise RuntimeError(
-            "optimized path exceeds maximum curvature: "
-            f"{metrics['curvature_abs_max_inv_m']:.6f} > "
-            f"{config.maximum_curvature_inv_m:.6f} 1/m"
-        )
-    metrics["minimum_dense_nearest_cell_clearance_m"] = (
-        minimum_mask_clearance(
-            dense,
-            clearance_grid,
-            metadata,
-        )
+        peak = metrics["curvature_abs_max_inv_m"]
+        excess = max(0.0, peak - config.maximum_curvature_inv_m)
+        report.update({
+            "finite_nondegenerate": True, "unsafe_dense_sample_count": unsafe,
+            "corridor_valid": unsafe == 0, "minimum_clearance_m": minimum,
+            "clearance_deficit_m": max(0.0, required - minimum),
+            "self_intersection": list(intersection) if intersection else None,
+            "direction_preserved": direction, "curvature_valid": excess == 0.0,
+            "curvature_abs_max_inv_m": peak, "curvature_excess_inv_m": excess,
+            "curvature_excess_percent": 100.0 * excess / config.maximum_curvature_inv_m,
+            "output_metrics": dict(metrics,
+                minimum_dense_nearest_cell_clearance_m=minimum,
+                dense_validation_point_count=int(len(dense))),
+        })
+        if unsafe:
+            reasons.append(f"path leaves the eroded corridor at {unsafe} dense samples")
+        if intersection is not None:
+            reasons.append(f"path self-intersects at segments {intersection}")
+        if not direction:
+            reasons.append("path reverses the input loop direction")
+        if excess > 0.0:
+            reasons.append(f"path exceeds maximum curvature: {peak:.6f} > "
+                           f"{config.maximum_curvature_inv_m:.6f} 1/m")
+        if centerline is not None:
+            spacing = max(config.output_spacing_m, 0.05)
+            before = path_metrics(resample_closed_loop(centerline, spacing)[0])
+            after = path_metrics(resample_closed_loop(points, spacing)[0])
+            report["comparison_spacing_m"] = spacing
+            report["before_metrics"] = before
+            report["after_metrics"] = after
+            for key, metric in (("curvature", "curvature_rms_inv_m"),
+                                ("curvature_rate", "curvature_rate_rms_inv_m2")):
+                report[key + "_rms_before"] = before[metric]
+                report[key + "_rms_after"] = after[metric]
+                ok = after[metric] <= before[metric] * (1.0 + 1.0e-6)
+                report[key + "_rms_not_degraded"] = ok
+                if not ok:
+                    reasons.append(key + " RMS degraded relative to centerline")
+        report["valid"] = not reasons
+    except (ValueError, FloatingPointError) as error:
+        reasons.append("geometry: " + str(error))
+    return report
+
+
+def diagnose_production_path(
+    points, safe_mask, clearance_grid, metadata, config, input_area_sign,
+    centerline=None, solver_converged=True,
+):
+    """Full final contract: missing centerline evidence can never certify a path."""
+    report = _path_diagnostics(
+        points, safe_mask, clearance_grid, metadata, config, input_area_sign,
+        centerline=centerline, solver_converged=solver_converged,
     )
-    metrics["dense_validation_point_count"] = int(len(dense))
-    return metrics
+    if centerline is None:
+        report["valid"] = False
+        report["failure_reasons"].append("centerline required for production smoothness gates")
+    return report
+
+
+def validate_optimized_path(
+    points, safe_mask, clearance_grid, metadata, config, input_area_sign,
+):
+    """Legacy geometry-only check; full certification requires centerline comparison."""
+    report = _path_diagnostics(
+        points, safe_mask, clearance_grid, metadata, config, input_area_sign,
+    )
+    if not report["valid"]:
+        raise RuntimeError("optimized " + "; ".join(report["failure_reasons"]))
+    return report["output_metrics"]
 
 
 def _atomic_write_text(path, text):
@@ -963,34 +1036,15 @@ def run_optimization(
     )
 
     comparison_spacing = max(config.output_spacing_m, 0.05)
-    centerline_comparison, _ = resample_closed_loop(
-        centerline, comparison_spacing
+    validation = diagnose_production_path(
+        optimized, safe_mask, clearance_grid, metadata, config,
+        signed_area(centerline), centerline=centerline,
     )
-    optimized_comparison, _ = resample_closed_loop(
-        optimized, comparison_spacing
-    )
-    before_metrics = path_metrics(centerline_comparison)
-    after_metrics = validate_optimized_path(
-        optimized,
-        safe_mask,
-        clearance_grid,
-        metadata,
-        config,
-        signed_area(centerline),
-    )
-    common_after_metrics = path_metrics(optimized_comparison)
-    if common_after_metrics["curvature_rms_inv_m"] > before_metrics[
-        "curvature_rms_inv_m"
-    ] * (1.0 + 1.0e-6) or common_after_metrics[
-        "curvature_rate_rms_inv_m2"
-    ] > before_metrics[
-        "curvature_rate_rms_inv_m2"
-    ] * (
-        1.0 + 1.0e-6
-    ):
-        raise RuntimeError(
-            "optimized path does not improve both smoothness metrics"
-        )
+    if not validation["valid"]:
+        raise RuntimeError("optimized " + "; ".join(validation["failure_reasons"]))
+    before_metrics = validation["before_metrics"]
+    after_metrics = validation["output_metrics"]
+    common_after_metrics = validation["after_metrics"]
 
     baseline = None
     baseline_metrics = None
