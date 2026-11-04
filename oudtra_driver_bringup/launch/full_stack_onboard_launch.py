@@ -36,6 +36,7 @@ def generate_launch_description():
         ),
         "integration_platform_config": "",
         "localize_config": "",
+        "map_yaml": "",
         "start_particle_filter": "false",
         "final_drive_topic": "/drive",
         "path_generator_log_level": "warn",

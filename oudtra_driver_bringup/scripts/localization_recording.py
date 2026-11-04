@@ -27,7 +27,8 @@ class RunRecording:
             'source_state': args.source_state,
             'provenance_note': 'Revisions supplied by caller; build freshness is caller responsibility',
             'software_sha256': {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-                                for name in ('run_localization_smoke.py', 'localization_recording.py')},
+                                for name in ('run_localization_smoke.py', 'localization_recording.py',
+                                             'prepare_localization_overlay.py')},
             'requested_duration_sec': args.run_duration_sec,
             'ros_domain_id': args.ros_domain_id,
             'initial_offsets': [args.x_offset_m, args.y_offset_m, args.yaw_offset_rad],

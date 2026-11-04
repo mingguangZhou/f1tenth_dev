@@ -325,6 +325,12 @@ When a development procedure becomes stable and repeatable:
 * document the canonical workflow here or in a subsystem-specific document;
 * update `AGENTS.md` only when repository-wide AI operating rules change.
 
+Selected track assets required by a deployed workflow belong in the owning
+package's version-controlled asset directory, with their validation status and
+portable provenance. Keep raw generation sessions, bags and logs ignored. Ordinary
+code deployment should carry the selected map/reference without a second manual
+transfer; promoting an experimental asset does not make it production-validated.
+
 Do not rely on chat history as the only record of a required development procedure.
 
 This document should describe the supported workflow rather than every experimental command ever attempted.
@@ -342,9 +348,29 @@ operating commands in the same change. Check commands against the current
 implementation and validate affected commands when practical; state any unverified
 steps. Keep guidance concise and organized by user action, not by development
 phase or temporary report. Temporary reports are not the operating manual.
+For an established interactive workflow, prefer directly pasteable terminal blocks:
+separate build preparation from daily startup, avoid prompts for already known
+assets and cross-terminal generated-file handoffs, and keep necessary configuration
+composition inside the owning launch/tool. Keep asset choices explicit; do not
+replace them with a hidden latest-session default. Put optional diagnostics outside
+the main startup path.
 For a changed runtime/experiment procedure, include the
 [operator handoff](ENGINEERING_WORKFLOW.md#7-operator-handoff): what is executable
 now, conditional prerequisites and the human-confirmed next manual activity.
+
+### Onboard deployment assumption
+
+The four-terminal onboard procedure assumes the shared repository and pinned PF
+submodule have been deployed and built in the Orin's `/f1tenth_ws` workspace, with
+the repository at `/f1tenth_ws/src/f1tenth_dev`. The tracked Tempo map and
+[curated raceline selection](../centerline_tools/tracks/tempo_coffee/README.md)
+travel with that code and are installed by the package build; no separate CSV
+transfer or workbench-session lookup is needed. Keep deployment preparation out
+of daily startup instructions. Onboard retains its sensor topics, base/laser frames
+and wall time; simulation integration settings are not onboard configuration.
+The selection remains experimental, and development-container validation does not
+establish physical-car validation. Use the [four-terminal commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement)
+for operation.
 
 ### Make deliverables easy to find
 

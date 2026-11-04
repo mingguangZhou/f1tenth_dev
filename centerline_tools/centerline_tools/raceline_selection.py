@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import shlex
 import sys
@@ -33,7 +34,11 @@ def resolve_selection(manifest, allow_experimental=False, map_yaml=None):
         data = yaml.safe_load(manifest.read_text())
         if data['format_version'] != 1:
             raise ValueError('Unsupported selected-raceline format')
-        selection = data['selection']
+        selection = dict(data['selection'])
+        # Portable curated assets resolve relative to their manifest; legacy absolute
+        # workbench exports keep the same contract. Always return resolved paths.
+        for key in ('raceline_csv', 'map_yaml', 'map_image', 'validation_report'):
+            selection[key] = str((manifest.parent / selection[key]).resolve())
         status = selection['status']
         if status not in ('validated', 'experimental'):
             raise ValueError('Selection status must be validated or experimental')
@@ -77,6 +82,15 @@ def resolve_selection(manifest, allow_experimental=False, map_yaml=None):
         raise ValueError('Invalid selected raceline: ' + str(error)) from error
 
 
+def resolve_track(track, allow_experimental=False, map_yaml=None):
+    """Resolve a deliberately named installed track; no implicit latest selection."""
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', track):
+        raise ValueError('track must be a simple track name, for example tempo_coffee')
+    from ament_index_python.packages import get_package_share_directory
+    manifest = Path(get_package_share_directory('centerline_tools')) / 'tracks' / track / 'selected_raceline.yaml'
+    return resolve_selection(manifest, allow_experimental, map_yaml)
+
+
 def handoff_arguments(selection, target):
     """Use existing interfaces: runner, full stack, or standalone publisher."""
     csv_path, direction = selection['raceline_csv'], selection['direction']
@@ -108,7 +122,7 @@ def main(argv=None):
             if selection.get('custom_vehicle_profile'):
                 print('CUSTOM offline vehicle profile; validation does not establish physical vehicle capability.')
             if selection['status'] == 'experimental':
-                print('Experimental simulation only. Not validated for onboard use.')
+                print('Experimental: failed production checks. Vehicle use requires explicit human authorization; not production-validated.')
         return 0
     except ValueError as error:
         print(str(error), file=sys.stderr)

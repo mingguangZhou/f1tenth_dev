@@ -202,6 +202,8 @@ def test_runner_boundary_gates_and_provenance(tmp_path, monkeypatch):
     failed_candidate(bench, monkeypatch)
     s = bench.select_export(experimental=True, confirmed=True)
     path = ROOT.parent / 'oudtra_driver_bringup/scripts/run_localization_smoke.py'
+    import sys
+    sys.path.insert(0, str(path.parent))
     spec = importlib.util.spec_from_file_location('smoke_selection_test', path)
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)

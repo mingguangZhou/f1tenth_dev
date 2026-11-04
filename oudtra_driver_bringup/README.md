@@ -96,6 +96,14 @@ Simulator (no particle filter and no `/pf/health` requirement):
 ros2 launch oudtra_driver_bringup full_stack_sim_launch.py
 ```
 
+For PF-localized manual simulation, use the separate
+`full_stack_localization_sim_launch.py` PnC adapter with an explicit map and
+selected-raceline manifest, or `track:=tempo_coffee`. It verifies the selection and internally merges the
+localization integration/comparison-speed profiles; simulator and PF remain in
+their own terminals. See the [A1 three-terminal procedure](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#13-a1--interactive-tempo-simulation-in-three-terminals).
+This adapter records no run and changes neither the perfect-localization nor
+onboard defaults.
+
 ## Configuration ownership and direction
 
 Both compatibility launches include the same `full_stack_launch.py`. The
@@ -136,12 +144,12 @@ Onboard, `start_particle_filter` remains `false` by default. Start and inspect
 the particle filter separately first, then run the master launch as shown above:
 
 ```bash
-ros2 launch particle_filter localize_launch.py
+ros2 launch particle_filter localize_launch.py map_yaml:=/absolute/path/to/track.yaml
 ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
 ```
 
 For the optional old single-command behavior, use
-`start_particle_filter:=true` on the onboard master launch.
+`start_particle_filter:=true map_yaml:=/absolute/path/to/track.yaml` on the onboard master launch. Missing map selection fails before stack startup.
 
 ## Terminal logging
 
@@ -184,3 +192,9 @@ change after a material replan request.
 The optional RL speed-inference package is not launched by this stack. The
 canonical production profile remains in rule-only mode; RL configuration files
 and executables are outside this migration.
+
+The matching `full_stack_localization_onboard_launch.py` accepts the same named
+track and explicit experimental acknowledgment. It applies only the existing
+comparison-speed profile over onboard defaults, starts no PF/hardware/recorder,
+and does not use the simulation integration overlay. Both adapters resolve curated
+package-installed selections; the original full-stack launch interfaces remain.

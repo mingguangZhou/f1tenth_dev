@@ -1,0 +1,21 @@
+format_version: 1
+selection:
+  candidate_id: 008_geometry
+  status: experimental
+  generator: global_optimizer
+  direction: csv
+  candidate_direction: normal
+  raceline_csv: raceline_points_experimental.csv
+  raceline_csv_sha256: 0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e
+  validation_report: experimental_validation.yaml
+  validation_report_sha256: 2ec3ebc9cbf5947c62b5cc394eaa7d47168afd6fe8996e2f8f31d0aaccde0bf0
+  map_yaml: ../../tempo_coffee_scanned_20261002_00.yaml
+  map_yaml_sha256: 676837d367638cbcad668b5d33bf5c11b619d2a191ae75daa45ceb0fc90fa64d
+  map_image: ../../tempo_coffee_scanned_20261002_00.pgm
+  map_image_sha256: 5426256511378f3fd3cd95487dd0aaa38b63265b7382406ab28020cf95aecb37
+  vehicle_constraints:
+    safety_margin_m: 0.25
+    maximum_curvature_inv_m: 1.082
+    validation_step_m: 0.005
+  custom_vehicle_profile: false
+  vehicle_profile_sha256: 11fda5a37ea15e72a3d8648355d404e8976a3a723de0fd2b11487f53e51b8577

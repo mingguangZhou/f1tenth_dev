@@ -1,5 +1,14 @@
 # RoboRacer engineering documentation
 
+<!-- table-of-contents:start -->
+**Table of contents**
+
+- [1. How to use this documentation](#1-how-to-use-this-documentation)
+- [2. Document map](#2-document-map)
+- [3. Reports and validation artifacts](#3-reports-and-validation-artifacts)
+- [4. Maintenance rule](#4-maintenance-rule)
+<!-- table-of-contents:end -->
+
 ## 1. How to use this documentation
 
 Start here when setting up the workspace, running a supported workflow, or
@@ -9,7 +18,7 @@ the links below avoid duplicating commands and metric definitions.
 Begin with the [project record](PROJECT_RECORD.md) for factual status, milestones,
 implementation rationale and evidence gaps. It provides context for a human-defined
 task, not an approved roadmap. **Current hands-on activity:** use the
-[simulation → onboard recording → comparison entry point](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
+[A1 interactive / A2 timed simulation → onboard recording → comparison entry point](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#current-operator-workflow).
 It labels executable, conditional and blocked steps before giving commands.
 
 ## 2. Document map
@@ -18,6 +27,7 @@ It labels executable, conditional and blocked steps before giving commands.
 | --- | --- |
 | What is demonstrated, how did it evolve, which choices apply, and what is uncertain? | [Project record](PROJECT_RECORD.md) — status, milestones, rationale and open gaps |
 | How do I generate a validated offline raceline or diagnose failure? | [Workbench contract](../centerline_tools/README.md#2-workbench-contract) and [race-day commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench) |
+| Which exact Tempo geometry ships to simulation and onboard? | [Curated deployment selection](../centerline_tools/tracks/tempo_coffee/README.md) — portable manifest, exact CSV and unchanged experimental validation |
 | Which host, container, ROS distribution, and workspace should I use? | [Development environment](DEVELOPMENT_ENVIRONMENT.md) |
 | What engineering process and validation standard applies? | [Engineering workflow](ENGINEERING_WORKFLOW.md) |
 | Which commands run the simulator, PF/full stack, tests, recording, and offline analysis? | [Operational command reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) |

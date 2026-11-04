@@ -8,6 +8,7 @@ install(DIRECTORY config launch
 )
 
 install(PROGRAMS
+  scripts/prepare_localization_overlay.py
   scripts/run_localization_smoke.py
   scripts/analyze_localization_run.py
   scripts/analyze_sim_timing.py
@@ -26,6 +27,10 @@ install(FILES README.md
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(manual_localization_sim_test
+    test/test_manual_localization_sim.py
+    TIMEOUT 30
+  )
   ament_add_pytest_test(evaluation_comparison_test
     test/test_evaluation_comparison.py
     TIMEOUT 30

@@ -15,6 +15,8 @@ import time
 
 import yaml
 
+from prepare_localization_overlay import speed_profile_overlay
+
 
 def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -137,34 +139,6 @@ def preserve_raceline_selection(recording, selection):
     recording.save()
 
 
-def speed_profile_overlay(evaluation_overlay, speed_profile):
-    """Merge explicit speed limits without changing frames, health or GT isolation."""
-    base = yaml.safe_load(Path(evaluation_overlay).read_text())
-    profile = yaml.safe_load(Path(speed_profile).read_text())
-    expected = {'/**': {'command_speed_min_mps', 'command_speed_max_mps'},
-                'lower_safety_controller': {'absolute_speed_limit_mps'}}
-    if not isinstance(profile, dict) or set(profile) != set(expected):
-        raise ValueError('Speed profile requires shared command limits and lower-safety cap')
-    for node, keys in expected.items():
-        block = profile[node]
-        if not isinstance(block, dict) or set(block) != {'ros__parameters'}:
-            raise ValueError('Invalid speed profile node: ' + node)
-        params = block['ros__parameters']
-        if not isinstance(params, dict) or set(params) != keys:
-            raise ValueError('Speed profile may contain only declared speed limits')
-        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or
-               not math.isfinite(v) for v in params.values()):
-            raise ValueError('Speed limits must be finite numbers')
-    limits = profile['/**']['ros__parameters']
-    cap = profile['lower_safety_controller']['ros__parameters']['absolute_speed_limit_mps']
-    if not 0 < limits['command_speed_min_mps'] <= limits['command_speed_max_mps'] == cap:
-        raise ValueError('Require positive min <= max and identical final speed cap')
-    for node, block in profile.items():
-        base.setdefault(node, {'ros__parameters': {}})['ros__parameters'].update(
-            block['ros__parameters'])
-    return base
-
-
 def initial_pose(config, offsets):
     values = [float(config[key]) + offset for key, offset in
               zip(('sx', 'sy', 'stheta'), offsets)]
@@ -207,7 +181,7 @@ def main():
     parser.add_argument('--pf-map-yaml', required=True)
     raceline = parser.add_mutually_exclusive_group(required=True)
     raceline.add_argument('--raceline-csv')
-    raceline.add_argument('--selected-raceline', help='Verified workbench session manifest; map remains explicit')
+    raceline.add_argument('--selected-raceline', help='Verified curated or workbench selection manifest; map remains explicit')
     parser.add_argument('--allow-experimental', action='store_true', help='Acknowledge failed production gates for explicit simulation experimentation')
     parser.add_argument('--raceline-direction',
                         choices=('csv', 'normal', 'reverse'))

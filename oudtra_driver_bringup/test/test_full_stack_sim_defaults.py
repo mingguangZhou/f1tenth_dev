@@ -111,3 +111,29 @@ def test_centerline_tools_remains_only_the_preinstalled_runtime_publisher():
         encoding="utf-8"
     )
     assert "track_data_files" not in setup_source
+
+
+def test_optional_embedded_pf_requires_and_forwards_explicit_map(tmp_path, monkeypatch):
+    import importlib.util
+    from launch import LaunchContext
+    from launch.actions import DeclareLaunchArgument
+    import pytest
+
+    spec = importlib.util.spec_from_file_location('stack_map_contract', LAUNCH_DIRECTORY / 'full_stack_launch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    context = LaunchContext()
+    for action in module.generate_launch_description().entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
+    raceline = tmp_path / 'reference.csv'
+    raceline.write_text('x,y\n0,0\n1,1\n')
+    context.launch_configurations.update(platform='onboard', raceline_csv_path=str(raceline),
+                                         start_particle_filter='true')
+    monkeypatch.setattr(module, '_include', lambda path, arguments: (path, arguments))
+    with pytest.raises(RuntimeError, match='map_yaml is required'):
+        module._launch_stack(context)
+    context.launch_configurations['map_yaml'] = '/explicit/track.yaml'
+    actions = module._launch_stack(context)
+    includes = [arguments for path, arguments in actions if path.endswith('localize_launch.py')]
+    assert len(includes) == 1 and includes[0]['map_yaml'] == '/explicit/track.yaml'

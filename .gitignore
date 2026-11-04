@@ -19,7 +19,8 @@
 *.db3-shm
 *.db3-wal
 
-# Offline workbench sessions are generated evidence, not reviewed track assets
+# Ignore raw workbench sessions; curated deployment selections live in tracked
+# centerline_tools/tracks/ (CSV + validation evidence + portable manifest).
 /centerline_tools/centerline_output/workbench/
 
 # Local detailed engineering handoffs; permanent outcomes belong in docs/

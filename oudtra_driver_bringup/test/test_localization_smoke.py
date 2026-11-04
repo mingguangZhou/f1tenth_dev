@@ -3,11 +3,13 @@ import importlib.util
 import math
 from pathlib import Path
 import shutil
+import sys
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
 SPEC = importlib.util.spec_from_file_location('smoke', ROOT / 'scripts/run_localization_smoke.py')
 SMOKE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE)
@@ -162,3 +164,20 @@ def test_invalid_speed_profile_rejected_before_launch(tmp_path, change):
     path.write_text(yaml.safe_dump(profile))
     with pytest.raises(ValueError):
         SMOKE.speed_profile_overlay(ROOT / 'config/localization_eval_sim.yaml', path)
+
+
+def test_manual_overlay_and_runner_share_exact_effective_settings(tmp_path):
+    from prepare_localization_overlay import write_overlay
+    base = ROOT / 'config/localization_eval_sim.yaml'
+    speed = ROOT / 'config/comparison_speed_limits.yaml'
+    output = tmp_path / 'manual' / 'overlay.yaml'
+    result = write_overlay(base, speed, output)
+    assert result['result'] == 'PASS'
+    assert yaml.safe_load(output.read_text()) == SMOKE.speed_profile_overlay(base, speed)
+    evidence = yaml.safe_load(output.with_suffix('.provenance.yaml').read_text())
+    assert evidence['output']['sha256'] == SMOKE._sha256(output)
+    assert evidence['sources']['speed_profile']['sha256'] == SMOKE._sha256(speed)
+    original = output.read_bytes()
+    with pytest.raises(ValueError, match='already exists'):
+        write_overlay(base, speed, output)
+    assert output.read_bytes() == original

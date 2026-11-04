@@ -1,0 +1,105 @@
+valid: false
+failure_reasons:
+- 'path exceeds maximum curvature: 1.460243 > 1.082000 1/m'
+solver_converged: true
+finite_nondegenerate: true
+corridor_valid: true
+curvature_valid: false
+self_intersection: null
+direction_preserved: true
+unsafe_dense_sample_count: 0
+minimum_clearance_m: 0.38078865529319544
+required_clearance_m: 0.28535533905932736
+effective_clearance_m: 0.28535533905932736
+clearance_deficit_m: 0.0
+curvature_limit_inv_m: 1.082
+curvature_abs_max_inv_m: 1.460243248195206
+curvature_excess_inv_m: 0.37824324819520583
+curvature_excess_percent: 34.95778633966782
+curvature_rms_before: 0.938667772774025
+curvature_rms_after: 0.7617928541572707
+curvature_rate_rms_before: 1.9226624300990012
+curvature_rate_rms_after: 0.6805336972532047
+curvature_rms_not_degraded: true
+curvature_rate_rms_not_degraded: true
+output_metrics:
+  point_count: 376
+  length_m: 11.278775411108747
+  spacing_min_m: 0.029989193459850114
+  spacing_max_m: 0.03002233601046552
+  spacing_cv: 0.0002796974592950556
+  curvature_rms_inv_m: 0.7617706821746388
+  curvature_abs_p95_inv_m: 1.3454766758690744
+  curvature_abs_p99_inv_m: 1.4532181867653837
+  curvature_abs_max_inv_m: 1.460243248195206
+  curvature_squared_integral_inv_m: 6.546782315445312
+  curvature_rate_rms_inv_m2: 0.6821401527059535
+  curvature_rate_squared_integral_inv_m3: 5.247900037511605
+  signed_area_m2: 7.749377486156026
+  minimum_dense_nearest_cell_clearance_m: 0.38078865529319544
+  dense_validation_point_count: 2360
+comparison_spacing_m: 0.05
+before_metrics:
+  point_count: 224
+  length_m: 11.188591109501395
+  spacing_min_m: 0.049941613897912046
+  spacing_max_m: 0.049949825915932694
+  spacing_cv: 2.443786825604606e-05
+  curvature_rms_inv_m: 0.938667772774025
+  curvature_abs_p95_inv_m: 1.7644754081919796
+  curvature_abs_p99_inv_m: 2.2428355663551494
+  curvature_abs_max_inv_m: 2.443465781725547
+  curvature_squared_integral_inv_m: 9.857983404881278
+  curvature_rate_rms_inv_m2: 1.9226624300990012
+  curvature_rate_squared_integral_inv_m3: 41.35934363116756
+  signed_area_m2: 7.084143059008505
+after_metrics:
+  point_count: 226
+  length_m: 11.27834152911528
+  spacing_min_m: 0.049899027975306584
+  spacing_max_m: 0.04990608643422064
+  spacing_cv: 3.795419436549994e-05
+  curvature_rms_inv_m: 0.7617928541572707
+  curvature_abs_p95_inv_m: 1.337299141653446
+  curvature_abs_p99_inv_m: 1.45109335370958
+  curvature_abs_max_inv_m: 1.457247109405135
+  curvature_squared_integral_inv_m: 6.54489648176982
+  curvature_rate_rms_inv_m2: 0.6805336972532047
+  curvature_rate_squared_integral_inv_m3: 5.223323426694482
+  signed_area_m2: 7.748544820919564
+status: experimental
+candidate_id: 008_geometry
+source_candidate: /sim_ws/src/centerline_tools/centerline_output/workbench/tempo_coffee_scanned_20261002_00-20261011T194408Z-e62d290a5af6-a91105/candidate/008_geometry/candidate.csv
+source_sha256: 0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e
+parameters:
+  optimization_spacing_m: 0.1
+  output_spacing_m: 0.03
+  safety_margin_m: 0.25
+  maximum_lateral_offset_m: 0.15
+  ray_step_fraction: 0.4
+  validation_step_m: 0.005
+  curvature_weight: 1.0
+  curvature_rate_weight: 0.02
+  curvature_limit_weight: 0.1
+  comfortable_curvature_inv_m: 0.9
+  segment_uniformity_weight: 1.0
+  path_length_weight: 0.125
+  offset_weight: 0.001
+  offset_slope_weight: 0.005
+  maximum_curvature_inv_m: 1.082
+  maximum_iterations_per_stage: 2500
+  function_tolerance: 1.0e-09
+  gradient_tolerance: 0.0002
+inputs:
+  map_image: /sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00.pgm
+  map_image_sha256: 5426256511378f3fd3cd95487dd0aaa38b63265b7382406ab28020cf95aecb37
+  map_yaml: /sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00.yaml
+  map_yaml_sha256: 676837d367638cbcad668b5d33bf5c11b619d2a191ae75daa45ceb0fc90fa64d
+direction: csv
+vehicle_constraints:
+  safety_margin_m: 0.25
+  maximum_curvature_inv_m: 1.082
+  validation_step_m: 0.005
+raceline_sha256: 0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e
+limitations: Failed production validation. Explicit simulation experimentation only;
+  not onboard validated.

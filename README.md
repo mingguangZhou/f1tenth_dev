@@ -299,7 +299,7 @@ cd ../../.. (back to /sim_ws)
 colcon build --packages-select particle_filter
 source install/local_setup.bash
 ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py
-ros2 launch particle_filter localize_launch.py
+ros2 launch particle_filter localize_launch.py map_yaml:=/absolute/path/to/track.yaml
 ```
 
 For the localization-ready Rocker environment, use the existing

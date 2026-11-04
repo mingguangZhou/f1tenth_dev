@@ -165,6 +165,8 @@ def _launch_stack(context):
         "yes",
         "on",
     ):
+        if not _value(context, "map_yaml"):
+            raise RuntimeError("map_yaml is required when start_particle_filter=true")
         particle_filter_share = get_package_share_directory("particle_filter")
         localize_config = _value(context, "localize_config")
         if not localize_config:
@@ -177,7 +179,7 @@ def _launch_stack(context):
                 os.path.join(
                     particle_filter_share, "launch", "localize_launch.py"
                 ),
-                {"localize_config": localize_config},
+                {"localize_config": localize_config, "map_yaml": _value(context, "map_yaml")},
             ),
         )
     return actions
@@ -231,6 +233,8 @@ def generate_launch_description():
                 "localize_config",
                 default_value="",
             ),
+            DeclareLaunchArgument("map_yaml", default_value="",
+                                  description="Required explicit map when start_particle_filter=true"),
             DeclareLaunchArgument("start_particle_filter", default_value="false"),
             DeclareLaunchArgument("final_drive_topic", default_value="/drive"),
             DeclareLaunchArgument(

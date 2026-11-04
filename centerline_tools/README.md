@@ -227,7 +227,13 @@ Current Phase 9 requires zero origin yaw and `negate: 0`. Map inputs are not ove
 | `diagnostics/previous_report_<hash>.yaml`, `candidate/previous_validated_<hash>/` | Earlier report/output history; trials leave an active selection unchanged |
 
 Generated workbench sessions are Git-ignored and excluded from package installation.
-Reviewed durable assets still require explicit approval. The original two-argument
+**Selected deployment assets belong in Git:** curated `tracks/<name>/` contains
+an explicit portable selection manifest, chosen CSV and validation evidence.
+Existing source-root map YAML/images and curated tracks are installed together.
+The current [Tempo selection](tracks/tempo_coffee/README.md) preserves experimental
+008 exactly; it is not production-valid. Updating a deployment selection requires
+an explicit reviewed asset change, not automatic promotion after generation.
+Bags, logs, previews and temporary reports remain ignored. The original two-argument
 `run_centerline_and_optimized_raceline.py` now delegates to this same isolated
 workbench; extra workbench options are accepted. Other legacy commands below
 continue to use their shared output location.
@@ -243,10 +249,12 @@ it never launches or enables control and is not validated for onboard deployment
 
 Both GUI and CLI write the same session-owned `selected_raceline.yaml` (format 1).
 Its `selection` contains candidate ID, generator, `validated`/`experimental` status,
-absolute CSV and validation-report paths/hashes, map YAML/image paths/hashes,
+CSV and validation-report paths/hashes, map YAML/image paths/hashes,
 vehicle-constraint values/hash, custom-profile flag, and direction. Direction is `csv`: manual reversal is
 already present in exported coordinates; `candidate_direction` preserves that history.
-No hidden global latest file exists. Trying another candidate leaves the selection
+Workbench exports use absolute paths; curated manifests use paths relative to the
+manifest so they survive installation and different workspace roots. The resolver
+always returns absolute verified paths. No hidden global latest file exists. Trying another candidate leaves the selection
 unchanged until another explicit selection action.
 
 [Selection resolver](centerline_tools/raceline_selection.py) verifies assets/schema,
@@ -257,8 +265,12 @@ arguments for the existing runner, full-stack or standalone-publisher APIs.
 The simulation runner also accepts `--selected-raceline` instead of its existing
 CSV/direction inputs, retains explicit scenario/map preflight and snapshots the
 manifest/validation into a recorded run. It does not infer a simulator configuration
-from the manifest. Recommended onboard operation accepts **validated** selections
-only, via existing explicit paths; no actuator/deployment workflow is added.
+from the manifest. The PnC adapters accept an explicit `track:=<name>` or manifest and resolve it
+to the existing CSV/direction interfaces. Experimental selections require explicit
+acknowledgment; this does not establish physical safety or enable control by itself. The human-authorized controlled Tempo 008
+integration exception is documented in the [onboard procedure](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement);
+it does not confer production validity. The workbench itself adds no actuator or
+automatic deployment workflow.
 See the [operational reference](../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#11-offline-raceline-workbench)
 for all copyable commands and exact artifact access.
 

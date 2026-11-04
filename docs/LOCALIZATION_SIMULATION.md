@@ -54,11 +54,27 @@ and comparison commands.
 
 ### 2.1 Reproduction
 
-Use the [closed-loop smoke command](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#7-closed-loop-localization-smoke-check)
-and [essential regression checks](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#6-essential-regression-checks).
-The runner owns simulator, PF, and PnC launches in its ROS domain; do not combine
-it with separately launched reference workflows. Exit 0 plus JSON `PASS` establishes
-startup and bounded motion only. RViz is not a pass/fail source.
+Choose [A1 interactive simulation](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#13-a1--interactive-tempo-simulation-in-three-terminals)
+for three persistent terminals, human initialization/readiness and manual stopping;
+there is no automatic evaluation recorder. A1's optional raw bag lacks the complete
+analysis contract. Choose [A2 timed recording](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison)
+for bounded readiness/motion checks, one-shot pose, bag/metadata and automatic cleanup.
+A1 PF reads `localization_eval_sim.yaml` directly. A1 and onboard PnC select
+`track:=tempo_coffee`, resolving the installed, Git-maintained CSV/manifest/map;
+A2 supplies that same curated manifest through its existing `--selected-raceline`.
+Raw workbench sessions are not deployment dependencies. Its PnC-only adapter,
+`full_stack_localization_sim_launch.py`, verifies the explicit selected-raceline
+manifest and internally reuses A2's restricted simulation/speed merge. It removes
+its temporary settings on shutdown; no path is handed between terminals. The
+adapter starts neither simulator nor PF, initializes neither, and records no run.
+Do not combine A1/A2 in one ROS domain.
+
+Exit 0 plus smoke JSON PASS establishes startup and bounded motion only. RViz is
+not a pass/fail source. The human authorizes experimental Tempo 008 for initial
+controlled integration, without changing production curvature limits. Onboard uses
+its own explicit-map PF launch, standard frame/clock/config chain and passive
+recorder; see [B onboard commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement).
+Actual deployment, stationary car checks and driving remain human-executed.
 
 ### 2.2 Readiness and acceptance
 
@@ -239,6 +255,12 @@ bind-mounted into the container. The container path and equivalent host path are
 Container: /sim_ws/src/oudtra_driver_bringup/runs/<run-id>/
 Host:      /home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/<run-id>/
 ```
+
+The curated Tempo selection's local validation example is
+`tempo_curated_track_a2_20261028/`: open `report.md`, `metrics.json` and `plots/`
+there when the dataset is available locally. Its `metadata.yaml` and selection
+snapshots retain map/reference/config hashes. It is ignored run evidence, not part
+of a fresh Git clone; reproduce it using the A2 command guide.
 
 Use a descriptive run ID such as `ifac_pf_closed_loop_localization_baseline_20260918T120000Z`; do not use a numeric-only directory name. For the current validated simulation example, open these files on the dev laptop:
 

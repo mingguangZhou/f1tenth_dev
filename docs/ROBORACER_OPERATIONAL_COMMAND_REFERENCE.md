@@ -2,19 +2,21 @@
 
 ## 1. How to use this document
 
-**Purpose:** run, record and inspect supported RoboRacer workflows using exact
-terminal commands. **Start here:** the human-confirmed activity is A → B → C below;
+**Purpose:** run, record and inspect RoboRacer workflows using exact terminal
+commands. **Start here:** choose A1 or A2, then the human-controlled B and offline C;
 it is an operator handoff, not a development roadmap. Simulation uses the existing
 Foxy `f1tenth_gym_ros_rocker` localization-ready container; onboard uses its own
-Foxy workspace and requires human-qualified hardware/assets.
+Foxy workspace. The human authorizes current experimental Tempo geometry for a
+controlled integration experiment; production validity and normal safety remain unchanged.
 
 ### Current operator workflow
 
 | Activity / readiness | Entry point | Expected output | Boundary |
 | --- | --- | --- | --- |
-| **A. Repeat Tempo simulation — executable, explicitly experimental** | [Complete host/container procedure](#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison) | Recorded run, smoke result, offline scorecard and plots | Requires explicit local manifest selection; two 30 s straight-start passes, not production/hardware qualification |
-| **B. Prepare onboard data — conditional / real-car recorder unverified** | [Qualification, Terminals 1–4, recording and transfer](#5-onboard-stack-and-passive-measurement) | Preflight evidence and preserved onboard bag/metadata | Tempo autonomy is **BLOCKED**: failed raceline gate, no hardware qualification, unresolved onboard PF map selection |
-| **C. Analyze and compare — executable once datasets exist** | [Offline two-run procedure](#10-compare-two-analyzed-runs) | Two scorecards plus comparison Markdown/JSON | No real onboard comparison yet; unknown identity or incompatible evidence suppresses deltas |
+| **A1. Tempo interactive simulation — executable** | [Three persistent terminals](#13-a1--interactive-tempo-simulation-in-three-terminals) | Live PF/PnC and RViz; optional raw diagnostic bag | Human readiness/initialization/stop; no automatic evaluation recording |
+| **A2. Tempo timed simulation — executable** | [Existing recorded runner](#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison) | Bounded smoke, bag, metrics/report/plots | Automatic one-shot initialization/cleanup; experimental path unchanged |
+| **B. Tempo onboard — prepared controlled experiment** | [Four simple terminals](#5-onboard-stack-and-passive-measurement) | Human-controlled run and passive dataset | Assumes code/PF deployed and built; tracked map/raceline included; experimental geometry; physical operation remains human-controlled |
+| **C. Transfer, analysis and comparison — executable when datasets exist** | [B5 transfer](#b5-dataset-transfer-and-offline-analysis), [offline comparison](#10-compare-two-analyzed-runs) | Two scorecards and comparison report/JSON | Prefer A2 for the simulation analysis contract; no matched-section or truth equivalence claim |
 
 **Other workflows:** [container access](#2-open-the-canonical-container) ·
 [perfect-localization reference](#3-perfect-localization-simulator-and-full-stack) ·
@@ -40,11 +42,11 @@ commands. [Environment](DEVELOPMENT_ENVIRONMENT.md) owns host/container facts,
 - [3. Perfect-localization simulator and full stack](#3-perfect-localization-simulator-and-full-stack)
 - [4. PF localization simulator and manual full stack](#4-pf-localization-simulator-and-manual-full-stack)
 - [5. Onboard stack and passive measurement](#5-onboard-stack-and-passive-measurement)
-  - [Goal and prerequisites](#goal-and-prerequisites)
-  - [Onboard host / container checks](#onboard-host--container-checks)
-  - [Human-qualified scenario: existing Terminals 1–3](#human-qualified-scenario-existing-terminals-13)
-  - [Terminal 4: preflight, record, finalize](#terminal-4-preflight-record-finalize)
-  - [Transfer to laptop and analyze](#transfer-to-laptop-and-analyze)
+  - [B1. Terminal 1 — established vehicle bringup](#b1-terminal-1--established-vehicle-bringup)
+  - [B2. Terminal 2 — explicitly selected Tempo PF and RViz](#b2-terminal-2--explicitly-selected-tempo-pf-and-rviz)
+  - [B3. Terminal 3 — current experimental Tempo PnC](#b3-terminal-3--current-experimental-tempo-pnc)
+  - [B4. Terminal 4 — simple passive logging](#b4-terminal-4--simple-passive-logging)
+  - [B5. Dataset transfer and offline analysis](#b5-dataset-transfer-and-offline-analysis)
 - [6. Essential regression checks](#6-essential-regression-checks)
 - [7. Closed-loop localization smoke check](#7-closed-loop-localization-smoke-check)
 - [8. Record and analyze an evaluation run](#8-record-and-analyze-an-evaluation-run)
@@ -57,12 +59,20 @@ commands. [Environment](DEVELOPMENT_ENVIRONMENT.md) owns host/container facts,
   - [Verify selection and hand off to existing interfaces](#verify-selection-and-hand-off-to-existing-interfaces)
   - [Deliverables and essential checks](#deliverables-and-essential-checks)
 - [12. Tempo Coffee experimental PF/PnC and low-speed comparison](#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison)
-  - [Goal and prerequisites](#goal-and-prerequisites-1)
+  - [Goal and prerequisites](#goal-and-prerequisites)
   - [Host terminal: verify and enter the existing container](#host-terminal-verify-and-enter-the-existing-container)
   - [Simulation container: build, choose assets and verify selection](#simulation-container-build-choose-assets-and-verify-selection)
-  - [Simulation container: run, stop, analyze](#simulation-container-run-stop-analyze)
+  - [A2 — timed run, stop and offline analysis](#a2--timed-run-stop-and-offline-analysis)
   - [Optional monitoring terminal](#optional-monitoring-terminal)
   - [Troubleshooting and evidence to retain](#troubleshooting-and-evidence-to-retain)
+- [13. A1 — interactive Tempo simulation in three terminals](#13-a1--interactive-tempo-simulation-in-three-terminals)
+  - [Goal and preconditions](#goal-and-preconditions)
+  - [A1 Terminal 1 — persistent Tempo simulator and RViz](#a1-terminal-1--persistent-tempo-simulator-and-rviz)
+  - [A1 Terminal 2 — PF with the explicit Tempo map](#a1-terminal-2--pf-with-the-explicit-tempo-map)
+  - [A1 Terminal 3 — persistent full PnC with the selected experimental raceline](#a1-terminal-3--persistent-full-pnc-with-the-selected-experimental-raceline)
+  - [A1 verification and troubleshooting](#a1-verification-and-troubleshooting)
+  - [A1 stop and cleanup](#a1-stop-and-cleanup)
+  - [A1 data outputs and optional diagnostic recording](#a1-data-outputs-and-optional-diagnostic-recording)
 <!-- table-of-contents:end -->
 
 ## 2. Open the canonical container
@@ -186,226 +196,177 @@ repeatable path because it performs readiness and cleanup automatically.
 
 ## 5. Onboard stack and passive measurement
 
-### Goal and prerequisites
+Run these four terminals on the onboard computer. Assume the repository, PF
+submodule and curated Tempo assets are already deployed and built, and the existing
+bringup works. Use your normal vehicle control/stop procedure.
 
-Collect an onboard dataset in an additional passive Terminal 4, without changing
-the vehicle team's operating process. **Conditional:** the recorder has test/mock
-evidence, not physical-car validation. A human must confirm the qualified map,
-raceline/direction, platform profile and operating authorization first.
-**Tempo autonomy is BLOCKED / requires human qualification and implementation
-verification.** Its current experimental path fails the production curvature gate.
-Do not use simulation passes as hardware approval.
+### B1. Terminal 1 — established vehicle bringup
 
-The pinned `localize_onboard_rviz_launch.py` includes `localize_launch.py`, which
-reads the installed default `localize.yaml` map *before* resolving a custom
-`localize_config`. A custom PF config alone therefore does not select a new map.
-The current default names IFAC; this is implementation evidence, not proof IFAC is
-qualified on your car. Do not work around this with simulator frames or a simulation
-launch. For a new track, stop until explicit onboard map selection is verified.
-
-### Onboard host / container checks
-
-On the **onboard host**, check the deployed checkout and submodules:
+On the **onboard host**, use your existing startup sequence unchanged:
 
 ```bash
-cd ~/f1tenth_ws/src/f1tenth_dev
-git branch --show-current
-git rev-parse HEAD
-git status --short
-git submodule status
-git -C particle_filter rev-parse HEAD
-git -C ../f1tenth_system rev-parse HEAD
+~/start_gui_host.sh
+~/f1tenth_ws/src/f1tenth_system/scripts/run_container_loc.sh
 ```
 
-Compare with the intended deployment revision (this procedure was inspected at
-`050d9ab`, PF `dfd07cb`) and record differences/dirty state. Enter the existing
-onboard container using the vehicle's established access procedure; its name is
-not established here. In **every onboard container terminal**:
+Then **inside the onboard container**:
 
 ```bash
 source /opt/ros/foxy/setup.bash
-cd /f1tenth_ws
-source install/setup.bash
+source /f1tenth_ws/install/setup.bash
+ros2 launch f1tenth_stack bringup_launch.py
+```
+
+Leave running. This starts the normal sensor, odometry, hardware and mux path.
+
+### B2. Terminal 2 — explicitly selected Tempo PF and RViz
+
+Enter the container from another **onboard-host terminal**:
+
+```bash
+docker exec -it f1tenth_onboard /bin/bash
+```
+
+Then run **inside the container**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /f1tenth_ws/install/setup.bash
+ros2 launch particle_filter localize_onboard_rviz_launch.py \
+  map_yaml:=/f1tenth_ws/src/f1tenth_dev/centerline_tools/tempo_coffee_scanned_20261002_00.yaml
+```
+
+Use RViz **2D Pose Estimate** once at the car's actual position and heading on the
+Tempo map. Leave PF/RViz running. The launch uses its installed onboard PF config;
+`map_yaml` explicitly replaces the old implicit IFAC selection. A missing map/image
+fails rather than choosing another track. No simulator parameters are involved.
+
+### B3. Terminal 3 — current experimental Tempo PnC
+
+Enter the container from another **onboard-host terminal**:
+
+```bash
+docker exec -it f1tenth_onboard /bin/bash
+```
+
+Then run **inside the container**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /f1tenth_ws/install/setup.bash
+ros2 launch oudtra_driver_bringup full_stack_localization_onboard_launch.py \
+  track:=tempo_coffee allow_experimental:=true
+```
+
+Leave running. Enable/control autonomy with your existing vehicle procedure after
+PF initialization. The adapter applies the existing comparison-speed profile: **0.5–2.0 m/s**
+ordinary forward-command range and **2.0 m/s absolute final-command cap** across
+path following and safety. No configuration arguments or generated files need
+operator management. The startup banner shows the exact installed CSV, map,
+status, direction and speed limits. Safety can still slow/stop/reverse. Everything
+else retains onboard defaults; the experimental path is not relabelled validated.
+Autonomy `/drive` passes through the mux to `/ackermann_cmd` toward the VESC.
+
+### B4. Terminal 4 — simple passive logging
+
+Enter the container from another **onboard-host terminal**:
+
+```bash
+docker exec -it f1tenth_onboard /bin/bash
+```
+
+Then run **inside the container**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /f1tenth_ws/install/setup.bash
+ros2 bag record -o "/f1tenth_ws/onboard_runs/tempo_raw_$(date -u +%Y%m%dT%H%M%SZ)" \
+  /pf/pose/odom /pf/health /odom /scan \
+  /raceline_path /drive /ackermann_cmd \
+  /drive_arbitration_v2/status /drive_arbitration_v2/selected_mode \
+  /reactive_control_v2/status /reactive_control_v2/lower_safety_status \
+  /sensors/core /sensors/imu/raw /sensors/servo_position_command \
+  /tf /tf_static /initialpose
+```
+
+This is an ordinary passive rosbag, extending your earlier status/drive recording
+with pose, reference and sensor evidence. No separate preflight, interval marking
+or metadata setup. It does not launch/control/reset anything. Start another bag
+with the same command for the next attempt; the timestamp creates a new directory.
+Only messages published during recording are captured; late-started recording
+may miss an earlier initial-pose event or latched reference/static TF.
+
+**Stop:** use your normal vehicle stop/manual override first. Ctrl-C T4 to finalize
+the bag, then stop T3, T2 and T1 as usual. Stopping recording does not stop the car;
+releasing the latched auto button alone is not a disarm.
+
+**Output:** `/f1tenth_ws/onboard_runs/tempo_raw_<UTC>/` contains the bag's
+`metadata.yaml` and database files. This is raw diagnostic evidence, **not** the
+shared analyzer's run `metadata.yaml`/interval contract. For a report/comparison-ready
+run, use the existing structured recorder **instead of** the above bag command:
+
+<details>
+<summary>Optional Terminal 4 alternative — structured dataset for offline analysis</summary>
+
+In the same sourced onboard container shell:
+
+```bash
 REPO=/f1tenth_ws/src/f1tenth_dev
-ros2 pkg prefix particle_filter
-ros2 pkg prefix oudtra_driver_bringup
-```
-
-Before vehicle operation, verify installed launch/config/script files against the
-intended host revision. For example, these pairs should match:
-
-```bash
-PF_SHARE="$(ros2 pkg prefix particle_filter)/share/particle_filter"
-BRINGUP_PREFIX="$(ros2 pkg prefix oudtra_driver_bringup)"
-sha256sum "$REPO/particle_filter/launch/localize_launch.py" \
-  "$PF_SHARE/launch/localize_launch.py"
-sha256sum "$REPO/particle_filter/config/localize.yaml" \
-  "$PF_SHARE/config/localize.yaml"
-sha256sum "$REPO/oudtra_driver_bringup/scripts/record_onboard_localization.py" \
-  "$BRINGUP_PREFIX/lib/oudtra_driver_bringup/record_onboard_localization.py"
-```
-
-A source revision alone does not prove C++ binaries are current. If deployment,
-build/source state or hashes are inconsistent, **BLOCKED** until verified through
-the established deployment process. Do not rebuild or change parameters on an
-active vehicle merely to pass a check.
-
-### Human-qualified scenario: existing Terminals 1–3
-
-Only after qualification, use the established workflow:
-
-```text
-Terminal 1: ros2 launch f1tenth_stack bringup_launch.py
-Terminal 2: ros2 launch particle_filter localize_onboard_rviz_launch.py
-Terminal 3: ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py
-```
-
-Initialize PF manually with RViz `2D Pose Estimate`; verify fresh localization
-and TF under the normal operating process before enabling autonomy. The recorder
-never initializes PF, enables autonomy, publishes drive, or changes parameters.
-
-In **Terminal 4**, define *the actual human-qualified assets*. These IFAC paths
-are an example for the current default, not authorization for that scenario:
-
-```bash
-MAP_YAML="$REPO/particle_filter/maps/ifac_roboracer.yaml"
-MAP_IMAGE="$REPO/particle_filter/maps/ifac_roboracer.png"
-RACELINE="$REPO/centerline_tools/output_backup/ifac_roboracer/raceline_points_optimized.csv"
-DIRECTION=csv
-SPEED_PROFILE="$REPO/oudtra_driver_bringup/config/comparison_speed_limits.yaml"
-sha256sum "$MAP_YAML" "$MAP_IMAGE" "$RACELINE" "$SPEED_PROFILE"
-ros2 param get /map_server yaml_filename
-timeout 5s ros2 topic echo /map nav_msgs/msg/OccupancyGrid --no-arr \
-  --qos-reliability reliable --qos-durability transient_local
-ros2 param get /raceline_publisher csv_path
-ros2 param get /raceline_publisher direction
-ros2 param get /particle_filter use_sim_time
-ros2 param get /particle_filter base_frame
-ros2 param get /particle_filter laser_frame
-ros2 param get /lower_safety_controller enable_sim_reverse_swept_gate
-ros2 param get /lower_safety_controller odom_topic
-ros2 param get /drive_arbitrator require_pf_health
-```
-
-The bounded map echo displays metadata without the large occupancy array; its
-normal timeout exit 124 is not a stack failure. Foxy does not support newer
-`echo --once --field` flags. The loaded map must match `MAP_YAML`, image geometry/origin and the qualified track;
-publisher path/direction must match the qualified CSV. Expect wall time, onboard
-frames/odometry, simulator-GT gate false and PF-health gate true. A mismatch is
-**BLOCKED**, not permission to change live parameters. Confirm the mux/actuator
-command path under the existing operating procedure: `/drive` is autonomy output,
-while the recorder's final plant-input role is mux output `/ackermann_cmd`.
-
-If the human approves the shared 0.5–2.0 m/s comparison profile for this qualified
-scenario, replace **Terminal 3**, rather than starting another stack, with:
-
-```bash
-# In sourced onboard Terminal 3, after human scenario/profile qualification:
-REPO=/f1tenth_ws/src/f1tenth_dev
-read -r -p 'Qualified raceline absolute CSV path: ' RACELINE
-read -r -p 'Qualified direction (csv/normal/reverse): ' DIRECTION
-SPEED_PROFILE="$REPO/oudtra_driver_bringup/config/comparison_speed_limits.yaml"
-ros2 launch oudtra_driver_bringup full_stack_onboard_launch.py \
-  raceline_csv_path:="$RACELINE" raceline_direction:="$DIRECTION" \
-  path_platform_config:="$SPEED_PROFILE" \
-  reactive_platform_config:="$SPEED_PROFILE" \
-  integration_platform_config:="$SPEED_PROFILE"
-```
-
-This profile contains speed limits only; it does not qualify the raceline or set
-onboard map/frames. Do not substitute `localization_eval_sim.yaml`. Confirm min/max
-on `/path_generator`, `/local_trajectory_planner`, `/path_following_v2` and the
-absolute cap on `/lower_safety_controller`. Stops/slower caps and reverse remain
-possible; joystick/mux authority is a separate operating concern.
-
-### Terminal 4: preflight, record, finalize
-
-Run the passive preflight before the authorized measurement:
-
-```bash
-ros2 run oudtra_driver_bringup record_onboard_localization.py \
-  --preflight-only --preflight-json /tmp/onboard_recorder_preflight.json
-```
-
-Exit 0 / preflight PASS requires observed messages with required types. Optional
-missing evidence is reported. Failure means **BLOCKED** until the real interface
-or deployed contract is understood; never silently record a different topic.
-
-For the confirmed scenario/configuration, keep the exact file list. Include
-`--config speed=...` only if that profile is actually loaded; otherwise retain the
-actual approved platform overlays as additional `--config LABEL=PATH` arguments.
-
-```bash
-RUN_DIR="/f1tenth_ws/onboard_runs/qualified_pf_pnc_$(date -u +%Y%m%dT%H%M%SZ)"
+RACELINE="$REPO/centerline_tools/tracks/tempo_coffee/raceline_points_experimental.csv"
+RUN_DIR="/f1tenth_ws/onboard_runs/tempo_structured_$(date -u +%Y%m%dT%H%M%SZ)"
 ros2 run oudtra_driver_bringup record_onboard_localization.py "$RUN_DIR" \
-  --map-yaml "$MAP_YAML" --map-image "$MAP_IMAGE" --raceline-csv "$RACELINE" \
+  --map-yaml "$REPO/centerline_tools/tempo_coffee_scanned_20261002_00.yaml" \
+  --map-image "$REPO/centerline_tools/tempo_coffee_scanned_20261002_00.pgm" \
+  --raceline-csv "$RACELINE" \
   --config pf="$REPO/particle_filter/config/localize.yaml" \
   --config pnc="$REPO/oudtra_driver_bringup/config/full_stack.yaml" \
   --config path="$REPO/path_following_v2/config/path_following_v2.yaml" \
   --config reactive="$REPO/reactive_control_v2/config/reactive_control_v2.yaml" \
   --config arbitration="$REPO/drive_arbitration_v2/config/drive_arbitration_v2.yaml" \
-  --config speed="$SPEED_PROFILE" \
-  --config mux=/f1tenth_ws/src/f1tenth_system/f1tenth_stack/config/mux.yaml \
-  --config vesc=/f1tenth_ws/src/f1tenth_system/f1tenth_stack/config/vesc.yaml
+  --config speed="$REPO/oudtra_driver_bringup/config/comparison_speed_limits.yaml"
 ```
 
-**Expected output:** startup evidence is recorded, then the tool waits for Enter.
-Press Enter once to mark evaluation start at the human-authorized activity. Press
-Ctrl-C once at its end; the recorder marks evaluation end, finalizes rosbag, retains
-0.5 s post-roll and updates `metadata.yaml`. Exit 0 plus recording PASS is a recorder
-result, not vehicle-performance acceptance. Existing directories are rejected.
+No separate preflight command: the recorder checks its own required evidence on
+startup and reports any missing signals. Press **Enter** when you want the evaluated
+interval to begin; Ctrl-C ends/finalizes it after the human stops the car. The
+recorder never enables autonomy. It produces run `metadata.yaml`, `rosbag/`,
+`config/` and `logs/`, with source/asset/config hashes and the explicit interval.
+Keep a short operator note of the activity, interventions and stop reason; direction
+here is `csv`. Inputs named by `--config` are hashed, not all copied automatically.
+Preserve the deployed files alongside the dataset when retaining comparison evidence.
+Missing evidence remains missing; no physical-car recorder validation is claimed.
 
-**Stop/cleanup:** stopping this passive tool does **not** stop the car. Stop/disarm
-the vehicle under the team's operating procedure, finalize the recorder, then stop
-owned stack launches as appropriate. An interrupted preflight/run may leave failure
-metadata; retain it, do not rename it into a successful dataset.
+</details>
 
-**Troubleshooting/evidence:** retain preflight JSON, map/publisher parameter output,
-actual direction/profile, revisions, `metadata.yaml`, `rosbag/`, `config/`, `logs/`
-and all referenced asset/config files. The onboard recorder hashes map/raceline/
-configs but does not copy every supplied file or automatically declare scenario,
-direction or comparison identity. Keep originals alongside the archived dataset
-and a factual operator note; do not fabricate identity to unlock deltas.
+### B5. Dataset transfer and offline analysis
 
-After recorder finalization, keep actual assets and a direction/profile note with
-this run (verify their hashes against `metadata.yaml` before archiving). For example,
-when the declared low-speed profile was used:
+**Optional after recording; not part of four-terminal startup.**
+
+Both recording choices write under `/f1tenth_ws/onboard_runs/` (normally exposed on
+the onboard host as `~/f1tenth_ws/onboard_runs/` by the existing workspace mount).
+Copy the whole chosen run directory from the **development laptop host**:
 
 ```bash
-mkdir -p "$RUN_DIR/operator_assets"
-cp "$MAP_YAML" "$MAP_IMAGE" "$RACELINE" "$SPEED_PROFILE" "$RUN_DIR/operator_assets/"
-printf 'raceline_direction=%s\nmap_yaml=%s\nraceline_csv=%s\nspeed_profile=%s\n' \
-  "$DIRECTION" "$MAP_YAML" "$RACELINE" "$SPEED_PROFILE" > "$RUN_DIR/operator_notes.txt"
-```
-
-Also archive the exact PF/PnC/mux/VESC configuration files declared above; copied
-files must still match the run's recorded hashes. These notes are evidence, not a
-substitute for comparison identity or hardware qualification.
-
-### Transfer to laptop and analyze
-
-Confirm the onboard bind mount exposes `/f1tenth_ws/onboard_runs/` as
-`~/f1tenth_ws/onboard_runs/`; otherwise use its actual host path. From the **dev host**:
-
-```bash
-# Replace these values with the actual vehicle account, hostname and run ID.
-VEHICLE='<vehicle-user>@<vehicle-host>'
+VEHICLE='<onboard-user>@<onboard-host>'
 RUN_ID='<actual-run-directory-name>'
 rsync -a "$VEHICLE:~/f1tenth_ws/onboard_runs/$RUN_ID/" \
   "/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/$RUN_ID/"
 ```
 
-Transfer the complete directory and retained input assets/notes, not just plots or
-`metrics.json`. Inside the **sourced simulation/analysis container**:
+For a **structured recorder** dataset, enter the sourced **simulation/analysis
+container** and analyze the copied directory:
 
 ```bash
-ONBOARD_RUN="/sim_ws/src/oudtra_driver_bringup/runs/$RUN_ID"
+ONBOARD_RUN='/sim_ws/src/oudtra_driver_bringup/runs/<actual-structured-run-directory-name>'
 ros2 run oudtra_driver_bringup analyze_localization_run.py "$ONBOARD_RUN"
 ```
 
-Set `RUN_ID` there explicitly (host shell variables are not inherited). Open the
-host-visible `report.md`, `metrics.json`, `plots/`; absolute localization accuracy
-without GT is NOT_APPLICABLE. Continue with [comparison](#10-compare-two-analyzed-runs).
+Open `report.md`, `metrics.json` and `plots/` in the corresponding host directory;
+continue with [comparison](#10-compare-two-analyzed-runs), using an A2 recorded
+simulation run. A plain `tempo_raw_*` bag is for ROS inspection/replay and cannot
+be passed directly to this analyzer. Without independent onboard GT, absolute
+localization accuracy remains NOT_APPLICABLE. The measured yaw-rate adapter is
+still incomplete; recording IMU does not make unsupported metrics available.
 
 ## 6. Essential regression checks
 
@@ -702,9 +663,9 @@ Missing/changed CSV, map or validation evidence fails. Add `--map-yaml "$MAP_YAM
 to verify caller-map identity. `--format json` is machine-readable; `--format pnc`
 prints the existing `raceline_csv_path:=... raceline_direction:=...` arguments;
 `--format publisher` prints `csv_path:=... direction:=...`. These print arguments
-without launching anything. Use the **validated-only** resolver (no acknowledgment)
-for the recommended onboard handoff to the existing [Terminal 3](#5-onboard-stack-and-passive-measurement).
-Do not use an experimental path as an onboard reference. A custom offline vehicle
+without launching anything. Use the **validated-only** resolver for ordinary production handoff. The human-authorized
+Tempo experimental exception uses the explicit hash-qualified bundle and onboard
+procedure in [section 5](#5-onboard-stack-and-passive-measurement); no status is relabelled. A custom offline vehicle
 profile also needs independent physical-envelope review; changing an analysis
 limit does not change hardware or authorize onboard use.
 
@@ -823,33 +784,18 @@ LOCALIZE_CONFIG=/sim_ws/src/particle_filter/config/localize_sim.yaml
 SPEED_PROFILE=/sim_ws/src/oudtra_driver_bringup/config/comparison_speed_limits.yaml
 ```
 
-Discover saved manifests for this map; listing does not select a hidden latest file:
+The current Tempo selection is version-controlled; use it directly:
 
 ```bash
-python3 - <<'PYTHON'
-from pathlib import Path
-import yaml
-expected = Path('/sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00.yaml')
-for manifest in sorted(Path('/sim_ws/src/centerline_tools/centerline_output/workbench').glob('*/selected_raceline.yaml')):
-    selected = yaml.safe_load(manifest.read_text())['selection']
-    if Path(selected['map_yaml']).resolve() == expected.resolve():
-        print(selected['status'], selected['candidate_id'], selected['raceline_csv_sha256'])
-        print(manifest)
-PYTHON
-read -r -p 'Paste the intended manifest absolute path: ' SELECTED
-python3 /sim_ws/src/centerline_tools/resolve_selected_raceline.py \
-  "$SELECTED" --allow-experimental --map-yaml "$MAP_YAML"
+SELECTED=/sim_ws/src/centerline_tools/tracks/tempo_coffee/selected_raceline.yaml
 ```
 
-Confirm candidate, direction, status, physical limits and exact CSV path. The tested
-candidate's CSV hash is
-`0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e`;
-there may be several sessions exporting those same bytes. Use the intended one,
-not an arbitrary directory. Missing/changed CSV, map or evidence fails verification.
-No manifest available? Use the [workbench](#11-offline-raceline-workbench) to deliberately
-generate/select/export; generated sessions are local and not included in every clone.
-A different CSV or vehicle profile is a new experimental input, not reproduction
-of the previously tested baseline.
+The runner verifies the manifest, experimental acknowledgment, geometry/evidence
+hashes and explicit map identity before startup. No session discovery, prompt or
+separate transfer is needed. CSV SHA is
+`0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e`.
+A deliberately changed deployment selection is a Git change; use the same commit
+on both platforms. Workbench experiments remain local until explicitly promoted.
 
 The source simulator YAML selects the same Tempo YAML/PGM and straight-start pose
 x=2.66927602204947, y=1.14374263398612, yaw=0.131970518672264 (CSV row 270 of the
@@ -857,7 +803,7 @@ above candidate). It must correspond to your intended geometry. Do not silently
 reuse that pose for an unrelated CSV. PF receives the explicit map YAML through
 `map_yaml`; its base config's legacy IFAC map name is not authoritative here.
 
-### Simulation container: run, stop, analyze
+### A2 — timed run, stop and offline analysis
 
 ```bash
 RUN_DIR="/sim_ws/src/oudtra_driver_bringup/runs/tempo_coffee_experimental_pf_pnc_low_speed_$(date -u +%Y%m%dT%H%M%SZ)"
@@ -957,5 +903,182 @@ Changing map/image, CSV/direction, vehicle profile, start pose/offsets, PF/PnC c
 speed limits, duration or analysis definitions changes the comparison context.
 Retain exact hashes and describe differences; do not infer comparability from run
 names. For the onboard qualification/recording gate use [section 5](#5-onboard-stack-and-passive-measurement),
-then follow [section 10](#10-compare-two-analyzed-runs). Tempo is still blocked for
-recommended onboard autonomy; no new-track launch workaround is provided here.
+then follow [section 10](#10-compare-two-analyzed-runs). The onboard launch now requires
+explicit map selection; actual stationary/deployment and physical driving checks
+remain human-executed. The experimental reference is not production-validated.
+
+## 13. A1 — interactive Tempo simulation in three terminals
+
+### Goal and preconditions
+
+Run Tempo persistently for RViz observation: **simulator → PF → PnC**. Paste each
+terminal block in order; initialize PF in RViz before starting Terminal 3.
+**No prompts, copied overlay paths, fixed duration or automatic recording.**
+This procedure explicitly uses experimental `008_geometry`; it is not a
+production-validated raceline. Do not run A1 and A2 together in one ROS domain.
+
+**Build once, or after source changes:** enter the existing container from a
+**dev-host shell**:
+
+```bash
+docker exec -it f1tenth_gym_ros_rocker bash
+```
+
+Then build in that **container shell** (wait for completion before starting T1–T3):
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select f1tenth_gym_ros particle_filter centerline_tools path_following_v2 reactive_control_v2 drive_arbitration_v2 oudtra_driver_bringup
+```
+
+Open three **dev-host terminals**, enter the same existing container in each:
+
+```bash
+docker exec -it f1tenth_gym_ros_rocker bash
+```
+
+The following blocks run **inside the container**, all on domain 95. Source changes
+must be built first; daily starts need only the source/launch commands below.
+
+### A1 Terminal 1 — persistent Tempo simulator and RViz
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /sim_ws/install/local_setup.bash
+export ROS_DOMAIN_ID=95
+ros2 launch f1tenth_gym_ros gym_bridge_slam_launch.py \
+  config_file:=/sim_ws/src/f1tenth_gym_ros/config/sim_tempo_coffee.yaml \
+  use_rviz:=true
+```
+
+Starts one car, scan/raw odometry, robot transforms and RViz. Map and localized
+map→vehicle TF appear after Terminal 2 starts and PF initializes. Their initial
+absence is expected. Keep the simulator running.
+
+### A1 Terminal 2 — PF with the explicit Tempo map
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /sim_ws/install/local_setup.bash
+export ROS_DOMAIN_ID=95
+ros2 launch particle_filter localize_sim_launch.py \
+  localize_config:=/sim_ws/src/particle_filter/config/localize_sim.yaml \
+  map_yaml:=/sim_ws/src/centerline_tools/tempo_coffee_scanned_20261002_00.yaml \
+  parameter_overlay:=/sim_ws/src/oudtra_driver_bringup/config/localization_eval_sim.yaml
+```
+
+In RViz, use **2D Pose Estimate** once at the actual stationary start:
+**x=2.669 m, y=1.144 m, heading=0.132 rad (7.56° from +X)**. Wait for the localized
+scan/vehicle transform and usable PF health before starting PnC. Terminal 2 keeps
+running; no generated path needs to be copied anywhere.
+
+PF uses the existing integration config directly. Speed settings belong to PnC,
+so PF does not need a merged speed overlay. No simulator truth is continuously
+injected into PF. RViz is an observation aid, not proof of localization accuracy.
+
+### A1 Terminal 3 — persistent full PnC with the selected experimental raceline
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /sim_ws/install/local_setup.bash
+export ROS_DOMAIN_ID=95
+ros2 launch oudtra_driver_bringup full_stack_localization_sim_launch.py \
+  track:=tempo_coffee allow_experimental:=true
+```
+
+`track:=tempo_coffee` explicitly selects the installed, tracked manifest. It resolves
+the same CSV/direction/map as onboard; missing/changed evidence fails before PnC
+starts, without a fallback. No timestamped session path is needed. Advanced use
+can still provide `selected_raceline:=<absolute-manifest>` with explicit `map_yaml`
+instead of `track`; supplying both selection mechanisms is rejected.
+
+The launch verifies the manifest/hashes, prints the exact candidate/CSV/direction,
+and starts **only PnC**, using existing shared launches. It internally applies the
+same localization integration and comparison-speed merge as A2. No operator-managed
+overlay is needed. Default ordinary forward demand is **0.5–2.0 m/s**, with a final
+**2.0 m/s absolute command cap**; safety stops, slower caps and reverse remain
+possible. PF health is required; simulator-GT reverse recovery is disabled.
+Experimental selection acknowledges failed production validation; it disables no
+safety gate and does not qualify the raceline for production.
+
+### A1 verification and troubleshooting
+
+The startup banner identifies candidate `008_geometry`, status `EXPERIMENTAL`,
+direction `csv`, active CSV and speed profile. Expected CSV SHA is
+`0aab3968b64537b608ff8821ff8b1bd28ec3253d3c12719d542ad3ae6a71e88e`.
+PnC runs until Ctrl-C. Stopped/reactive operation must be interpreted from status
+messages; do not bypass a stop merely to obtain motion.
+
+If PF is not initialized or the vehicle remains stopped, use an optional fourth
+**sourced container shell**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+source /sim_ws/install/local_setup.bash
+export ROS_DOMAIN_ID=95
+ros2 param get /map_server yaml_filename
+timeout 3s ros2 topic echo /pf/health
+timeout 3s ros2 topic echo /pf/pose/odom --no-arr
+timeout 3s ros2 run tf2_ros tf2_echo map ego_racecar/base_link
+```
+
+Bounded observations normally end with timeout exit 124. Check fresh usable health,
+finite map-frame pose and the expected heading. The prior first-row start failed
+despite initial usable health, so health alone does not establish correctness.
+See [A2 monitoring](#optional-monitoring-terminal) for active-reference, speed,
+GT-gate and arbitration checks.
+
+If RViz reports an `indexed_8bit_image` GLSL/sampler error, distinguish that map
+rendering issue from ROS map/PF message flow. It occurred in container validation
+while closed-loop motion still worked; map appearance and the manual pose-click
+experience require your visual check. Graphics configuration is unchanged here.
+
+For repeatable initialization **instead of the RViz click**, publish once from
+that fourth shell **before PnC starts and only at this configured stationary start**:
+
+```bash
+ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+  '{header: {frame_id: map}, pose: {pose: {position: {x: 2.66927602204947, y: 1.14374263398612}, orientation: {z: 0.065937386, w: 0.997823765}}}}'
+```
+
+This simulation-only command must be updated if the configured start changes.
+Do not use it on the physical car or repeatedly reset localization while driving.
+
+### A1 stop and cleanup
+
+While the simulator still runs, Ctrl-C **Terminal 3** first. From that now-free
+sourced terminal, command simulator stop and confirm stationary raw odometry:
+
+```bash
+ros2 topic pub --once /drive ackermann_msgs/msg/AckermannDriveStamped \
+  '{drive: {speed: 0.0, steering_angle: 0.0}}'
+timeout 3s ros2 topic echo /ego_racecar/odom --no-arr
+```
+
+Then Ctrl-C **Terminal 2**, then **Terminal 1**. Do not stop/remove the container.
+This is a simulator procedure, not an onboard stop procedure. If stationary cleanup
+cannot be established, stop the simulator and retain diagnostics before restarting.
+The wrapper removes its internal temporary YAML/provenance on normal shutdown.
+A1 provides no automatic readiness, domain-exclusivity checks, motion watchdog or
+owned process cleanup for the other terminals; the operator controls their lifecycle.
+
+### A1 data outputs and optional diagnostic recording
+
+**No run dataset/report is recorded automatically.** Console output identifies the
+active assets. For reproducible scorecards/comparison, use **A2 timed recording**.
+
+Optional **raw diagnostic** recording in a fourth sourced container shell:
+
+```bash
+export ROS_DOMAIN_ID=95
+RAW_DIR="/sim_ws/src/oudtra_driver_bringup/runs/tempo_manual_raw_$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 bag record -o "$RAW_DIR" /scan /ego_racecar/odom /pf/pose/odom /pf/health \
+  /tf /simulator/agent_status /drive /reactive_control_v2/lower_safety_status /drive_arbitration_v2/status
+```
+
+Ctrl-C the recorder to finalize. The bag is host-visible under
+`/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/`. Retain the exact manifest,
+source/config revisions, initialization and interval notes with it. This raw bag
+omits the latched reference/standard metadata and evaluation interval, so it is
+**not a shared-analyzer run contract**; do not fabricate benchmark metadata for it.
