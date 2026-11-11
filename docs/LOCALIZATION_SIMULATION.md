@@ -535,11 +535,29 @@ IMU separately; forward-speed/yaw-rate smoothness and stall detection remain
 continuity, availability, consistency, estimated-pose tracking, and odometry-based
 pace remain supported. Absolute localization accuracy is `NOT_APPLICABLE` without GT.
 
-Every run records platform/run/time, evaluation boundaries, main/PF/f1tenth_system
+The structured recorder records platform/run/time, evaluation boundaries, main/PF/f1tenth_system
 Git revision and clean/dirty/unknown state, contract/tool hashes, preflight topic/type/
 frame observations, message counts, and supplied map/image/raceline/config hashes.
 Missing paths or Git facts remain explicitly unknown. Bags and generated run data
 stay under the Git-ignored `oudtra_driver_bringup/runs/` after transfer.
+
+#### Importing a raw onboard bag
+
+The simple Terminal 4 rosbag command records useful signals but does not create
+evaluation metadata. `import_onboard_bag.py` verifies SQLite integrity, metadata
+counts, CDR type declarations and raw hashes; copies the bag into a self-contained
+run; applies the existing onboard semantic contract; and labels deployed revisions,
+map/config identity, initialization, completion and unobserved collision evidence
+as unknown. CDR/frame/value validation remains the analyzer's responsibility.
+Nonempty WAL files and conflicting counts/types fail explicitly; originals are
+never overwritten. No GT or combined measured vehicle-state adapter is invented.
+
+The default interval is the whole raw recording. Explicit start/end offsets are
+retrospective analyst-selected bounds, not operator RUNNING/STOP events. Keep the
+entire bag so startup, stops and excluded boundaries remain inspectable. Raw run
+inspection uses no live ROS graph. Comparison retains unknown-identity suppression;
+observed path agreement does not prove the deployed PF map or parameter set.
+See [transfer/import/analyze commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#b5-dataset-transfer-and-offline-analysis).
 
 ### 5.6 Plots and validation artifacts
 

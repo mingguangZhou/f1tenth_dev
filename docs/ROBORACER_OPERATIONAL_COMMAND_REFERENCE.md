@@ -302,8 +302,9 @@ releasing the latched auto button alone is not a disarm.
 
 **Output:** `/f1tenth_ws/onboard_runs/tempo_raw_<UTC>/` contains the bag's
 `metadata.yaml` and database files. This is raw diagnostic evidence, **not** the
-shared analyzer's run `metadata.yaml`/interval contract. For a report/comparison-ready
-run, use the existing structured recorder **instead of** the above bag command:
+shared analyzer's run `metadata.yaml`/interval contract. Follow B5 to import this
+raw bag before analysis. To capture an explicit evaluation interval and deployed
+provenance at recording time, use the structured recorder **instead**:
 
 <details>
 <summary>Optional Terminal 4 alternative — structured dataset for offline analysis</summary>
@@ -340,33 +341,97 @@ Missing evidence remains missing; no physical-car recorder validation is claimed
 
 ### B5. Dataset transfer and offline analysis
 
-**Optional after recording; not part of four-terminal startup.**
+**After recording:** transfer → import raw bag → analyze → compare. These steps run
+on the **development laptop**, not the vehicle. No ROS replay or live simulator is
+needed for onboard analysis. A raw bag's `metadata.yaml` is bag indexing metadata,
+not the evaluation run metadata; importing creates the missing run wrapper without
+inventing the deployed source/configuration or successful completion.
 
-Both recording choices write under `/f1tenth_ws/onboard_runs/` (normally exposed on
-the onboard host as `~/f1tenth_ws/onboard_runs/` by the existing workspace mount).
-Copy the whole chosen run directory from the **development laptop host**:
+**Host terminal — copy from the onboard computer:** replace the SSH stub once.
+The package-local raw inbox is Git-ignored and bind-mounted into the analysis
+container, so no additional Docker copy is needed after transfer.
 
 ```bash
+cd /home/mzhou/f1tenth_dev
+mkdir -p oudtra_driver_bringup/onboard_runs
 VEHICLE='<onboard-user>@<onboard-host>'
-RUN_ID='<actual-run-directory-name>'
-rsync -a "$VEHICLE:~/f1tenth_ws/onboard_runs/$RUN_ID/" \
-  "/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/$RUN_ID/"
+rsync -a "$VEHICLE:~/f1tenth_ws/onboard_runs/" oudtra_driver_bringup/onboard_runs/
+docker exec -it f1tenth_gym_ros_rocker /bin/bash
 ```
 
-For a **structured recorder** dataset, enter the sourced **simulation/analysis
-container** and analyze the copied directory:
+The SSH address is intentionally a placeholder. Current delivered bags have already
+been copied to that inbox. Original root `onboard_runs/` files are preserved too.
+
+**Inside the simulation/analysis container — build once after pulling updates:**
 
 ```bash
-ONBOARD_RUN='/sim_ws/src/oudtra_driver_bringup/runs/<actual-structured-run-directory-name>'
-ros2 run oudtra_driver_bringup analyze_localization_run.py "$ONBOARD_RUN"
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select oudtra_driver_bringup
+source install/local_setup.bash
 ```
 
-Open `report.md`, `metrics.json` and `plots/` in the corresponding host directory;
-continue with [comparison](#10-compare-two-analyzed-runs), using an A2 recorded
-simulation run. A plain `tempo_raw_*` bag is for ROS inspection/replay and cannot
-be passed directly to this analyzer. Without independent onboard GT, absolute
-localization accuracy remains NOT_APPLICABLE. The measured yaw-rate adapter is
-still incomplete; recording IMU does not make unsupported metrics available.
+**Import and analyze the selected third recording:** these exact offsets describe
+this delivered bag's observed motion, not a general setting for every future run.
+The timestamped output makes each manual import distinct.
+
+```bash
+BASE=/sim_ws/src/oudtra_driver_bringup
+RAW="$BASE/onboard_runs/tempo_raw_20261105T202752Z"
+RUN="$BASE/runs/tempo_onboard_session3_motion_$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 run oudtra_driver_bringup import_onboard_bag.py "$RAW" \
+  --output-dir "$RUN" --start-offset-sec 7.2 --end-offset-sec 64.8 \
+  --scenario-id tempo_coffee_scanned_20261002_00
+ros2 run oudtra_driver_bringup analyze_localization_run.py "$RUN"
+```
+
+For a different raw bag, change `RAW`; omit both offset options to analyze its whole
+recording, including stationary/startup time, or supply explicit reviewed bounds.
+`--inspect-only` prints SQLite integrity, duration, topic/count and raw-file hashes
+without creating output. Existing output directories are rejected. Do not point
+`analyze_localization_run.py` directly at a raw bag or manufacture a smoke PASS.
+Structured-recorder datasets already have `metadata.yaml` plus `rosbag/`: skip
+import and pass that complete run directory directly to the analyzer.
+
+**Compare with simulation:** use an existing successfully analyzed A2 run. For the
+current local validation dataset:
+
+```bash
+SIM="$BASE/runs/tempo_sim_dependency_regression_20261107"
+COMPARISON="$BASE/runs/tempo_sim_vs_onboard_session3_$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 run oudtra_driver_bringup compare_localization_runs.py \
+  "$SIM" "$RUN" --output-dir "$COMPARISON"
+```
+
+That simulation dataset is local ignored evidence, not downloaded by Git. If absent,
+run/analyze [A2](#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison) first
+and assign its output directory to `SIM`. Keep the same map, selected reference,
+direction and declared speed profile for the intended comparison. Matching filenames
+alone do not establish what was deployed on the car.
+
+**Open on the laptop host:** container prefix `/sim_ws/src` corresponds to
+`/home/mzhou/f1tenth_dev`. Each imported run contains:
+
+| Artifact | Purpose |
+| --- | --- |
+| `report.md`, `metrics.json`, `plots/` | Human scorecard, machine results and engineering figures |
+| `metadata.yaml`, `import_audit.json`, `config/` | Explicit interval, roles/settings, unknown provenance and raw hash audit |
+| `rosbag/` | Complete copied raw bag; original input remains untouched |
+| Comparison `report.md`, `comparison.json` | Side-by-side results and reasons deltas are withheld |
+
+The current completed examples are `runs/tempo_onboard_session3_motion_20261105/`
+and `runs/tempo_sim_vs_onboard_session3_20261107/` under this package. Open their
+`report.md`; the selected-run figures are in its `plots/` directory. Retain whole
+run directories, not just JSON or images. Raw inboxes, run datasets and temporary
+handoffs stay uncommitted.
+
+**Interpretation:** 100% fresh-pose delivery is not 100% healthy localization.
+Raw imports cannot recover missing deployed revisions, PF map/config hashes,
+initialization events, task completion or collision evidence. No onboard GT means
+absolute accuracy is NOT_APPLICABLE. The current split speed/IMU adapter is absent,
+so vehicle-response smoothness and stall evidence remain unavailable. Comparison
+PASS means the table was generated; unknown identity/evidence suppresses numerical
+deltas. It does not establish matched sections or simulator/onboard equivalence.
 
 ## 6. Essential regression checks
 

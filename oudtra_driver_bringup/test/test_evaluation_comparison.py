@@ -30,6 +30,7 @@ def test_comparison_deltas_and_repeatability(tmp_path):
     assert metric['delta_unit'] == 'percentage points'
     before = [(out / f).read_bytes() for f in ('report.md', 'comparison.json')]
     report = before[0].decode()
+    assert '**Table of contents**' in report
     assert '## 2. Runs compared' in report
     assert '## 3. Comparability assessment' in report
     assert '## 4. Localization comparison' in report

@@ -20,31 +20,39 @@ not authorization to choose the next project objective.
   - [2026-10-16 — explicit onboard map and interactive Tempo integration](#2026-10-16--explicit-onboard-map-and-interactive-tempo-integration)
   - [2026-10-19 — prompt-free interactive Tempo startup](#2026-10-19--prompt-free-interactive-tempo-startup)
   - [2026-10-28 — portable curated Tempo deployment selection](#2026-10-28--portable-curated-tempo-deployment-selection)
+  - [2026-11-07 — onboard bags imported and assessed offline](#2026-11-07--onboard-bags-imported-and-assessed-offline)
 - [3. Engineering decisions and implementation rationale](#3-engineering-decisions-and-implementation-rationale)
 - [4. Open issues and validation gaps](#4-open-issues-and-validation-gaps)
 <!-- table-of-contents:end -->
 
 ## 1. Current engineering status
 
+The engineer reports a successful physical Tempo integration session on 2026-11-05.
+Three delivered raw bags pass SQLite/core-analysis checks; the selected 57.6 s
+motion interval supports an onboard scorecard with explicit proxy/unknown limits.
+This is recorded hardware evidence, not a new physical test conducted by Codex.
+
 The repository implements short IFAC PF-localized closed-loop simulation,
 recording and offline evaluation, with historical run artifacts supporting that
-workflow. A passive onboard recorder exists; its physical-car validation is not
-established. Tempo Coffee has no production-validated raceline. An explicit experimental
+workflow. A passive onboard recorder exists; its structured-recorder physical-car validation is not
+established (the delivered runs used the simple raw logger). Tempo Coffee has no production-validated raceline. An explicit experimental
 low-speed simulation workflow now has two recorded 30 s passes from a straight
 start; the first-row start failed with erroneous PF heading and reverse recovery.
 The offline workbench records quantified
 Tempo search failure, supports deliberate experimental selection, and never labels
 that export production-valid. IFAC V2 selection passed a fresh bounded simulation.
 
-**Assessment:** 2026-11-04, `mingguangZhou/f1tenth_dev`, branch
-`mingguang_localization_robustness_ai_workspace`, revision
-[e9d599f](https://github.com/mingguangZhou/f1tenth_dev/commit/e9d599feb7e8a638fd99b4d433126f70927dea52)
-as the source baseline for the Tempo deployment update containing this record.
+**Assessment:** 2026-11-11, `mingguangZhou/f1tenth_dev`, branch
+`mingguang_localization_robustness_ai_workspace`. Published deployment:
+[891b7c9](https://github.com/mingguangZhou/f1tenth_dev/commit/891b7c9560e72124218b32ec922adf8441c18a89).
+Dependency fix `7c04f29` removes only the unconditional simulator dependency.
+The engineer authorized publishing that fix and the onboard import/analysis/guide
+update on 2026-11-11; this assessment is recorded with the latter update.
 The engineer authorized committing/publishing the explicit-map, interactive
 workflow and curated-track changes on 2026-11-04. All 185 relevant regression
 tests passed again in Foxy (67.11 s); no fresh driving/hardware test was run.
 The 2026-10-28 milestone adds portable deployment selection and a hardware-free
-onboard adapter check; actual car execution is unverified. Earlier validation
+onboard adapter check; the later human-reported car session is described in the 2026-11-07 entry. Earlier validation
 adds the simplified A1 PnC adapter: targeted build, bringup/PF regression checks
 and two 15 s independent-launch simulation passes (14.43/14.33 m, no observed
 collisions, stationary stop and all parent launch exits 0). Earlier map-launch and recorded-run
@@ -61,13 +69,12 @@ race-day usability validation was performed by Codex; the engineer confirms the
 previously working onboard platform as the reused baseline.
 Earlier historical evidence retains its original qualification.
 
-**Human-confirmed current activity:** manually repeat the established closed-loop
-simulation, prepare controlled onboard collection with targeted stationary checks,
-then analyze and compare preserved datasets. The engineer explicitly authorizes
-Tempo experimental 008 for controlled integration (not production qualification),
-required onboard map selection and reuse of existing platform behavior. Codex
-implements/validates without operating hardware; physical motion remains human-controlled. Future strategic priorities remain human-owned. Open issues
-below are observations, not automatically assigned work.
+**Human-confirmed current activity:** assess the three delivered onboard recordings,
+select suitable evidence for the existing analysis/comparison pipeline, and simplify
+the transfer-to-analysis instructions. The packaging fix remains a dedicated commit; the initial data comparison and
+its reusable tooling/documentation form a separate publication update. Tempo experimental 008 is human-authorized for
+controlled integration, not production qualification. Physical operation remains
+human-controlled; unresolved issues below do not authorize new priorities.
 
 | Capability | Demonstrated evidence and boundary |
 | --- | --- |
@@ -77,7 +84,7 @@ below are observations, not automatically assigned work.
 | Offline raceline workbench | **Build/test, offline fixture and IFAC handoff simulation validated:** shared gates and unchanged IFAC CSV, fresh sessions/reopen, three-step GUI, explicit export/manifest/resolver. Tempo still fails production validation after 16 trials; experimental export is not track acceptance. Subsequent recorded low-speed simulation passed from row 270, not the failed first-row start. Tk construction/event loop tested; operator/manual interaction not human-validated. |
 | PF initialization / closed-loop integration | Readiness, one-shot pose and health gating implemented; historical short IFAC motion corroborated. No reset acknowledgement or accuracy guarantee. |
 | Recording / shared offline scorecard | Simulation and synthetic no-GT artifacts inspected; regression success **Reported**. Synthetic onboard fixtures are not hardware results or sim/onboard equivalence. |
-| Onboard hardware baseline | Previously working platform **Human-confirmed**, with source/config inspection at `f1tenth_system` `5a46e19`. Actual new-track deployment/stationary/motion checks require human execution; no new commissioning claim. |
+| Onboard hardware baseline | Previously working platform **Human-confirmed**, with source/config inspection at `f1tenth_system` `5a46e19`. The engineer subsequently reports a smooth Tempo session; raw bag evidence was analyzed offline on 2026-11-07. Deployed revision/map/config hashes were not recorded; no new commissioning or structured-recorder qualification claim. |
 | Passive onboard recorder | Passivity verified in source; **Build/test and mock/runtime validation Reported**. Hardware validation not established; measured speed/IMU adapter remains missing. |
 | SLAM / range libraries | Dependencies and launch/config support implemented; successful current mapping experiment **Unknown**. |
 
@@ -229,6 +236,39 @@ these checks do not establish actual Orin deployment or driving. Assets/code wer
 uncommitted at the milestone assessment; publication was subsequently authorized
 on 2026-11-04. No new roadmap is implied.
 
+### 2026-11-07 — onboard bags imported and assessed offline
+
+**Human-reported hardware session; offline evidence/tests verified.** The engineer
+needed to remove the simulator dependency to build shared bringup onboard. Dedicated
+local commit `7c04f29` removes only that unconditional dependency; build, 93 bringup
+tests and a 15 s recorded PF/PnC simulation passed. Simulator availability remains
+an explicit prerequisite of simulation commands; no launch/control settings changed.
+
+Three delivered 2026-11-05 raw bags pass SQLite integrity/count checks and core
+message analysis. A new offline importer preserves raw bytes and supplies explicit
+retrospective intervals/semantic roles, leaving deployed source/configuration,
+initialization, collision and completion evidence unknown. Physical-car report
+mechanics and missing-evidence explanations were corrected without changing metric
+mathematics. The follow-on 103-test suite passed; comparison with the committed
+analyzer produced identical semantic metric values.
+
+Session 3 (`20261105T202752Z`) is selected for its longer continuous motion/evidence
+coverage, not minimum error: 57.6 s, 57.13 m odometry proxy distance, fresh-pose
+delivery 100%, PF INVALID 1.35 s / DEGRADED 19.57 s, no observed emergency entries
+in that interval. Session 2 has a 0.628 s pose gap; its pace/command smoothness lack
+sufficient continuous evidence. Every bag was analyzed and preserved. All recorded
+static references match one another and the curated published geometry after the
+existing loop-closure normalization; this does not prove PF map or config identity.
+
+A sim/onboard comparison report was generated with zero justified numerical deltas:
+raw bags lack deployed identity, GT is absent onboard and evidence/durations differ.
+There is no absolute onboard-accuracy, collision-free or completed-task claim.
+Commanded-motion stalls and measured vehicle-response smoothness remain unavailable
+until suitable evidence adapters exist. The [transfer/import/analyze procedure](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#b5-dataset-transfer-and-offline-analysis)
+now works from an SSH inbox visible in the canonical container. At this 2026-11-07 assessment, analysis code/docs were uncommitted and the
+dependency commit was local. Publication of both was explicitly authorized on
+2026-11-11. This does not change the original validation or comparison limits.
+
 ## 3. Engineering decisions and implementation rationale
 
 Dates below identify implementing commits, not inferred approval dates. Unless
@@ -273,8 +313,9 @@ alternatives require human direction; listing an issue does not authorize work.
   yaw. Straight-start passes do not fix this mechanism. The onboard PF launch also
   formerly selected maps before runtime config resolution; the 2026-10-16 explicit-map
   fix passes development-container checks, but its actual car deployment remains unverified.
-- **Hardware evidence absent:** onboard topic/type/frame preflight and passive
-  recording need real-car verification. Split VESC forward-speed / measured IMU
+- **Hardware evidence limits:** the engineer reports a physical run and three raw
+  bags now support offline analysis; structured-recorder preflight still needs
+  real-car verification. Source/config/map identity was not captured. Split VESC forward-speed / measured IMU
   yaw adapter is missing; model-derived odometry yaw must not be presented as
   measured yaw. Vehicle-response smoothness/stall support is consequently limited.
 - **Recovery and shutdown coverage incomplete:** normal simulation can consume GT

@@ -206,6 +206,11 @@ def test_no_gt_onboard_and_no_tf_are_valid(tmp_path):
     assert result['vehicle']['tracking']['static_reference_deviation_m']['status'] == 'AVAILABLE'
     assert result['vehicle']['dynamics_diagnostics']['longitudinal_jerk_mps3']['status'] == 'UNAVAILABLE_DATA'
     assert not (root / 'plots/position_error.png').exists()
+    report = (root / 'report.md').read_text()
+    assert 'physical vehicle' in report and 'mux /ackermann_cmd' in report
+    assert 'The live closed loop was Gym simulator' not in report
+    assert 'the recorded bounded run completed' not in report
+    assert 'GT and PF estimated map-frame trajectories' not in report
 
 
 def test_shared_topic_and_physical_state_adapter(tmp_path):

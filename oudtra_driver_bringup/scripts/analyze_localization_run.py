@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import sqlite3
 
@@ -746,6 +747,7 @@ def analyze(root, overrides=None):
                                'Oscillation uses uniform driven-distance sampling; it does not measure chatter while stationary.',
                                'Legacy simulator physics steps are not publication timestamps; physical acceleration/jerk may be unavailable.',
                                'Health timing uses bag receive time; state transitions between samples can be missed.']}
+    metrics['limitations'].extend(metadata.get('limitations', []))
     write_outputs(root, metrics, metadata, selected, aligned, valid, track, reference, residuals, oscillation_traces)
     return metrics
 
@@ -994,21 +996,38 @@ def write_outputs(root, metrics, metadata, selected, aligned, valid, track, refe
     if metrics['description'] and metrics['description'] != context['purpose']:
         report += metrics['description']+'\n\n'
     report += '## 3. How this experiment produces the scorecard\n\n'
-    report += ('The live closed loop was Gym simulator → scan/raw odometry → particle filter → estimated map pose → '
-               'existing planning-and-control stack → final drive command → Gym simulator. During the bounded evaluation '
-               'interval, selected semantic ROS signals were recorded to rosbag. Simulator ground truth was recorded on a '
-               'validation-only branch and never fed to PF or control.\n\n')
-    report += ('```mermaid\nflowchart LR\n'
-               '  SIM["Gym simulator"] -->|"scan and raw odometry"| PF["Particle filter"]\n'
-               '  PF -->|"estimated map pose"| PNC["Existing PnC stack"]\n'
-               '  PNC -->|"final drive command"| SIM\n'
-               '  SIM -->|"validation-only GT"| BAG["Recorded rosbag"]\n'
-               '  PF --> BAG\n'
-               '  PNC --> BAG\n'
-               '  META["Run metadata"] --> ANALYZER["Offline analyzer after shutdown"]\n'
-               '  BAG --> ANALYZER\n'
-               '  ANALYZER --> OUTPUTS["metrics.json, report.md, plots"]\n'
-               '```\n\n')
+    if metrics['platform'] == 'sim':
+        report += ('The live closed loop was Gym simulator → scan/raw odometry → particle filter → estimated map pose → '
+                   'existing planning-and-control stack → final drive command → Gym simulator. During the bounded evaluation '
+                   'interval, selected semantic ROS signals were recorded to rosbag. Simulator ground truth was recorded on a '
+                   'validation-only branch and never fed to PF or control.\n\n')
+        report += ('```mermaid\nflowchart LR\n'
+                   '  SIM["Gym simulator"] -->|"scan and raw odometry"| PF["Particle filter"]\n'
+                   '  PF -->|"estimated map pose"| PNC["Existing PnC stack"]\n'
+                   '  PNC -->|"final drive command"| SIM\n'
+                   '  SIM -->|"validation-only GT"| BAG["Recorded rosbag"]\n'
+                   '  PF --> BAG\n'
+                   '  PNC --> BAG\n'
+                   '  META["Run metadata"] --> ANALYZER["Offline analyzer after shutdown"]\n'
+                   '  BAG --> ANALYZER\n'
+                   '  ANALYZER --> OUTPUTS["metrics.json, report.md, plots"]\n'
+                   '```\n\n')
+    else:
+        report += ('The recorded platform was the physical vehicle: LiDAR and raw odometry → PF → estimated map pose → '
+                   'PnC → autonomy /drive → mux /ackermann_cmd → VESC. Selected topics were passively recorded. '
+                   'No simulator or independent ground truth was involved. Imported raw bags have retrospective evaluation '
+                   'bounds and do not establish the deployed map, source revision, initialization or task completion.\n\n')
+        report += ('```mermaid\nflowchart LR\n'
+                   '  CAR["Vehicle sensors and odometry"] --> PF["Particle filter"]\n'
+                   '  PF --> PNC["PnC"]\n'
+                   '  PNC --> MUX["Ackermann mux and VESC"]\n'
+                   '  CAR --> BAG["Passive recording"]\n'
+                   '  PF --> BAG\n'
+                   '  MUX --> BAG\n'
+                   '  BAG --> ANALYZER["Offline analyzer"]\n'
+                   '  META["Metadata and explicit limitations"] --> ANALYZER\n'
+                   '  ANALYZER --> OUTPUTS["metrics.json, report.md, plots"]\n'
+                   '```\n\n')
     report += ('After shutdown, the offline analyzer validates declared topic types, frames, timestamps, and coverage; aligns '
                'compatible evidence; then derives localization and vehicle metrics. The analyzer never publishes into the '
                'live graph and cannot influence localization or control.\n\n')
@@ -1058,21 +1077,21 @@ def write_outputs(root, metrics, metadata, selected, aligned, valid, track, refe
                                metrics['settings']['oscillation_max_interpolation_gap_m'])
                 report += '#### Command behavior\n\nThese rows describe what the final controller output requested.\n\n'
                 report += report_metric_table(items, ['speed_command_oscillation', 'steering_command_oscillation'])
-                report += '#### Vehicle response\n\nThese rows describe simulated vehicle motion in the vehicle body frame.\n\n'
+                report += ('#### Vehicle response\n\n' + ('These rows describe simulated vehicle motion in the vehicle body frame.' if metrics['platform'] == 'sim' else 'These rows require qualified onboard vehicle-motion evidence; recording raw sensors alone does not implement an analysis adapter.') + '\n\n')
                 report += report_metric_table(items, ['forward_speed_oscillation', 'yaw_rate_oscillation'])
                 continue
             if section == 'vehicle' and group == 'dynamics_diagnostics' and all(
                     metric['status'] == 'UNAVAILABLE_DATA' for metric in items.values()):
-                report += ('Longitudinal acceleration, longitudinal jerk, and lateral acceleration are all `UNAVAILABLE_DATA`. '
-                           'They require qualified physical source timing, while the legacy simulator publications use wall-clock stamps. '
+                report += ('Longitudinal acceleration, longitudinal jerk, and lateral acceleration are all `UNAVAILABLE_DATA`. ' +
+                           ('They require qualified physical source timing, while the legacy simulator publications use wall-clock stamps. ' if metrics['platform'] == 'sim' else 'This onboard run has no declared qualified vehicle-state adapter and physical-time evidence for these derivatives. ') +
                            'They remain in `metrics.json` as secondary diagnostics and are not fabricated from unqualified timing.\n\n')
                 continue
             report += GROUP_EXPLANATIONS.get((section, group), '') + '\n\n'
             report += report_metric_table(items)
     report += '## 7. Data quality, conclusions, and limitations\n\n'
     report += 'Aligned absolute-accuracy samples: {}/{}. See `metrics.json` for effective thresholds, methods, complete structured values, and provenance.\n\n'.format(metrics['data_quality']['aligned_samples'], len(selected))
-    report += ('**Supported:** the recorded bounded run completed, the stated signals covered the reported intervals, and the displayed measurements were '
-               'derived under their declared evidence contracts. **Not supported:** performance acceptance, controller causality, long-run racing robustness, '
+    report += ('**Supported:** the displayed measurements were '
+               'derived under their declared evidence contracts. Completion is established only when the run-completed metric is AVAILABLE and true. **Not supported:** performance acceptance, controller causality, long-run racing robustness, '
                'or equivalence to future onboard evidence.\n\n')
     report += ''.join('- '+v+'\n' for v in metrics['limitations'])
     report += ''.join('- ANALYSIS_ERROR: '+k+': '+v+'\n' for k, v in metrics['data_quality']['errors'].items())
@@ -1084,9 +1103,17 @@ def write_outputs(root, metrics, metadata, selected, aligned, valid, track, refe
                '- [Development environment](../../../docs/DEVELOPMENT_ENVIRONMENT.md) identifies the canonical ROS 2 Foxy container and workspace.\n\n')
     report += '## 9. Deliverables and plots\n\n`metrics.json` contains machine-readable results; `metadata.yaml`, `config/` and `rosbag/` retain run evidence. Plots are in `plots/` next to this report.\n\n'
     for name in generated:
+        caption = PLOT_CAPTIONS.get(name, '')
+        title = PLOT_TITLES.get(name, name.replace('_', ' ').title())
+        if metrics['platform'] == 'onboard' and name == 'trajectory_xy.png':
+            caption = 'Estimated map-frame trajectory only; no independent truth is available, so this plot cannot establish absolute localization accuracy.'
+            title = 'Estimated map trajectory (proxy)'
         report += '### {}\n\n{}\n\n![{}](plots/{})\n\n'.format(
-            PLOT_TITLES.get(name, name.replace('_', ' ').title()), PLOT_CAPTIONS.get(name, ''),
-            PLOT_TITLES.get(name, name.replace('_', ' ')), name)
+            title, caption, title, name)
+    contents = '**Table of contents**\n\n' + ''.join(
+        '- [{}](#{})\n'.format(h, re.sub(r'[^\w\- ]', '', h.lower()).replace(' ', '-'))
+        for h in re.findall(r'^## (.+)$', report, flags=re.M)) + '\n'
+    report = report.replace('## 2. What this run tested', contents + '## 2. What this run tested', 1)
     (root / 'metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True, allow_nan=False)+'\n')
     (root / 'report.md').write_text(report)
 
@@ -1099,10 +1126,14 @@ def main():
         parser.add_argument('--' + name, type=float)
     args = parser.parse_args()
     try:
+        input_metadata = yaml.safe_load((args.run_directory / 'metadata.yaml').read_text())
+        if isinstance(input_metadata, dict) and 'rosbag2_bagfile_information' in input_metadata:
+            print('ANALYSIS FAIL: raw rosbag detected; run import_onboard_bag.py first. Raw input unchanged.')
+            return 1
         overrides = yaml.safe_load(args.analysis_config.read_text()) if args.analysis_config else {}
         overrides.update({key: value for key, value in vars(args).items() if key not in ('run_directory', 'analysis_config') and value is not None})
         metrics = analyze(args.run_directory.resolve(), overrides)
-        print('ANALYSIS {}: {} aligned samples; outputs in {}'.format(metrics['analysis_status'], metrics['data_quality']['aligned_samples'], args.run_directory))
+        print('ANALYSIS {}: {} pose samples, {} GT-aligned samples; outputs in {}'.format(metrics['analysis_status'], metrics['data_quality']['pose_evaluation_samples'], metrics['data_quality']['aligned_samples'], args.run_directory))
         return 0 if metrics['analysis_status'] == 'PASS' else 1
     except Exception as error:
         print('ANALYSIS FAIL: ' + str(error))

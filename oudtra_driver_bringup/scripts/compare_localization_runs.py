@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 GROUP_LABELS = {'dynamics_diagnostics': 'Secondary dynamics diagnostics'}
@@ -132,6 +133,10 @@ def compare(left_root, right_root, output):
                '- [Operational commands](../../../docs/ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md) explain how to analyze and compare runs.\n'
                '- [Shared evaluation contract](../../../docs/LOCALIZATION_SIMULATION.md) defines comparability and evidence rules.\n\n'
                '## 8. Deliverables\n\n`comparison.json` retains units, evidence, applicability states, methods, and provenance. This `report.md` is the human-readable view. Source run artifacts remain unchanged.\n')
+    contents = '**Table of contents**\n\n' + ''.join(
+        '- [{}](#{})\n'.format(h, re.sub(r'[^\w\- ]', '', h.lower()).replace(' ', '-'))
+        for h in re.findall(r'^## (.+)$', report, flags=re.M)) + '\n'
+    report = report.replace('## 2. Runs compared', contents + '## 2. Runs compared', 1)
     (output / 'comparison.json').write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False)+'\n')
     (output / 'report.md').write_text(report)
     return result

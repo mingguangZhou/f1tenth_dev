@@ -372,6 +372,18 @@ The selection remains experimental, and development-container validation does no
 establish physical-car validation. Use the [four-terminal commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement)
 for operation.
 
+### Onboard data transfer
+
+Use the Git-ignored `oudtra_driver_bringup/onboard_runs/` as the host SSH/rsync
+inbox; it is visible inside the existing container at
+`/sim_ws/src/oudtra_driver_bringup/onboard_runs/`. Analysis outputs belong in
+`oudtra_driver_bringup/runs/<descriptive-run-id>/`. Keep raw bag indexing metadata
+separate from the imported evaluation metadata. The [operator guide, B5](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#b5-dataset-transfer-and-offline-analysis)
+owns transfer, import, analysis and comparison commands.
+`oudtra_driver_bringup` no longer unconditionally depends on the Gym ROS package:
+onboard builds do not require simulator installation. Simulation still explicitly
+requires/builds `f1tenth_gym_ros` in the canonical environment.
+
 ### Make deliverables easy to find
 
 Every workflow that creates an engineering artifact must state the exact output

@@ -13,6 +13,7 @@ install(PROGRAMS
   scripts/analyze_localization_run.py
   scripts/analyze_sim_timing.py
   scripts/compare_localization_runs.py
+  scripts/import_onboard_bag.py
   scripts/record_onboard_localization.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -27,6 +28,7 @@ install(FILES README.md
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(onboard_import_test test/test_onboard_import.py TIMEOUT 30)
   ament_add_pytest_test(manual_localization_sim_test
     test/test_manual_localization_sim.py
     TIMEOUT 30
