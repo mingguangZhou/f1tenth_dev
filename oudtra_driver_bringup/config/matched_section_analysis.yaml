@@ -1,0 +1,11 @@
+# Offline alignment tolerances only. Never used by localization or control.
+max_pose_gap_sec: 0.20
+max_projection_distance_m: 0.75
+ambiguity_distance_m: 0.03
+branch_separation_m: 0.50
+max_station_speed_mps: 4.0
+station_slack_m: 0.20
+reverse_tolerance_m: 0.15
+station_step_m: 0.10
+max_station_gap_m: 0.50
+minimum_metric_coverage: 0.95

@@ -174,6 +174,18 @@ reports in three reading layers. Combine or omit sections when that reads better
 3. **Detailed evidence:** metric tables, exact values, plots, validation evidence,
    provenance, and links for reproduction or deeper inspection.
 
+Lead with the engineering result: put a compact key-results table and practical
+interpretation before implementation details when measurements are central. Explain
+what was compared, operating conditions/interval, observed differences, and what
+supports or limits the conclusion. Then explain how it was measured; put commands,
+validation transcripts, file inventories and Git state later or link them. Distinguish
+processing PASS from performance acceptance. If safeguards suppress results (for
+example zero certified deltas), explain once whether this is correct qualification
+behavior or a failed analysis; do not make readers infer it from schema labels.
+Group shared limitations rather than repeating them in every table row. Retain
+historical evidence dates when revising an older report; new experiments belong in
+their own report.
+
 Where applicable, a technically literate reader should be able to answer: What was
 the purpose? What system or experiment ran? How did control and evidence flow? What
 was collected, and how were the important results derived? What do the main terms,
@@ -211,6 +223,13 @@ Keep reports accessible locally, but do not promise them through permanent links
 as if every clone contains them. Commit/push requires explicit authorization.
 Promote stable lessons into the appropriate permanent document rather than preserving
 every report, transcript, or generated log. Keep temporary artifacts out of commits.
+
+For human-facing scientific figures, use one quantity per map unless a combined
+encoding is demonstrably clearer. Prefer aligned full-size views and shared-axis
+time plots; keep legends readable at ordinary Markdown preview width and outside
+important data regions. Split crowded multipanel figures into wider figures or
+provide full-size single-quantity defaults; retain overviews as optional links.
+Inspect rendered PNGs for clipping, overlap and misleading gap/transition display.
 
 ### Persistent engineering records
 

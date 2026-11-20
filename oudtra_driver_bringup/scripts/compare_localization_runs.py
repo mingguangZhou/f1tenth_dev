@@ -9,6 +9,11 @@ from pathlib import Path
 
 GROUP_LABELS = {'dynamics_diagnostics': 'Secondary dynamics diagnostics'}
 METRIC_LABELS = {
+    'pf_reference_position_deviation_m': 'PF-estimated distance to raceline',
+    'pf_heading_to_reference_rad': 'PF-estimated heading difference from reference',
+    'health_time_distribution': 'PF quality: interval-normalized health',
+    'autonomy_speed_command_oscillation': 'Upstream autonomy speed-command oscillation',
+    'autonomy_steering_command_oscillation': 'Upstream autonomy steering-command oscillation',
     'speed_command_oscillation': 'Speed-command oscillation',
     'steering_command_oscillation': 'Steering-command oscillation',
     'forward_speed_oscillation': 'Forward-speed oscillation',
@@ -64,6 +69,10 @@ def compare(left_root, right_root, output):
                 reasons.append('Different interval durations for a cumulative metric')
             if any(m.get('coverage') is not None and m['coverage'] < 1-1e-6 for m in (a, b)):
                 reasons.append('Incomplete coverage; suppress delta')
+        if name.endswith(('health_states', 'health_time_distribution')):
+            definitions = [r.get('data_quality', {}).get('health_definition', {}) for r in reports]
+            if any(d.get('qualification') != 'VERIFIED' or not d.get('sha256') for d in definitions) or definitions[0] != definitions[1]:
+                reasons.append('Health definitions/thresholds not verified equivalent')
         delta = None if reasons else subtract(a['value'], b['value'])
         if not reasons and delta is None:
             reasons.append('Values are categorical or non-scalar event summaries')
@@ -90,6 +99,11 @@ def compare(left_root, right_root, output):
             return 'Yes' if item else 'No'
         if isinstance(item, (int, float)):
             return format(item, '.5g')
+        if isinstance(item, dict) and 'percent' in item and 'duration_sec' in item:
+            return '<br>'.join('{}: {:.2f}% ({:.3f} s)'.format(s, item['percent'].get(s, 0.), item['duration_sec'].get(s, 0.))
+                              for s in ('GOOD', 'DEGRADED', 'INVALID', 'UNKNOWN'))
+        if isinstance(item, dict) and 'duration_sec' in item:
+            return '<br>'.join('{}: {:.3f} s'.format(s, v) for s, v in sorted(item['duration_sec'].items())) + '<br>UNKNOWN: {:.3f} s'.format(item.get('unknown_duration_sec', 0.))
         if isinstance(item, dict):
             return ', '.join('{}={}'.format(
                 key, ('Yes' if val else 'No') if isinstance(val, bool) else

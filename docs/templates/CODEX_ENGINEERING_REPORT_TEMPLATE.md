@@ -9,6 +9,11 @@
      Scale detail to the task; remove these instructions and optional sections
      that add no value. Do not paste large logs or unrelated diffs.
 
+     Prefer reading order: engineering outcome + compact results/interpretation,
+     then measurement mechanism/limits, then implementation/validation/reproduction.
+     Explain suppressed comparisons versus failed processing in plain language.
+     Preserve historical evidence dates when revising a report.
+
      Write in three layers: (1) quick purpose/outcome/findings/limits, (2) system,
      evidence flow, mechanism and necessary terms, then (3) exact evidence,
      validation, provenance and reproduction links. A normal experiment/validation
@@ -19,6 +24,12 @@
 
 <Concise overview: objective, outcome, key decisions, and material limits. For fixes,
 state the symptom, evidenced root cause, correction, and verified completion status.>
+
+<When results are central, put a compact headline table here, before detailed
+implementation sections. Include conditions/interval, units, important observed
+differences and physical interpretation. Processing PASS is not performance PASS;
+explain whether unavailable/suppressed results reflect a failed check or an honest
+evidence limit. Reorder/combine the optional sections below as useful.>
 
 <!-- table-of-contents:start -->
 **Table of contents**

@@ -35,8 +35,10 @@ for doing a run; this guide explains why it works and what its results mean.
   - [5.2 Input and output contract](#52-input-and-output-contract)
   - [5.3 Scorecard definitions](#53-scorecard-definitions)
   - [5.4 Compare completed runs](#54-compare-completed-runs)
+  - [Matched reference-section comparison](#matched-reference-section-comparison)
   - [5.5 Onboard recording contract](#55-onboard-recording-contract)
   - [5.6 Plots and validation artifacts](#56-plots-and-validation-artifacts)
+
 <!-- table-of-contents:end -->
 
 ## 2. Closed-loop localization workflow
@@ -289,6 +291,17 @@ use its `INDEX.md` for chronology, original names and uncertainty. They are sepa
 from generated run deliverables and are not available in every clone. Lasting
 outcomes belong in the project record or owning guide, not a committed report archive.
 
+**November shared-metric review (offline only, 2026-11-11):** local ignored artifacts
+are under `oudtra_driver_bringup/runs/tempo_shared_metrics_…_reanalyzed_20261111/`:
+three `onboard_session{1,2,3}_motion_20261105` directories and
+`sim_dependency_regression_20261107`. Session 3 is the primary onboard example.
+The comparison is `tempo_shared_metrics_sim_vs_onboard_session3_review_20261111/`.
+Open each `report.md` in Markdown preview; inspect `metrics.json` and linked
+`plots/`, especially `pf_reference_trajectory.png`, `localization_health.png` and
+`pose_increment_disagreement.png`. These local datasets are not supplied by a Git
+clone. Original bags/reports remain in their original directories. The operational
+guide owns commands to copy/reanalyze existing runs without overwriting them.
+
 ### 4.1 Recorded signal contract
 
 `config/localization_recording.yaml` defines the semantic roles and topic/type
@@ -315,15 +328,24 @@ below; no PF-internal statistics are promoted to headline metrics. The public PF
 
 ### 5.1 Purpose and evidence model
 
+**Milestone boundary (2026-11-20):** low-speed PF/PnC integration has simulation and
+human-operated onboard evidence. A **standardized, hardware-validated onboard
+measurement and sim/onboard comparison workflow is still to be established**.
+The tools below support shared offline metrics and exploratory reference-section
+analysis; they do not qualify missing deployment provenance, physical alignment or
+unverified sensor semantics. The existing structured recorder remains software/mock
+validated. See the [project milestone](PROJECT_RECORD.md#2026-11-20--ai-assisted-workflow-and-low-speed-localization-integration-milestone).
+
 One offline analyzer accepts simulation and onboard bags. It generates the
 same scorecard structure with explicit evidence and applicability on every metric.
 GT enables absolute localization accuracy; onboard pose/odometry agreement is
-**consistency, not accuracy**. Vehicle tracking uses GT in simulation and estimated
-map pose onboard; pace uses GT trajectory in simulation and local odometry onboard.
+**consistency, not accuracy**. Public-PF tracking is shared on both platforms; legacy tracking retains GT in simulation
+and estimated map pose onboard; pace uses GT trajectory in simulation and local odometry onboard.
 These different evidence sources are labelled and do not receive automatic deltas.
 The passive onboard recorder now produces this same run-directory contract without
 launching or mutating the vehicle stack. Tests and a controlled ROS graph validate
-the software path; no current artifact is a physical onboard measurement. Use the
+the software path. The November 5 raw bags are human-collected onboard evidence;
+they do not establish hardware validation of the structured recorder. Use the
 [Terminal 4 procedure](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#5-onboard-stack-and-passive-measurement)
 for maintained commands.
 
@@ -437,10 +459,10 @@ An unstamped command inside that interval is malformed, not silently retimestamp
 | --- | --- |
 | Localization / Accuracy | Position [m] and absolute wrapped yaw [rad] p50/p95/max; source-pose sample weighting, GT interpolation across <=0.10 s, no extrapolation. Original simulation definitions retained. |
 | Localization / Continuity | Flag adjacent pose increments exceeding `0.50 m + 10 m/s * dt` or `0.35 rad + 6 rad/s * dt`, only for dt <=0.20 s. Count transitions once; gaps are unknown. Largest position/yaw increment is reported regardless of flag. Resets may be legitimate discontinuities. |
-| Localization / Availability | Union of valid `[receive_time, source_time + 0.50 s]` intervals, clipped to evaluation. Complement gives dropout intervals/count/longest [s], including boundary intervals. Readiness is initial-pose event to ready event [s]. Health states held <=0.50 s give durations/observed entries and unknown duration. |
+| Localization / Availability | Union of valid `[receive_time, source_time + 0.50 s]` intervals, clipped to evaluation. Complement gives dropout intervals/count/longest [s], including boundary intervals. Readiness is initial-pose event to ready event [s]. Health states held <=0.50 s give durations/observed entries and unknown duration. `health_time_distribution` additionally reports GOOD/DEGRADED/INVALID/UNKNOWN durations and percentages of the entire evaluation interval, coverage and unknown-interval summaries. Fresh delivery is not GOOD quality; unknown time is never reassigned to GOOD. |
 | Localization / Consistency | Relative SE(2) pose increments over 0.50 s windows every 0.10 s, rotated into each source's starting body frame. Translation residual [m] and wrapped yaw residual [rad] p50/p95/max; no interpolation across gaps >0.20 s. Event threshold: 0.30 m or 0.25 rad; count observed entries separately from initial/after-gap exceedances. |
 | Vehicle / Robustness | Declared completion, collision observed (not impact count), emergency entries/active-at-start/uncertain entries. Narrow commanded-motion stall: autonomous state, non-emergency, abs(command speed) >=0.50 m/s and abs(vehicle speed) <=0.10 m/s continuously >=2 s. Each input must be <=0.20 s old. Duration includes the initial qualifying 2 s. This cannot detect an unintended zero command without an intent signal. |
-| Vehicle / Tracking | Distance to static reference segments [m] and absolute heading-to-segment-tangent [rad], p50/p95/max. Exclude degenerate segments and ambiguous tied headings. Changing reference is an error. Static reference deviation includes intentional obstacle avoidance. |
+| Vehicle / Tracking | New symmetric `pf_reference_position_deviation_m` and `pf_heading_to_reference_rad` use public `/pf/pose/odom` on both platforms. Legacy `static_reference_deviation_m` / `heading_to_reference_rad` retain GT in simulation and PF pose onboard. Distance to static reference segments [m] and absolute heading-to-segment-tangent [rad], p50/p95/max. Exclude degenerate segments and ambiguous tied headings. Changing reference is an error. Static reference deviation includes intentional obstacle avoidance. |
 | Vehicle / Smoothness | Four distance-domain oscillation metrics: final speed command [m/s], final steering command [rad], vehicle forward speed [m/s], and vehicle yaw rate [rad/s]. Each reports RMS residual and P95 absolute residual around a local linear trend. Command rows describe requested behavior; vehicle-state rows describe simulated/measured response. Lower generally means less short-scale variation, without defining a performance threshold. |
 | Vehicle / Pace | Sum trajectory segment lengths [m], with interpolated window endpoints and complete bounded-gap coverage; distance / elapsed evaluation seconds [m/s]. GT in sim, local odometry proxy onboard; no lap/sector timing yet. |
 
@@ -459,7 +481,41 @@ Current simulation evidence maps final `/drive` speed and steering angle to the 
 command metrics, and `/ego_racecar/odom` body-twist `linear.x` and `angular.z` to
 forward-speed and yaw-rate metrics. The semantic roles allow future onboard mappings
 to final Ackermann command, VESC-derived speed, and measured IMU yaw rate without
-changing metric meaning. That onboard adapter is not implemented here.
+changing metric meaning. The optional analysis-only
+[signal contract](../oudtra_driver_bringup/config/shared_evaluation_signals.yaml)
+now maps onboard forward speed separately from gyro evidence. Existing combined
+simulation `vehicle_state` remains unchanged. Optional `autonomy_command` adds
+`autonomy_speed_command_oscillation` / `autonomy_steering_command_oscillation` from
+upstream `/drive` on both platforms. Existing final-command metrics still use
+`/drive` in sim and mux `/ackermann_cmd` onboard; they are different command-chain
+locations. Neither commanded steering nor servo-command echo is physical feedback.
+
+**Interpreting tracking and quality:** PF tracking describes where localization
+believes the car is relative to the static reference. Sim GT tracking describes
+where the simulator actually put the car. PF-versus-GT accuracy is a third,
+independent calculation. All use explicit evidence labels; static-reference
+avoidance can increase tracking deviation without a controller defect. Consistency
+retains its 0.50 s body-relative SE(2) calculation and 0.30 m / 0.25 rad event
+thresholds; the two-panel plot shows position and yaw disagreement. Agreement with
+odometry is correlated evidence, never proof of absolute accuracy.
+
+**Split response qualification:** `forward_speed` declares m/s, an observed odometry
+frame/child body frame, and body-forward semantics. `yaw_rate` is a separate Imu
+adapter requiring explicitly VERIFIED units, body axis/sign, bias and timestamp
+qualification, nonempty observed body frame, z axis, sign, and finite bias in rad/s.
+Explicit deg/s conversion is supported only with that qualification; values are
+never used to guess units. Physical derivative qualification remains separate.
+Unknown qualification produces UNAVAILABLE_DATA; malformed numeric/frame/time data
+produces ANALYSIS_ERROR. Raw gyro ranges, observed frames and receive ages remain
+available as diagnostics without claiming body-yaw units.
+
+The inspected VESC source (`f1tenth_system` 5a46e19, VESC 196404e) passes firmware
+gyro fields through unchanged, has a deg/s comment, stamps on driver receipt and
+leaves the Imu frame empty. The November 5 bags also have empty IMU frame IDs.
+Their units/mounting/sign/bias are **not qualified**: onboard yaw oscillation stays
+unavailable. ERPM-derived `/odom` forward speed is an estimate, not independent
+truth; `/odom.angular.z` is a bicycle-model result using commanded steering.
+No replacement with model yaw is made.
 
 Physical acceleration, jerk, and lateral acceleration remain secondary diagnostics.
 When qualified evidence exists, they use a centered quadratic fit
@@ -504,6 +560,223 @@ tracking has different evidence and receives no delta. Booleans/nested event sum
 are displayed without numerical differences. There is no composite score or causal
 sim-versus-onboard performance claim.
 
+### Matched reference-section comparison
+
+The optional offline `compare_matched_sections.py` extension produces a **matched-section
+exploratory comparison**, alongside an unchanged strict provenance-qualified comparison.
+Use the [operational reference](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#matched-reference-section-review)
+for commands. Original inputs/reports are preserved. Cropped bag copies use new explicit
+interval metadata and the existing analyzer, not duplicated metric mathematics.
+Parent-run completion is retained as provenance, never inherited as section completion.
+
+Matching uses public estimated map pose on both platforms and equal ordered, closed
+recorded raceline geometry/direction (absolute coordinate tolerance 1e-9 m). It projects
+onto segments, unwraps station continuously within bounded source gaps, and selects the
+first fully covered traversal from station 0 by default. Selection never inspects health.
+A partial initial traversal, subsequent laps and excluded samples are accounted for.
+Nearby branches unresolved by geometry/continuity, large station jumps, excessive reverse
+progress and pose gaps break coverage; no lap count is inferred across such breaks.
+Small non-increasing station observations are omitted only from the first-crossing
+station/time interpolation, counted explicitly, and retained in all interval metrics.
+
+**Coordinates remain distinct:** reference station `s` is distance along the static
+raceline. Existing smoothness driven progress remains cumulative raw-odometry trajectory
+distance. The common reference-station grid is only for spatial waveform display;
+headline metrics retain their original sample/time weighting and units. Different
+speeds/publication patterns therefore still affect sample-weighted distributions.
+The first 0.5 s cannot produce a complete in-section consistency window; plot gaps
+and per-signal grid coverage are explicit, never zero-filled.
+
+Default tolerances live in
+[matched_section_analysis.yaml](../oudtra_driver_bringup/config/matched_section_analysis.yaml):
+0.20 s maximum pose gap, 0.75 m projection distance, 0.03 m near-tie distance,
+0.50 m distinct-branch station separation, 4 m/s station-change bound plus 0.20 m
+slack, 0.15 m local reverse tolerance, 0.10 m station display spacing and 0.50 m
+maximum station interpolation gap. These qualify offline association, not vehicle
+capability or controller tuning. Matching rejects settings that are nonpositive or
+unknown; section length must be positive and no longer than the recorded loop.
+
+Exploratory metric subtraction requires AVAILABLE results, matching method/unit/time
+basis/evidence and at least 95% metric support; effective shared analysis settings
+must match. It is labelled `EXPLORATORY_UNVERIFIED_DEPLOYMENT`, never certified.
+Reported health fractions, differently sourced Gym/ERPM response, missing onboard GT,
+unqualified gyro and differing command stages receive observations only. The strict
+comparator still applies its original identity/evidence gates independently.
+
+The November 12 example matches one 11.279 m reference traversal, using Session 3's
+reviewed 7.2–64.8 s raw-bag interval and a fresh headless Tempo run. It preserves
+DEGRADED events in the selected interval; later INVALID events remain in the full-input
+scorecard. Simulator GT independently checks PF alignment after selection; it never
+selects the interval or feeds control/localization. This is neither physical section
+truth onboard nor a controlled simulator-fidelity result. The matching output includes
+section intervals, excluded/projection samples, coverage, recorded waveforms, metric
+classifications, cropped scorecards, strict comparison and plots. Local artifact names
+and paths are in the operational guide; datasets remain ignored and are not in a clone.
+
+The matched report starts its figure section with two spatial views:
+`plots/trajectory_xy.png` overlays simulator PF, onboard PF, the recorded raceline
+and simulator GT with equal map axes; `plots/trajectory_map.png` separates those
+traces into three panels over the captured simulation occupancy map. Dark pixels
+show mapped obstacles/boundaries, light gray unknown space and white mapped free
+space, interpreted with the map YAML thresholds, resolution and origin (including
+yaw). Map/image hashes are checked before rendering; absent/mismatched snapshots
+leave the map-free view and an explicit reason instead of silently using current
+assets. No translation/rotation is fitted to the traces. Start/end markers identify
+sample endpoints. Historical onboard map identity and its actual driven trajectory
+remain unverified: the onboard line is a localization estimate, not ground truth.
+Direction arrows follow the ordered raceline and each chronological PF/GT trace,
+not measured onboard velocity vectors.
+Use the map-free plot for detailed differences and the wider map panels for circuit
+context before interpreting the station-domain scorecards.
+
+`plots/pf_health_positions.png` adds the spatial quality context: full onboard
+window and matched traversal on the captured map, full-window receive time versus
+raceline station to separate repeated visits, and matched PF reference deviation
+colored by reported quality. GOOD is green/circle, DEGRADED amber/triangle, INVALID
+red/X, and UNKNOWN purple/plus (missing or stale health). INVALID markers are drawn
+last where laps overlap. The unstamped health stream is associated causally using
+the latest published state at each pose's bag-receive time, at most the existing
+`max_status_gap_sec` old; no future state or position interpolation is used. This
+is approximate association, not calibrated confidence or absolute accuracy. Legend
+counts are pose samples, not the scorecard's time-normalized health fractions.
+No position is assigned during missing-pose gaps. Exact associations and reasons
+for unavailable station projection are inspectable in `pf_health_positions.json`.
+
+`plots/pf_reference_deviation_positions.png` is a separate continuous-color view
+of **PF-believed reference-position deviation**, reusing the existing nearest-polyline
+position-error calculation. Full simulation and onboard scorecards show their entire
+evaluation window beside PF tracking; the comparison shows the matched intervals
+side by side. One distance scale [m] is shared across the four views of each pair.
+Sparse gray spokes connect estimated positions to their nearest reference points;
+black arrows show ordered raceline direction. Larger deviations are drawn last where
+laps overlap. Map obstacles/boundaries provide context, not measured wall clearance,
+a production safe corridor or independent onboard truth. The background requires the
+same hash-verified captured simulation map as the trajectory views. PF health uses
+categorical colors in its **separate** figure; neither view measures absolute onboard
+localization accuracy. `pf_reference_deviation_positions.json` preserves displayed
+samples and the common scale; metric tables/formulas are unchanged.
+
+The optional `explain_pf_health.py` addendum places the same full-window spatial
+quality view beside each onboard health timeline. It reads all nine recorded PF
+health fields and executes the pinned monitor's unchanged classification logic
+with an explicitly supplied **reference** onboard YAML. A scenario table separates
+scan-quality thresholds, hysteresis/recovery, the prolonged-DEGRADED watchdog,
+hard uncertainty/motion rejection and missing evidence. Counters are reconstructed;
+only published diagnostics/status are observed. Unknown prehistory and gaps require
+a new healthy anchor. Matching a status sequence establishes compatibility with
+that reference profile, **not** historical deployed parameter identity, calibrated
+confidence, independent localization failure or health-equivalent sim/onboard deltas.
+`pf_health_explanation.json` preserves inputs/hashes, thresholds, replay coverage and
+transition evidence; `plots/pf_health_trigger_evidence.png` shows the mechanism over
+time. The human explanation starts with state meanings (DEGRADED scan disagreement,
+INVALID prolonged-warning escalation, UNKNOWN missing evidence) before optional
+threshold/replay details. `plots/pf_health_failure_modes.png` separates instantaneous
+scan-check failures, improved evidence awaiting recovery, timeout-related INVALID
+episodes and missing health into four map/raceline panels. These are evidence and
+monitor-mechanism categories, not diagnosed physical failure causes; categories can
+overlap. Causal associations, counts and missing intervals are inspectable in
+`pf_health_failure_modes.json`. Missing-pose intervals receive no invented location.
+`plots/pf_spread_quality_map.png` uses **three aligned side-by-side maps**:
+particle spread alone (continuous meter scale), reported quality alone (categorical
+colors), and warning explanation alone (the existing reason colors). Identical map
+limits and pose samples support comparison without combining two visual encodings
+in one marker. The scalar spread is `sqrt(weighted covariance xx + yy)` from
+`/pf/health[4]`, not pose error, yaw spread or a calibrated confidence radius.
+The common spread scale is 0–0.25 m across sessions; UNKNOWN has no fresh value.
+`plots/pf_spread_quality_relationships.png` and `pf_spread_quality.json` preserve
+the existing distributions, qualified correlations and causal pairing. Constant/
+insufficient pairs remain unavailable; updates are autocorrelated and not causal
+or controlled comparison evidence.
+
+The matched-report renderer also adds `plots/raceline_gt_pf_overlay.png` to each
+full simulation report: black dashed reference, green simulator truth and blue
+dotted PF estimate, with equal axes and direction arrows. This separates actual
+simulated tracking from localization disagreement without fitting trajectories.
+`plots/heading_analysis.png` / `heading_analysis.json` in full runs and
+`plots/heading_comparison.png` / `heading_comparison.json` in matched comparisons
+reuse existing wrapped-heading/reference errors and gap-limited shortest-arc GT
+alignment. Degrees are a presentation conversion; scorecard values remain radians.
+Reference headings use the nearest unambiguous ordered-segment tangent; tied
+headings stay missing. Wrap crossings and evidence gaps are broken in plotted lines.
+PF/GT heading error is simulation-only localization evidence; PF/reference heading
+deviation is believed tracking on both platforms; GT/reference is actual simulated
+tracking. Reverse/avoidance behavior can increase reference deviation without
+localization failure. No onboard IMU heading/yaw-rate qualification is implied.
+Full-run tables read existing scorecards; station-domain comparisons are exploratory
+and retain all provenance/delta gates. Subsequent analyzer report regeneration keeps
+these optional presentation fragments; new heading/trajectory plots are produced by
+the maintained matched-comparison renderer from preserved inputs.
+Existing scorecard values remain unchanged. Commands are maintained in the
+[matched-section procedure](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#matched-reference-section-review).
+
+#### Particle spread and tracking distance are different
+
+Human reports label position tracking as **PF-estimated distance to raceline**
+(the shortest estimated-map-position distance to the static reference), and
+heading tracking as **heading difference from reference**. Existing JSON keys
+containing `deviation` keep their historical meaning and remain compatible.
+Neither quantity measures particle uncertainty or onboard truth error.
+
+**PF particle spread** is the recorded `/pf/health[4]` scalar,
+`sqrt(weighted var(x) + weighted var(y))`, in metres. It measures the cloud's
+internal XY dispersion; a tight but biased cloud can have large truth error.
+It is not a calibrated confidence radius, yaw uncertainty or a raceline distance.
+Do not derive it from the legacy incorrectly packed Odometry covariance.
+
+`evaluation_particle_spread.py` adds report-only full-window and matched-section
+median/P95/max tables, conditioned on the same-message reported quality, plus
+separate map casts and time/station views. `particle_spread.json` and
+`particle_spread_comparison.json` preserve the exact evidence. Statistics are
+health-message-sampled; map associations use the latest received health within
+0.5 s, without filling gaps. The comparison reuses the existing common station
+grid and first-crossing time mapping. No new certified difference is produced:
+historical health thresholds and deployed identity remain unverified. Missing
+spread is UNAVAILABLE_DATA, never zero. Spread/quality views use a shared
+0–0.25 m color scale (over-range values remain in statistics).
+
+#### Control-mode review and readable figures
+
+Full run reports now include **Control selection, PF quality and particle spread**.
+`evaluation_control_plots.py`, invoked by the maintained matched-comparison renderer,
+reads the configured `control_status`, `safety_status` and `localization_health`
+roles. In the current stack, `/drive_arbitration_v2/status` reports selected mode
+RACELINE/REACTIVE/STOP/WAITING and a reason; lower-safety status is a separate layer.
+Neither proves physical motion or onboard mux/actuator authority.
+
+`plots/control_mode_map.png`, `lower_safety_mode_map.png`,
+`control_pf_quality_map.png` and `particle_spread_map.png` are separate
+full-size views with identical PF positions/limits. Direction arrows follow the
+recorded reference. Diamonds mark located selected-mode changes, without inventing
+locations during pose gaps. The uncertainty map uses internal particle spread;
+tracking distance remains in the separate Tracking section. Neither is independent
+onboard truth error or measured wall clearance.
+
+`control_quality_timeline.png` separates selection, safety, PF quality and particle spread
+on a shared **bag receive-time** axis. A transient safety change gets an event
+marker, without stretching its duration. `control_mode_exposure.png` and the joint
+mode/quality table quantify recorded exposure, not exact physical controller dwell.
+The existing `max_status_gap_sec` limits causal holds; stale/missing states remain
+UNKNOWN. Initial acquisition/reconnection is not counted as an observed switch.
+`control_mode_analysis.json` preserves all source stamps, complete diagnostic
+reasons, located/unlocated changes, conditional particle spreads (with legacy
+tracking-distance fields retained) and both receive-time
+and source-stamped summaries. Asynchronous status overlap is not proof of a gate
+violation; logged reasons and controller-reported PF state are stronger evidence.
+
+The inspected arbiter permits DEGRADED PF through its PF gate, while INVALID or
+missing/stale health can prevent primary-chain selection when health is required.
+Planner/guard/lower-safety conditions and recovery/latching also affect selection.
+Conditional spread by mode does not establish cause, and current source does
+not identify historical deployed configurations. No new certified delta or headline
+metric is introduced.
+
+For readability, human reports prefer full-size one-quantity maps with legends
+outside the circuit. Separate `pf_particle_spread_map.png`, `pf_quality_only_map.png`
+and `pf_warning_reason_map.png` replace the crowded default spread overview;
+that overview remains an optional link. Heading comparisons use the wider
+`heading_orientation_comparison.png` and `heading_deviation_comparison.png`, while
+the previous four-panel overview is retained. Older PNGs remain local backups.
+
 ### 5.5 Onboard recording contract
 
 `config/onboard_localization_recording.yaml` is the explicit no-GT contract used by
@@ -524,16 +797,17 @@ that event matters.
 | Upstream autonomous command | `/drive` | Lower-safety/PnC output before teleop/lock mux selection; retained for debugging, not the shared final-command role. |
 | Safety / authority | `/reactive_control_v2/lower_safety_status`, `/drive_arbitration_v2/status` | Emergency state and selected autonomous controller mode. |
 | Forward vehicle speed | `/odom` `twist.linear.x` | Derived from measured VESC motor RPM by `vesc_to_odom`. |
-| Measured yaw rate | `/sensors/imu/raw` `angular_velocity.z` | VESC IMU measurement retained for the future split vehicle-state adapter. |
+| Raw gyro evidence | `/sensors/imu/raw` `angular_velocity.z` | Preserved separately; units/body axis/bias must be qualified before body-yaw metrics. |
 | Steering evidence | `/sensors/servo_position_command` | VESC driver's echo of commanded servo position; it is not physical steering feedback. |
 
-The analyzer currently expects forward speed and yaw rate in one `vehicle_state`
-adapter. The onboard contract deliberately does not map `/odom` model-derived
-`twist.angular.z` as measured yaw rate. It therefore preserves `/odom` and the real
-IMU separately; forward-speed/yaw-rate smoothness and stall detection remain
-`UNAVAILABLE_DATA` until the split adapter is implemented. Command smoothness,
-continuity, availability, consistency, estimated-pose tracking, and odometry-based
-pace remain supported. Absolute localization accuracy is `NOT_APPLICABLE` without GT.
+The analysis-only split contract supports ERPM-derived forward-speed oscillation
+when progress coverage permits. It deliberately leaves the present raw IMU
+unqualified, so body-yaw oscillation remains UNAVAILABLE_DATA. Stalls remain
+unavailable without qualified vehicle-speed and actual command-authority evidence;
+PnC arbitration mode alone does not establish the onboard mux source. Physical
+acceleration/jerk need their own qualified timing and signal support. Continuity,
+freshness, health distribution, consistency, public-PF tracking and upstream/final
+command diagnostics do not require GT. Absolute accuracy is NOT_APPLICABLE without GT.
 
 The structured recorder records platform/run/time, evaluation boundaries, main/PF/f1tenth_system
 Git revision and clean/dirty/unknown state, contract/tool hashes, preflight topic/type/

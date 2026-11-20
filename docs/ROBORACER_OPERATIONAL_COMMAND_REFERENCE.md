@@ -16,7 +16,7 @@ controlled integration experiment; production validity and normal safety remain 
 | **A1. Tempo interactive simulation — executable** | [Three persistent terminals](#13-a1--interactive-tempo-simulation-in-three-terminals) | Live PF/PnC and RViz; optional raw diagnostic bag | Human readiness/initialization/stop; no automatic evaluation recording |
 | **A2. Tempo timed simulation — executable** | [Existing recorded runner](#12-tempo-coffee-experimental-pfpnc-and-low-speed-comparison) | Bounded smoke, bag, metrics/report/plots | Automatic one-shot initialization/cleanup; experimental path unchanged |
 | **B. Tempo onboard — prepared controlled experiment** | [Four simple terminals](#5-onboard-stack-and-passive-measurement) | Human-controlled run and passive dataset | Assumes code/PF deployed and built; tracked map/raceline included; experimental geometry; physical operation remains human-controlled |
-| **C. Transfer, analysis and comparison — executable when datasets exist** | [B5 transfer](#b5-dataset-transfer-and-offline-analysis), [offline comparison](#10-compare-two-analyzed-runs) | Two scorecards and comparison report/JSON | Prefer A2 for the simulation analysis contract; no matched-section or truth equivalence claim |
+| **C. Transfer, analysis and comparison — executable when datasets exist** | [B5 transfer](#b5-dataset-transfer-and-offline-analysis), [offline comparison](#10-compare-two-analyzed-runs) | Two scorecards and comparison report/JSON | Prefer A2 for the simulation analysis contract; PF-aligned exploratory section review available; no certified truth-equivalence claim |
 
 **Other workflows:** [container access](#2-open-the-canonical-container) ·
 [perfect-localization reference](#3-perfect-localization-simulator-and-full-stack) ·
@@ -51,7 +51,9 @@ commands. [Environment](DEVELOPMENT_ENVIRONMENT.md) owns host/container facts,
 - [7. Closed-loop localization smoke check](#7-closed-loop-localization-smoke-check)
 - [8. Record and analyze an evaluation run](#8-record-and-analyze-an-evaluation-run)
 - [9. Open run deliverables](#9-open-run-deliverables)
+  - [Preserve originals when reanalyzing recorded runs](#preserve-originals-when-reanalyzing-recorded-runs)
 - [10. Compare two analyzed runs](#10-compare-two-analyzed-runs)
+  - [Matched reference-section review](#matched-reference-section-review)
 - [11. Offline raceline workbench](#11-offline-raceline-workbench)
   - [Open GUI and generate](#open-gui-and-generate)
   - [Reopen a session](#reopen-a-session)
@@ -73,6 +75,7 @@ commands. [Environment](DEVELOPMENT_ENVIRONMENT.md) owns host/container facts,
   - [A1 verification and troubleshooting](#a1-verification-and-troubleshooting)
   - [A1 stop and cleanup](#a1-stop-and-cleanup)
   - [A1 data outputs and optional diagnostic recording](#a1-data-outputs-and-optional-diagnostic-recording)
+
 <!-- table-of-contents:end -->
 
 ## 2. Open the canonical container
@@ -268,6 +271,26 @@ else retains onboard defaults; the experimental path is not relabelled validated
 Autonomy `/drive` passes through the mux to `/ackermann_cmd` toward the VESC.
 
 ### B4. Terminal 4 — simple passive logging
+
+> **Current status (2026-11-20):** low-speed closed-loop integration has been
+> demonstrated in simulation and a human-operated onboard session. The standardized
+> onboard acquisition-and-comparison procedure is **not yet established**. The raw
+> logger below is usable, and offline comparison is exploratory; the structured
+> alternative still needs real-car workflow qualification. See the
+> [milestone record](PROJECT_RECORD.md#2026-11-20--ai-assisted-workflow-and-low-speed-localization-integration-milestone).
+
+> **Recording choice for serious future comparisons — human-confirmed requirement (2026-11-12).**
+> The simple raw logger below is supported historical/diagnostic evidence (including
+> Session 3); B5 can import it, but deployed configuration identity can remain unknown.
+> Prefer a **simple structured, provenance-aware operator workflow** for future
+> comparison datasets: exact deployed source/effective configurations, map/raceline
+> hashes, speed profile, explicit evaluation start/end, sensor/command evidence,
+> clean finalization and transfer-ready metadata. The existing passive structured
+> alternative below is software/mock validated, **not hardware-qualified**. Improving
+> its operator usability and capture completeness is an explicit open requirement;
+> it is not implemented or deployed by this comparison task. Do not infer deployed
+> settings merely from the config paths passed to a recorder.
+
 
 Enter the container from another **onboard-host terminal**:
 
@@ -575,6 +598,54 @@ Open the human report and plots from the host after analysis:
 are the raw evidence and provenance. Run datasets are ignored by Git and should
 be archived or shared explicitly when needed.
 
+### Preserve originals when reanalyzing recorded runs
+
+**Goal:** enable the shared PF tracking, health, upstream command and split-response
+analysis on preserved inputs without overwriting earlier reports. No simulator,
+vehicle, ROS replay or live topics are required. In the **analysis container**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select oudtra_driver_bringup
+source install/local_setup.bash
+RUNS=/sim_ws/src/oudtra_driver_bringup/runs
+REVIEW_ID=$(date -u +%Y%m%dT%H%M%SZ)
+for NAME in tempo_onboard_session3_motion_20261105 tempo_onboard_session1_motion_20261105 tempo_onboard_session2_motion_20261105 tempo_sim_dependency_regression_20261107; do
+  ros2 run oudtra_driver_bringup reanalyze_localization_run.py "$RUNS/$NAME" \
+    --output-dir "$RUNS/${NAME}_shared_metrics_$REVIEW_ID"
+done
+SIM_RUN="$RUNS/tempo_sim_dependency_regression_20261107_shared_metrics_$REVIEW_ID"
+ONBOARD_RUN="$RUNS/tempo_onboard_session3_motion_20261105_shared_metrics_$REVIEW_ID"
+COMPARISON_DIR="$RUNS/tempo_shared_metrics_comparison_$REVIEW_ID"
+ros2 run oudtra_driver_bringup compare_localization_runs.py \
+  "$SIM_RUN" "$ONBOARD_RUN" --output-dir "$COMPARISON_DIR"
+```
+
+The tool copies `rosbag/`, config snapshots when present, and metadata into a new
+self-contained directory; an existing output is rejected. It preserves unknown
+deployment identity, stores raw-file hashes and the analysis signal contract, then
+writes `report.md`, `metrics.json` and `plots/`. It does not change recording or
+launch behavior. For one run, supply its actual source directory instead of the
+loop. A failed analysis leaves its new directory for diagnosis; select a new output
+name after correction. Ordinary `analyze_localization_run.py NEW_RUN` regenerates
+that copy deterministically. Exit 0 means analysis PASS, not driving qualification.
+
+For the completed 2026-11-11 review, open on the **host**:
+
+```text
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/tempo_shared_metrics_onboard_session3_motion_20261105_reanalyzed_20261111/report.md
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/tempo_shared_metrics_sim_dependency_regression_20261107_reanalyzed_20261111/report.md
+/home/mzhou/f1tenth_dev/oudtra_driver_bringup/runs/tempo_shared_metrics_sim_vs_onboard_session3_review_20261111/report.md
+```
+
+Change `session3` to `session1` or `session2` for the other onboard reports.
+Each report links its figures. Keep complete original and new directories for
+transfer/archive. Session 2 retains genuine evidence gaps; IMU qualification and
+historical deployment identity remain unresolved. Do not patch metadata to unlock
+deltas. Processing these bags requires only standard recorded role types; raw
+VESC custom telemetry is preserved but is not required by the current analyzer.
+
 ## 10. Compare two analyzed runs
 
 **Goal:** inspect simulation and onboard results side by side, offline.
@@ -618,7 +689,7 @@ identity will suppress deltas. Do not edit metadata to manufacture comparability
 | --- | --- |
 | Availability, continuity, command smoothness | Potentially common when method, evidence, settings, timing and coverage agree; inspect row reasons |
 | Absolute position/yaw accuracy | Simulation GT only; onboard without independent GT is NOT_APPLICABLE, never zero |
-| Tracking / pace | Sim GT and onboard estimated-pose evidence differ; side-by-side observations are not truth-equivalent deltas |
+| Tracking / pace | New PF tracking uses estimated map pose on both platforms. Legacy tracking/pace retain platform-specific GT/proxy evidence. Matching metric names do not establish comparable deployment identity |
 | Forward-speed / yaw-rate response | Qualified adapters required; measured onboard IMU yaw-rate support remains incomplete |
 | Robustness | Collision absence needs qualified evidence; counts depend on observation coverage and interval |
 
@@ -628,6 +699,128 @@ malformed data may yield UNAVAILABLE_DATA or ANALYSIS_ERROR. Analysis PASS estab
 evidence processing, not successful driving. The pipeline has no matched-section
 alignment, automatic hardware qualification or causal platform score. See the
 [formal comparison contract](LOCALIZATION_SIMULATION.md#54-compare-completed-runs).
+
+### Matched reference-section review
+
+**Goal:** inspect the same PF-aligned reference traversal in a recorded simulation
+and a preserved onboard session. This produces **exploratory differences**, separately from the strict
+certified comparator. No vehicle, simulator or replay needs to be running for analysis.
+For a new source simulation use A2 headless (omit `--with-rviz`), with the explicit
+Tempo assets/speed profile; preserve the full recording. The completed example below
+uses the fresh 30 s headless run from November 12.
+
+In the **analysis container**:
+
+```bash
+source /opt/ros/foxy/setup.bash
+cd /sim_ws
+colcon build --packages-select oudtra_driver_bringup
+source install/local_setup.bash
+RUNS=/sim_ws/src/oudtra_driver_bringup/runs
+SIM_RUN="$RUNS/tempo_matched_section_headless_pf_pnc_20261112_analysis"
+ONBOARD_RUN="$RUNS/tempo_shared_metrics_onboard_session3_motion_20261105_reanalyzed_20261111"
+MATCHED_DIR="$RUNS/tempo_session3_vs_fresh_sim_reference_review_$(date -u +%Y%m%dT%H%M%SZ)"
+ros2 run oudtra_driver_bringup compare_matched_sections.py \
+  "$SIM_RUN" "$ONBOARD_RUN" --output-dir "$MATCHED_DIR"
+```
+
+Default: first complete continuous reference traversal on each input, starting at
+recorded station 0, with no health-based selection. `--section-start-m` and
+`--section-length-m` deliberately select a different section; `--matching-config`
+changes documented **analysis-only** tolerances. Existing output directories are
+rejected. Missing/ambiguous coverage fails clearly; do not weaken gates to obtain a
+number. `MATCHED SECTION EXPLORATORY PASS` means processing succeeded, not simulator
+fidelity, equal deployed settings or acceptable driving.
+
+Open `MATCHED_DIR/report.md`, `comparison.json`, `station_signals.json`, `plots/`,
+`sim_section/report.md`, `onboard_section/report.md`, and
+`strict_comparison/report.md`. Start with `plots/trajectory_xy.png` (raceline/PF/GT overlay) and
+`plots/trajectory_map.png` (three panels with circuit-map context). The background
+is the captured simulation map; it does not establish historical onboard map identity.
+`plots/pf_health_positions.png` adds GOOD/DEGRADED/INVALID/UNKNOWN markers to full
+onboard and matched positions, with a time/station view for repeated laps and gaps.
+The comparison renderer also updates the full source reports with
+`plots/heading_analysis.png` and simulation-only `plots/raceline_gt_pf_overlay.png`.
+Open `MATCHED_DIR/plots/heading_comparison.png` for matched heading traces and its
+report's **Heading comparison** subsection for definitions and links to each full
+run. PF/GT heading error measures simulator localization accuracy; PF/reference
+heading deviation measures believed tracking, including possible avoidance/reverse.
+Onboard has no independent truth. All heading tables reuse existing statistics,
+converted to degrees; no new certified deltas are introduced.
+
+For controller behavior, follow the comparison report's **Full-run control mode,
+PF quality and tracking review** links. Each source report has a shared-time
+`plots/control_quality_timeline.png`, separate full-size controller/safety/quality/
+deviation maps, mode exposure bars and a transition table quoting recorded reasons.
+`control_mode_analysis.json` preserves exact observations and timestamps. These
+full-window views retain mode changes outside the matched traversal. Selection is
+upstream of lower safety and onboard mux authority; receive-time exposure is not
+exact actuator dwell, and UNKNOWN is missing evidence.
+
+The full-size spread maps and the separate heading-orientation / heading-deviation
+figures are now the report defaults. Optional overview links retain the combined
+views without forcing small legends in Markdown preview.
+
+For spatial tracking interpretation, open
+`plots/pf_reference_deviation_positions.png`: matched simulation/onboard PF poses
+colored by distance to the raceline, with circuit context, direction arrows and a
+shared meter scale. Each full source report also has its own complete-window view
+beside **PF-estimated raceline tracking**. Gray spokes show nearest-reference
+projections. These are estimated tracking deviations, not wall clearance or absolute
+localization errors. Keep this continuous-color plot distinct from categorical PF
+health colors.
+
+To explain full-window onboard PF alarms using the inspected monitor and reference
+settings, run this optional **offline** addendum after comparison generation. It
+never changes deployed PF settings or qualifies unknown historical configuration:
+
+```bash
+ros2 run oudtra_driver_bringup explain_pf_health.py "$ONBOARD_RUN" \
+  --pf-source /sim_ws/src/particle_filter/particle_filter/particle_filter.py \
+  --health-profile /sim_ws/src/particle_filter/config/localize.yaml \
+  --comparison-dir "$MATCHED_DIR"
+```
+
+Open `ONBOARD_RUN/report.md` → **PF health over the evaluation interval** for the
+spatial quality plot, plain-language GOOD/DEGRADED/INVALID/UNKNOWN explanation,
+scenario table and recorded-diagnostic/replayed-counter figure. The separate
+`plots/pf_health_failure_modes.png` shows those explanations on four map/raceline
+panels; `pf_health_failure_modes.json` retains the exact causal associations.
+`pf_health_explanation.json` retains the diagnostic/replay evidence.
+The following **Particle spread, quality and reasons side by side**
+subsection adds `plots/pf_spread_quality_map.png` and
+`plots/pf_spread_quality_relationships.png`: three aligned maps separately show spread,
+quality and warning reason, followed by distributions and qualified correlation checks.
+Read `pf_spread_quality.json` for exact paired evidence; spread is not true pose error. Its reference
+profile replay does not establish physical pose error or deployed identity; missing
+or incompatible evidence fails clearly instead of being explained as a known cause.
+
+The completed local result is
+`tempo_session3_vs_headless_sim_matched_section_20261112/` under `RUNS`.
+On the host replace `/sim_ws/src/` with `/home/mzhou/f1tenth_dev/`. Preserve the full
+original inputs, runtime parameter evidence, cropped copies and comparison together.
+**Three preserved report groups (local datasets):**
+
+| Onboard session | Matched report directory under `RUNS` | Full onboard evidence |
+| --- | --- | --- |
+| 1 | `tempo_session1_vs_headless_sim_matched_section_20261113/report.md` | `full_onboard_session1/report.md` within that group |
+| 2 | `tempo_session2_vs_headless_sim_matched_section_20261113/report.md` | `full_onboard_session2/report.md` within that group |
+| 3 | `tempo_session3_vs_headless_sim_matched_section_20261112/report.md` | `tempo_shared_metrics_onboard_session3_motion_20261105_reanalyzed_20261111/report.md` under `RUNS` |
+
+Sessions 1/2 each use a separate fresh 30 s headless simulation, named
+`tempo_sessionN_repeat_headless_pf_pnc_20261113_analysis` (N = 1 or 2). Use that
+path as `SIM_RUN` and the corresponding
+`tempo_shared_metrics_onboard_sessionN_motion_20261105_reanalyzed_20261111` as
+`ONBOARD_RUN` in the command above. All groups include direction arrows in their
+XY/map plots and preserve prior figures under `plots/pre_direction_arrows/`.
+Session 2's complete matched traversal is covered, while its later full-window gap
+remains visible in the full onboard scorecard. Detailed local handoff/index entries
+are under ignored `temporary_reports/`; they are not supplied by a Git clone.
+
+Reference station is separate from raw-odometry driven
+progress; headline smoothness definitions are unchanged. Historical onboard
+configuration/IMU uncertainty remains, and certified deltas stay gated. See
+[matching method and limits](LOCALIZATION_SIMULATION.md#matched-reference-section-comparison).
 
 ## 11. Offline raceline workbench
 

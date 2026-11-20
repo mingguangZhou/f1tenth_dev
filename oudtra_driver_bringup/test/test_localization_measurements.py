@@ -166,7 +166,10 @@ def test_real_cdr_run_metrics_and_reanalysis_are_deterministic(tmp_path):
     assert 'Each panel shows only the oscillation residual' in report
     A.analyze(root)
     assert first == [(root / name).read_bytes() for name in ('metrics.json', 'report.md')]
-    assert len(list((root / 'plots').glob('*.png'))) == 5
+    assert {p.name for p in (root / 'plots').glob('*.png')} == {
+        'trajectory_xy.png', 'position_error.png', 'reference_trajectory.png',
+        'pf_reference_trajectory.png', 'localization_health.png',
+        'pose_increment_disagreement.png', 'smoothness_oscillations.png'}
     assert json.loads(first[0])['analysis_status'] == 'PASS'
 
 

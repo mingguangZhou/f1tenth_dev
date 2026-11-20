@@ -1,0 +1,32 @@
+# Analysis-only optional adapters for already recorded evidence. No ROS publishers
+# or recorder/runtime behavior is changed. Unknown gyro semantics fail closed.
+schema_version: 1
+platforms:
+  sim:
+    autonomy_command:
+      topic: /drive
+      type: ackermann_msgs/msg/AckermannDriveStamped
+  onboard:
+    autonomy_command:
+      topic: /drive
+      type: ackermann_msgs/msg/AckermannDriveStamped
+    forward_speed:
+      topic: /odom
+      type: nav_msgs/msg/Odometry
+      frame: odom
+      body_frame: base_link
+      velocity_frame: body
+      unit: m/s
+      evidence: vesc_odometry_body_forward_speed
+      physical_time: false
+    yaw_rate:
+      topic: /sensors/imu/raw
+      type: sensor_msgs/msg/Imu
+      unit: UNKNOWN
+      velocity_frame: UNKNOWN
+      evidence: unqualified_imu_yaw_rate
+      qualification:
+        units: UNKNOWN
+        body_axis: UNKNOWN
+        bias: UNKNOWN
+        timestamp: UNKNOWN

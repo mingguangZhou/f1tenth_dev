@@ -21,11 +21,32 @@ not authorization to choose the next project objective.
   - [2026-10-19 — prompt-free interactive Tempo startup](#2026-10-19--prompt-free-interactive-tempo-startup)
   - [2026-10-28 — portable curated Tempo deployment selection](#2026-10-28--portable-curated-tempo-deployment-selection)
   - [2026-11-07 — onboard bags imported and assessed offline](#2026-11-07--onboard-bags-imported-and-assessed-offline)
+  - [2026-11-11 — symmetric shared metrics and preserved-data reanalysis](#2026-11-11--symmetric-shared-metrics-and-preserved-data-reanalysis)
+  - [2026-11-12 — first PF-aligned reference-section comparison](#2026-11-12--first-pf-aligned-reference-section-comparison)
+  - [2026-11-13 — three-session repeat and direction-aware reports](#2026-11-13--three-session-repeat-and-direction-aware-reports)
+  - [2026-11-15 — offline control-transition review and readable reports](#2026-11-15--offline-control-transition-review-and-readable-reports)
+  - [2026-11-20 — AI-assisted workflow and low-speed localization integration milestone](#2026-11-20--ai-assisted-workflow-and-low-speed-localization-integration-milestone)
 - [3. Engineering decisions and implementation rationale](#3-engineering-decisions-and-implementation-rationale)
 - [4. Open issues and validation gaps](#4-open-issues-and-validation-gaps)
+
 <!-- table-of-contents:end -->
 
 ## 1. Current engineering status
+
+**Human-confirmed milestone (2026-11-20):** the AI-cooperative R&D environment and
+human-led engineering workflow are established. PF-localization/PnC startup and
+integration defects have been debugged and corrected, and the combined stack has
+demonstrated bounded low-speed simulation and a human-operated Tempo onboard
+session. Three preserved onboard recordings and repeated simulations support
+offline engineering review; this is integration evidence, not a general accuracy,
+racing-performance or safety certification.
+
+**Still to be established:** a simple, standardized, hardware-validated onboard
+data-recording and sim/onboard comparison procedure. The shared analyzer and
+PF-aligned exploratory comparison already work, but historical deployment identity,
+measurement qualification and physical section equivalence remain incomplete.
+The structured recorder has software/mock evidence, not established real-car
+qualification. See the [milestone and remaining boundary](#2026-11-20--ai-assisted-workflow-and-low-speed-localization-integration-milestone).
 
 The engineer reports a successful physical Tempo integration session on 2026-11-05.
 Three delivered raw bags pass SQLite/core-analysis checks; the selected 57.6 s
@@ -42,12 +63,13 @@ The offline workbench records quantified
 Tempo search failure, supports deliberate experimental selection, and never labels
 that export production-valid. IFAC V2 selection passed a fresh bounded simulation.
 
-**Assessment:** 2026-11-11, `mingguangZhou/f1tenth_dev`, branch
+**Assessment:** 2026-11-20 (milestone review from HEAD `c16aec2`), `mingguangZhou/f1tenth_dev`, branch
 `mingguang_localization_robustness_ai_workspace`. Published deployment:
 [891b7c9](https://github.com/mingguangZhou/f1tenth_dev/commit/891b7c9560e72124218b32ec922adf8441c18a89).
 Dependency fix `7c04f29` removes only the unconditional simulator dependency.
 The engineer authorized publishing that fix and the onboard import/analysis/guide
-update on 2026-11-11; this assessment is recorded with the latter update.
+update on 2026-11-11. The subsequent analysis/reporting changes are recorded by
+the 2026-11-20 milestone commit.
 The engineer authorized committing/publishing the explicit-map, interactive
 workflow and curated-track changes on 2026-11-04. All 185 relevant regression
 tests passed again in Foxy (67.11 s); no fresh driving/hardware test was run.
@@ -69,12 +91,23 @@ race-day usability validation was performed by Codex; the engineer confirms the
 previously working onboard platform as the reused baseline.
 Earlier historical evidence retains its original qualification.
 
-**Human-confirmed current activity:** assess the three delivered onboard recordings,
-select suitable evidence for the existing analysis/comparison pipeline, and simplify
-the transfer-to-analysis instructions. The packaging fix remains a dedicated commit; the initial data comparison and
-its reusable tooling/documentation form a separate publication update. Tempo experimental 008 is human-authorized for
-controlled integration, not production qualification. Physical operation remains
-human-controlled; unresolved issues below do not authorize new priorities.
+**Human-confirmed activity (2026-11-13; historical context):** repeat the same simulation/offline
+onboard/comparison workflow for recorded Sessions 1/2, retain the existing Session 3
+group, and provide a clear three-group engineering summary. All three comparisons
+remain PF-aligned exploratory evidence; historical onboard deployment identity is
+unknown. No physical operation or tuning is authorized. Starting HEAD remains c16aec2
+plus preserved uncommitted analysis/report work. Tempo 008 remains experimental.
+
+**Human-confirmed activity (2026-11-15; historical context):** distinguish internal PF spread
+from estimated raceline tracking distance throughout the three report groups,
+explain one PF uncertainty update with numbers/figures, and inspect a temporary
+simulator command-clipping experiment. No new onboard operation or maintained
+PF/PnC/plant tuning is part of this task.
+
+**Current human-confirmed activity (2026-11-20):** record this milestone and publish
+the accumulated engineering/evaluation work. Standardized onboard measurement and
+sim/onboard comparison remain an explicit open requirement, not a completed
+capability or authorization to implement a new workflow in this publication task.
 
 | Capability | Demonstrated evidence and boundary |
 | --- | --- |
@@ -85,7 +118,7 @@ human-controlled; unresolved issues below do not authorize new priorities.
 | PF initialization / closed-loop integration | Readiness, one-shot pose and health gating implemented; historical short IFAC motion corroborated. No reset acknowledgement or accuracy guarantee. |
 | Recording / shared offline scorecard | Simulation and synthetic no-GT artifacts inspected; regression success **Reported**. Synthetic onboard fixtures are not hardware results or sim/onboard equivalence. |
 | Onboard hardware baseline | Previously working platform **Human-confirmed**, with source/config inspection at `f1tenth_system` `5a46e19`. The engineer subsequently reports a smooth Tempo session; raw bag evidence was analyzed offline on 2026-11-07. Deployed revision/map/config hashes were not recorded; no new commissioning or structured-recorder qualification claim. |
-| Passive onboard recorder | Passivity verified in source; **Build/test and mock/runtime validation Reported**. Hardware validation not established; measured speed/IMU adapter remains missing. |
+| Passive onboard recorder | Passivity verified in source; **Build/test and mock/runtime validation Reported**. Structured-recorder hardware validation not established; separate ERPM speed analysis is implemented, while body-IMU yaw remains unqualified. |
 | SLAM / range libraries | Dependencies and launch/config support implemented; successful current mapping experiment **Unknown**. |
 
 **Evidence terms:** Verified means inspected code, commits, contracts or artifact
@@ -269,6 +302,163 @@ now works from an SSH inbox visible in the canonical container. At this 2026-11-
 dependency commit was local. Publication of both was explicitly authorized on
 2026-11-11. This does not change the original validation or comparison limits.
 
+### 2026-11-11 — symmetric shared metrics and preserved-data reanalysis
+
+**Implemented and build/test validated (uncommitted at that assessment; recorded
+by the 2026-11-20 milestone):** public-PF raceline position/
+heading deviation on both platforms, interval-normalized PF health quality,
+separate upstream/final command diagnostics, and split forward-speed/gyro adapters.
+116 bringup tests pass in Foxy; installed reanalysis CLI and targeted build pass.
+All three November 5 onboard bags and the November 7 simulation bag were reanalyzed
+offline in separate directories, deterministically including plots. All existing
+simulation numerical values remain unchanged; onboard forward-speed oscillation
+becomes available in Sessions 1/3. Session 2 retains an odometry gap. No new run was
+performed. Source baseline is [c16aec2](https://github.com/mingguangZhou/f1tenth_dev/commit/c16aec289e574c8f7d3e21b804959595666da6ba).
+
+**Limits:** empty recorded IMU frame, ambiguous driver gyro units and unqualified
+mounting/bias block body-yaw metrics. Published reference geometry matches the
+curated path, but deployed map/config/source hashes remain unknown; strict comparison
+deltas stay suppressed. No absolute onboard accuracy, completed-task or collision-free
+claim is added. See [metric definitions](LOCALIZATION_SIMULATION.md#53-scorecard-definitions),
+[local artifact discovery](LOCALIZATION_SIMULATION.md#4-preserved-run-artifacts-and-deliverables)
+and [offline reanalysis commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#preserve-originals-when-reanalyzing-recorded-runs).
+
+### 2026-11-12 — first PF-aligned reference-section comparison
+
+**Simulation/runtime and offline evidence:** a fresh 30 s headless A2 Tempo run passes
+smoke/recording with clean stack exits; runtime queries confirm 0.5–2.0 m/s demand,
+2.0 m/s final cap, PF-health gating and disabled simulator-GT reverse gate. No runtime
+algorithm, tuning, physics or track asset changed. Existing Session 3 evidence comes
+from the human-operated simple B4 logger, with reviewed raw offsets 7.2–64.8 s.
+
+The earliest complete continuous 11.279 m recorded reference traversal is selected
+on each platform using public PF pose, not health. Section elapsed times are 10.740 s
+sim / 11.339 s onboard. Onboard PF-believed position-deviation P95 is 0.111 m greater;
+upstream steering oscillation RMS is 0.00788 rad greater. These are **exploratory**
+observations; strict certified deltas remain suppressed by unknown deployed identity.
+The selected onboard traversal includes DEGRADED health; full-input INVALID events
+remain recorded. Simulator GT cross-check shows PF/reference-station disagreement
+P95 0.0622 m; this provides no independent onboard truth. Original metric mathematics,
+raw-odometry smoothness coordinate, inputs and previous scorecards are preserved.
+
+Software details and local artifact discovery belong to
+[matching method](LOCALIZATION_SIMULATION.md#matched-reference-section-comparison) and
+[operational commands](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#matched-reference-section-review).
+Build/test closure on 2026-11-13: targeted Foxy build and all 128 bringup tests pass;
+repeated comparison JSON, Markdown and plots are deterministic.
+Report 018 was reordered for readability with historical November 11 results unchanged;
+new results are separate. Starting source is c16aec2 plus the preserved uncommitted
+shared-metric work; this milestone does not imply publication or hardware qualification.
+
+### 2026-11-13 — three-session repeat and direction-aware reports
+
+Two independent 30 s headless Tempo runs pass smoke/recording/full analysis, paired
+with fresh offline full-window reviews of November 5 onboard Sessions 1/2. Both first
+complete reference-traversal comparisons pass with unchanged matching rules; all 16
+common captured simulation config hashes match the prior Session 3 run. Source tuning,
+physics, map/reference assets, PF-health gating and GT isolation are unchanged.
+All three 11.279 m traversals take approximately 10.74 s in simulation versus
+11.24–11.34 s onboard. Onboard PF-believed position P95 tails are larger while
+heading-to-reference P95 is smaller; neither is independent onboard accuracy.
+
+**Build/test and recorded-simulation/offline validated:** 133 bringup tests pass;
+report/plot regeneration is deterministic. Session 2's first traversal is covered,
+but its later full-window gap remains explicit. Certified deltas stay suppressed
+for unknown historical deployment identity. Direction arrows now annotate the
+raceline and every matched PF/GT trajectory, with earlier figures backed up;
+Session 3 numeric/raw evidence is preserved. Session-specific labels replace the
+previous hardcoded report label. A missed optional post-run probe is disclosed;
+actual settings evidence comes from the runner's successful live queries.
+See [report group discovery](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#matched-reference-section-review)
+and [matching/plot evidence](LOCALIZATION_SIMULATION.md#matched-reference-section-comparison).
+No hardware operation, commit or push is implied by these results.
+
+Offline PF-health follow-up on the same preserved inputs reproduces all nine
+reviewed INVALID entries through the pinned onboard-reference monitor's 50-cycle
+DEGRADED watchdog. All anchored reviewed statuses match (1090/1090, 1062/1062,
+1388/1388); scan-quality criteria fluctuate while spread/per-update lateral/yaw
+limits remain satisfied. This is a reference-profile mechanism replay, not proof
+of the unknown deployed configuration or independently measured localization loss.
+Spatial health views and scenario explanations now sit in each full onboard report.
+Separate shared-scale PF/reference deviation maps cover full sim/onboard windows
+and matched traversals; they show believed tracking, not wall clearance or accuracy;
+raw inputs, numerical scorecards and certified-delta restrictions are preserved.
+
+A further offline spread/quality check finds all recorded XY particle spread below
+the reference 0.25 m GOOD bound, with higher median spread during GOOD than during
+DEGRADED/INVALID in each session. This supports distinguishing internal concentration
+from multi-check warning state, not absolute onboard accuracy. Overlays and descriptive
+correlations preserve missing evidence and do not change scorecard or comparability gates.
+
+### 2026-11-15 — offline control-transition review and readable reports
+
+**Recorded evidence / build-test validated; no new driving:** the preserved full
+onboard windows show 8 / 6 / 6 selected-controller changes. Nine entries to REACTIVE
+explicitly record `PF_INVALID`; Session 1 also records one planner-blocked entry.
+The three preserved simulation evaluations remain RACELINE throughout. Lower-safety
+state is independent; Session 2 contains a single FALLBACK_FTG report, whose physical
+dwell is not established by bag arrival spacing. Full-size maps, shared-time plots,
+recorded exposure and transition reasons now separate selection, safety, PF quality
+and believed reference deviation. Missing evidence remains UNKNOWN; asynchronous
+overlap is not a gate-violation claim. Source/config identity, onboard truth and mux
+execution limitations remain unchanged. See the
+[control-mode evidence contract](LOCALIZATION_SIMULATION.md#control-mode-review-and-readable-figures).
+
+Additional read-only regional analysis finds onboard positive steering requests up
+to 25° repeatedly clipped to a servo-command echo of 0.192. The inspected hardware
+reference calibration makes this equivalent to 16.63°, not a measured wheel angle.
+All 13 regional deviation peaks report PF GOOD; most regional poses carry a
+recovery trajectory. Command clipping/recovery is a supported contributing
+explanation, not proof of absolute localization error or physical understeer.
+
+Follow-up uncertainty reports separate **PF-estimated distance to raceline** from
+**PF particle spread**; the three historical onboard spread medians are about
+0.075 m, with P95 0.111–0.113 m despite non-GOOD scan/health periods. Original
+scorecards/intervals remain unchanged. A temporary current-simulator command-stage
+experiment passes the 30 s identity condition; applying the inspected asymmetric
+command clamp fails the motion criterion after 13.53 s with a lower-safety emergency
+stop. Recording, offline analysis and stack shutdown succeed. This supports a
+possible command-envelope contribution, not a calibrated hardware reproduction or
+certified platform difference. PF/PnC tuning, plant physics and maintained runtime
+profiles are unchanged. No physical vehicle was operated.
+
+### 2026-11-20 — AI-assisted workflow and low-speed localization integration milestone
+
+**Human-confirmed milestone; bounded simulation/runtime and recorded onboard
+evidence:** the engineer confirms the AI-cooperative working environment, human-led
+workflow and PF/PnC integration progress. Earlier startup fixes address frame,
+clock/TF and readiness contracts; explicit map/reference selection and platform
+adapters make the same architecture operable in simulation and on the car. Baselines
+remain traceable through [8db4f22](https://github.com/mingguangZhou/f1tenth_dev/commit/8db4f22),
+[891b7c9](https://github.com/mingguangZhou/f1tenth_dev/commit/891b7c9),
+[c16aec2](https://github.com/mingguangZhou/f1tenth_dev/commit/c16aec2), and pinned PF
+[0a8e52e](https://github.com/mingguangZhou/particle_filter/commit/0a8e52e).
+
+This milestone commit records shared PF-estimated tracking, interval-normalized
+health, split response evidence, upstream/final command separation, deterministic
+reanalysis, exploratory matched-reference comparisons and readable uncertainty/
+control diagnostics. Three November 5 onboard sessions and November 12/13 simulation
+records were reviewed; the November 15 identity-command simulation completed, while
+the temporary clipped-command run stopped under safety and failed its motion check.
+That failed experiment remains evidence, not a successful benchmark or a proven
+onboard root cause. Maintained PF/PnC tuning and plant dynamics are unchanged.
+
+**Standardization remains open:** structured provenance capture, qualified onboard
+signals, explicit evaluation intervals, repeatable acquisition and a hardware-verified
+operator workflow still need to be established together. Existing passive-recorder
+software/mock tests and exploratory PF-based alignment do not complete that work;
+unknown historical identities continue to suppress certified deltas. No onboard
+absolute truth or physical sim/car equivalence is claimed. See
+[environment](DEVELOPMENT_ENVIRONMENT.md), [engineering workflow](ENGINEERING_WORKFLOW.md),
+[shared evidence contract](LOCALIZATION_SIMULATION.md#51-purpose-and-evidence-model)
+and [recording boundary](ROBORACER_OPERATIONAL_COMMAND_REFERENCE.md#b4-terminal-4--simple-passive-logging).
+**Publication checks (2026-11-20):** the targeted Foxy bringup build passes
+(`colcon build --packages-select oudtra_driver_bringup`, 0.38 s), and the sourced
+bringup suite passes **167 tests** (35.06 s, `python3 -m pytest -q test`). Local
+link/anchor and whitespace checks pass. No new simulation or physical run was
+performed for publication; earlier runtime evidence retains its dates and limits.
+Local detailed reports and datasets remain ignored.
+
 ## 3. Engineering decisions and implementation rationale
 
 Dates below identify implementing commits, not inferred approval dates. Unless
@@ -286,7 +476,7 @@ limited to inspected code/docs; no undocumented rejected alternative is invented
 | **DEC-005** · 2026-09-18 · Implemented technical choice | Observable readiness, one-shot map `/initialpose`, subsequent health/pose/TF and bounded motion/stop ([8db4f22](https://github.com/mingguangZhou/f1tenth_dev/commit/8db4f22), PF [b11aebe](https://github.com/mingguangZhou/particle_filter/commit/b11aebe)). Map-frame safety odometry, wall time and bounded asynchronous TF wait address reported startup contracts. No repeated truth input, latest-TF shortcut or TF redesign; no reset acknowledgement or accuracy guarantee. Fixes tested together. See [runner](../oudtra_driver_bringup/scripts/run_localization_smoke.py). |
 | **DEC-006** · 2026-09-18/20 · Implemented technical choice | Shared offline semantic contract, optional GT and four applicability states ([297673b](https://github.com/mingguangZhou/f1tenth_dev/commit/297673b), [85702a6](https://github.com/mingguangZhou/f1tenth_dev/commit/85702a6)). Odometry consistency is correlated evidence, not truth; unavailable is not zero. SQLite/CDR scope is explicit. Comparison requires compatible identity/definitions/units/evidence/coverage/timing; no composite score. See [shared contract](LOCALIZATION_SIMULATION.md#5-shared-simulationonboard-evaluation). |
 | **DEC-007** · 2026-09-23 · Implemented technical choice | Headline smoothness uses local-trend residuals in raw-odometry driven-distance coordinates ([c12c4ec](https://github.com/mingguangZhou/f1tenth_dev/commit/c12c4ec)), superseding headline steering-rate/physical derivatives. Irregular sampling supported, intended maneuvers separated from local wiggle; stationary chatter omitted. Unqualified physical derivatives remain secondary/unavailable. See [analysis settings](../oudtra_driver_bringup/config/evaluation_analysis.yaml). |
-| **DEC-008** · 2026-09-23 · Implemented technical choice | Passive Terminal 4 recorder; mux `/ackermann_cmd` is actuator-path command role, `/drive` debug evidence ([6de72e7](https://github.com/mingguangZhou/f1tenth_dev/commit/6de72e7)). No stack launch, commands, pose reset or parameter changes. Preserve VESC speed/measured IMU separately; servo-command echo is not feedback. Split adapter and live preflight remain open. See [recorder](../oudtra_driver_bringup/scripts/record_onboard_localization.py) and [contract](LOCALIZATION_SIMULATION.md#55-onboard-recording-contract). |
+| **DEC-008** · 2026-09-23 · Implemented technical choice | Passive Terminal 4 recorder; mux `/ackermann_cmd` is actuator-path command role, `/drive` debug evidence ([6de72e7](https://github.com/mingguangZhou/f1tenth_dev/commit/6de72e7)). No stack launch, commands, pose reset or parameter changes. Preserve VESC speed/measured IMU separately; servo-command echo is not feedback. Split forward-speed analysis was added on 2026-11-11; measured body-yaw qualification and live recorder preflight remain open. See [recorder](../oudtra_driver_bringup/scripts/record_onboard_localization.py) and [contract](LOCALIZATION_SIMULATION.md#55-onboard-recording-contract). |
 | **DEC-009** · 2026-09-25 · Implemented technical choice | Explicit scenario/map/raceline/direction/config, separate from eval integration ([98b24c8](https://github.com/mingguangZhou/f1tenth_dev/commit/98b24c8), PF [dfd07cb](https://github.com/mingguangZhou/particle_filter/commit/dfd07cb)). Explicit map authoritative; fallback resolved from runtime config. Preflight/hash provenance avoids hidden IFAC ownership; does not certify geometry safety. See [scenario contract](LOCALIZATION_SIMULATION.md#23-interfaces-and-evaluation-profile). |
 | **DEC-010** · 2026-09-27 · Implemented technical choice | Headless benchmark, optional manual RViz, unchanged wall-time model ([1b9a5f4](https://github.com/mingguangZhou/f1tenth_dev/commit/1b9a5f4)). Gym bridge path has no rendering; no physics/control-rate tuning or `/clock`. Measured ages combine queues/processing/transport; some PnC marker computation persists. See [timing limits](LOCALIZATION_SIMULATION.md#25-headless-execution-and-timing-evidence). |
 | **DEC-011** · reconstructed 2026-10-09, committed 10-10 · Historical / superseded | Three-document progress layout recorded by [edc009b](https://github.com/mingguangZhou/f1tenth_dev/commit/edc009b). Its useful historical/evidence content is retained here; “accepted” labels did not establish human approval. Superseded by DEC-012 through this task's explicit human request. |
@@ -298,6 +488,17 @@ limited to inspected code/docs; no undocumented rejected alternative is invented
 | **DEC-017** · 2026-10-28 · Human-confirmed direction | Curated deployment CSV, validation evidence and portable manifest belong in Git; raw workbench sessions remain ignored. Named-track PnC adapters resolve to existing CSV/direction interfaces with explicit experimental acknowledgment, so ordinary code deployment carries the same selection to simulation/onboard. Tempo retains its curvature failure; physical qualification is not implied. See [curated selection](../centerline_tools/tracks/tempo_coffee/README.md). |
 
 ## 4. Open issues and validation gaps
+
+- **Human-confirmed open recording requirement (2026-11-12):** future serious
+  sim/onboard evaluation should use a simple structured operator workflow capturing
+  exact deployed source/effective configuration identity, map/reference hashes,
+  speed profile, evaluation markers, sensor/command evidence and transfer-ready
+  finalized metadata. The simple historical B4 logger remains importable but cannot
+  establish missing deployment provenance. Existing structured-recorder software/mock
+  validation is not hardware validation. Usability/capture-completeness improvement
+  is explicitly requested for future work; no recorder redesign/deployment was done
+  by this comparison task.
+
 
 These are unordered observations. Resolution, development sequence and major
 alternatives require human direction; listing an issue does not authorize work.
@@ -315,12 +516,24 @@ alternatives require human direction; listing an issue does not authorize work.
   fix passes development-container checks, but its actual car deployment remains unverified.
 - **Hardware evidence limits:** the engineer reports a physical run and three raw
   bags now support offline analysis; structured-recorder preflight still needs
-  real-car verification. Source/config/map identity was not captured. Split VESC forward-speed / measured IMU
-  yaw adapter is missing; model-derived odometry yaw must not be presented as
-  measured yaw. Vehicle-response smoothness/stall support is consequently limited.
+  real-car verification. Source/config/map identity was not captured. Split ERPM-derived forward-speed analysis is now test/bag validated, but measured IMU
+  yaw units/frame/axis/bias remain unqualified; model-derived odometry yaw is not
+  measured yaw. Stalls still lack qualified mux-authority evidence.
 - **Recovery and shutdown coverage incomplete:** normal simulation can consume GT
   in reverse recovery; eval profile isolates it. One visual timing repeat failed
   stationary cleanup. Full recovery behavior/hardware coverage remain unknown.
+- **Steering-envelope evidence (2026-11-15):** recorded command clipping is
+  consistent with the inspected VESC calibration/limits. The experimental lower
+  Tempo arc demands greater positive model curvature than that echo-equivalent
+  command cap. Actual steering calibration, mechanical response and deployed
+  configuration identity remain unknown; no limit relaxation is authorized by
+  this observation. Model-derived odometry yaw is correlated with the clipped
+  command and cannot independently verify physical turning.
+- **PF covariance layout:** inspected `publish_tf` copies a flattened 3×3 particle
+  covariance into the first nine entries of a 6×6 ROS pose covariance. Health
+  spread is calculated directly and remains interpretable; consumers of the
+  published covariance may be affected. No PnC covariance use was found in the
+  inspected source; this is not an established regional-deviation cause or a fix.
 - **Timing evidence limited:** no qualified physics clock/step counter, real-time
   factor or physical derivative timing. PF pose publication stamp and input-stamped
   TF differ; message age is not isolated PF compute time. Interrupted runs can lack
@@ -333,8 +546,8 @@ alternatives require human direction; listing an issue does not authorize work.
 - **Test gaps:** historical broad Gym checks report missing `f1` CLI and lint
   failures. Targeted centerline/bringup passes do not erase those broader failures;
   Gym/PF algorithm suites were not rerun for this UX/selection task.
-- **Evaluation scope:** no real matched sim/onboard run, section alignment, lap/sector
-  contract, absolute-accuracy acceptance thresholds or composite score established.
+- **Evaluation scope:** PF-aligned exploratory section comparison is now implemented; no independently verified physical section matching, lap/sector
+  contract, absolute-accuracy acceptance thresholds or composite score is established.
   Short-run PASS does not prove collision freedom or long-run robustness.
 - **Provenance gaps:** remote CI/PR discussions, live installed-source freshness and
   real-car logs not independently checked. Some old run revisions are dirty/unknown;
